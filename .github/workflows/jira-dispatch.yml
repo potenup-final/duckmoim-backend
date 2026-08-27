@@ -155,10 +155,15 @@ jobs:
         run: |
           [ -n "$WEBHOOK" ] || { echo "::notice::SLACK_WEBHOOK_TICKETS 미설정 — 알림 건너뜀"; exit 0; }
 
-          text=$(printf '🚀 *%s 착수* — %s\n담당 %s · 브랜치 `%s`\n%s/browse/%s' \
+          # <url|text> is Slack's link syntax, so the raw URL never takes up a
+          # line. unfurl is off because this channel is meant to stay two lines
+          # per message — a GitHub or Jira preview card would swamp it, and the
+          # same PR already unfurls in #2-리뷰-요청.
+          text=$(printf '🚀 *%s 시작* — %s\n담당 %s · 브랜치 `%s` · <%s/browse/%s|Jira 티켓>' \
                    "$KEY" "$(cat summary.txt)" "$(cat assignee.txt)" "$BRANCH" \
                    "${JIRA_BASE_URL%/}" "$KEY")
 
           curl -sS --fail-with-body -X POST "$WEBHOOK" \
             -H 'Content-Type: application/json' \
-            -d "$(jq -nc --arg t "$text" '{text: $t}')"
+            -d "$(jq -nc --arg t "$text" \
+                  '{text: $t, unfurl_links: false, unfurl_media: false}')"

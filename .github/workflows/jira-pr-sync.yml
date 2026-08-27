@@ -108,16 +108,24 @@ jobs:
         env:
           WEBHOOK: ${{ secrets.SLACK_WEBHOOK_TICKETS }}
           KEY: ${{ steps.key.outputs.key }}
-          TITLE: ${{ github.event.pull_request.title }}
           PR_URL: ${{ github.event.pull_request.html_url }}
           AUTHOR: ${{ github.event.pull_request.user.login }}
           JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
+          JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
         run: |
           [ -n "$WEBHOOK" ] || { echo "::notice::SLACK_WEBHOOK_TICKETS 미설정 — 알림 건너뜀"; exit 0; }
 
-          text=$(printf '✅ *%s 완료* — %s\n%s 님이 병합 · %s\n%s/browse/%s' \
-                   "$KEY" "$TITLE" "$AUTHOR" "$PR_URL" "${JIRA_BASE_URL%/}" "$KEY")
+          # The Jira summary, not the PR title: the PR title already carries the
+          # [STAR-12] prefix from the commit, which would print the key twice.
+          # This also keeps the 시작 and 완료 messages reading identically.
+          . .github/scripts/jira.sh
+          summary=$(jira_get "$KEY" | jq -r '.fields.summary')
+
+          text=$(printf '✅ *%s 완료* — %s\n%s 님이 병합 · <%s|GitHub PR> · <%s/browse/%s|Jira 티켓>' \
+                   "$KEY" "$summary" "$AUTHOR" "$PR_URL" "${JIRA_BASE_URL%/}" "$KEY")
 
           curl -sS --fail-with-body -X POST "$WEBHOOK" \
             -H 'Content-Type: application/json' \
-            -d "$(jq -nc --arg t "$text" '{text: $t}')"
+            -d "$(jq -nc --arg t "$text" \
+                  '{text: $t, unfurl_links: false, unfurl_media: false}')"
