@@ -91,6 +91,24 @@ jobs:
 
           echo "::notice::PR #$PR 본문 갱신 (Jira $KEY${num:+, closes #$num})"
 
+      # Without this the ticket is stranded in 검토 중 with no PR to review —
+      # the board claims it is under review and nobody is told otherwise.
+      # The branch and assignee are still there, so 진행 중 is the honest state;
+      # opening another PR moves it back to 검토 중 on its own.
+      - name: Jira → 진행 중 (PR 병합 없이 닫힘)
+        if: |
+          steps.key.outputs.key != '' &&
+          github.event.action == 'closed' &&
+          github.event.pull_request.merged == false
+        env:
+          KEY: ${{ steps.key.outputs.key }}
+          JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
+          JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+        run: |
+          . .github/scripts/jira.sh
+          jira_transition "$KEY" "10001"   # 진행 중
+
       - name: Jira → 완료
         if: |
           steps.key.outputs.key != '' &&
