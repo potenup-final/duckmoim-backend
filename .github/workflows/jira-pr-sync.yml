@@ -3,9 +3,13 @@ name: PR ↔ Jira 동기화
 # Everything in the GitHub → Jira direction lives here rather than in Jira
 # Automation: Actions runs are effectively unmetered, Jira Free rule runs are
 # capped at 100 a month for the whole site.
+# No `synchronize`: the only thing that needed refreshing on every push was the
+# commit-derived checklist, and that is gone. Jira titles and descriptions rarely
+# change mid-PR, so re-running on each push would rewrite an identical block.
+# Reopening a PR re-runs the hydration if it ever needs a retry.
 on:
   pull_request:
-    types: [opened, reopened, synchronize, closed]
+    types: [opened, reopened, closed]
 
 permissions:
   contents: read
@@ -51,7 +55,6 @@ jobs:
           . .github/scripts/jira.sh
 
           jira_get "$KEY" > issue.json
-          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/commits?per_page=100" > commits.json
           gh pr view "$PR" --json body --jq '.body // ""' > body.txt
 
           # The mirrored GitHub issue, so the body can carry `Closes #N` and the
@@ -61,10 +64,9 @@ jobs:
                   --jq "first(.[] | select(.title | startswith(\"[$KEY]\")) | .number) // empty")
 
           jq -n --slurpfile issue issue.json \
-                --slurpfile commits commits.json \
                 --rawfile body body.txt \
                 --arg num "$num" \
-                '{issue: $issue[0], commits: $commits[0], body: $body,
+                '{issue: $issue[0], body: $body,
                   issue_number: (if $num == "" then null else ($num | tonumber) end)}' \
             > payload.json
 
