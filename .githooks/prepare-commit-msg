@@ -1,0 +1,31 @@
+#!/bin/sh
+# Prefix the commit subject with the Jira key taken from the branch name, so
+# `feature/LXP-123` + "feat: 로그인" becomes "[LXP-123] feat: 로그인".
+#
+# Enable once per clone:
+#   git config core.hooksPath .githooks
+# The backend build wires this up automatically (see installGitHooks in build.gradle).
+
+msg_file="$1"
+msg_source="$2"
+
+# Merges, squashes and amends arrive with a message we have no business rewriting.
+case "$msg_source" in
+  merge|squash|commit) exit 0 ;;
+esac
+
+branch=$(git symbolic-ref --short HEAD 2>/dev/null) || exit 0
+
+# Any PROJECT-123 shape, so the hook needs no per-repo configuration.
+key=$(printf '%s' "$branch" | grep -oE '[A-Z][A-Z0-9]+-[0-9]+' | head -n 1)
+
+# hotfix/…, main, detached HEAD — nothing to prefix. Pass through rather than
+# blocking the commit; urgent work should never be held up by this hook.
+[ -n "$key" ] || exit 0
+
+# Already prefixed (someone typed it, or this is a reworded commit).
+grep -qF "[$key]" "$msg_file" && exit 0
+
+tmp="${msg_file}.jira"
+awk -v prefix="[$key] " 'NR == 1 { print prefix $0; next } { print }' \
+  "$msg_file" > "$tmp" && mv "$tmp" "$msg_file"

@@ -1,0 +1,122 @@
+name: Jira 착수 → 이슈·브랜치 생성
+
+# Fired by a single Jira Automation rule when a ticket moves to 진행 중.
+# That rule is the only Jira automation in the whole setup — the Free plan allows
+# 100 rule runs a month and stops *every* rule for the rest of the month once the
+# cap is hit, so everything in the GitHub → Jira direction is done from Actions.
+on:
+  repository_dispatch:
+    types: [jira_issue_started]
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  start:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 페이로드 검증
+        id: parse
+        env:
+          # client_payload is attacker-controlled for anyone who can reach the
+          # dispatch endpoint, so it goes through env and is validated, never
+          # interpolated straight into a shell command.
+          KEY: ${{ github.event.client_payload.key }}
+          TYPE_ID: ${{ github.event.client_payload.typeId }}
+          PROJECT_KEY: ${{ secrets.JIRA_PROJECT_KEY }}
+        run: |
+          if ! printf '%s' "$KEY" | grep -qE "^${PROJECT_KEY}-[0-9]+$"; then
+            echo "::error::'${KEY}' 는 ${PROJECT_KEY} 이슈 키 형식이 아닙니다"
+            exit 1
+          fi
+
+          # Matched on issue type id, not name: this Jira was created from the
+          # Korean template, so the names are 스토리/버그 — and a rename in the
+          # Jira UI would silently reroute every branch. Ids never move.
+          # The GitHub label is normalised to English regardless.
+          case "$TYPE_ID" in
+            10004) prefix=feature; label=Story ;;  # 스토리
+            10007) prefix=bug;     label=Bug   ;;  # 버그
+            10009) prefix=chore;   label=Chore ;;  # Chore
+            *)
+              echo "::error::이슈 타입 id=${TYPE_ID} 는 자동화 대상이 아닙니다 (스토리·버그·Chore만). Jira Automation 룰의 조건을 확인하세요."
+              exit 1 ;;
+          esac
+
+          {
+            echo "key=$KEY"
+            echo "branch=${prefix}/${KEY}"
+            echo "label=$label"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: 브랜치 생성
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ steps.parse.outputs.branch }}
+        run: |
+          base=$(gh api "repos/$GITHUB_REPOSITORY" --jq .default_branch)
+          sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$base" --jq .object.sha)
+
+          # Bouncing a ticket out of 진행 중 and back is routine, so an existing
+          # branch is a success, not a failure.
+          if out=$(gh api "repos/$GITHUB_REPOSITORY/git/refs" \
+                     -f "ref=refs/heads/$BRANCH" -f "sha=$sha" 2>&1); then
+            echo "::notice::$BRANCH 생성 (기준: $base@$(printf '%s' "$sha" | cut -c1-7))"
+          elif printf '%s' "$out" | grep -q "Reference already exists"; then
+            echo "::notice::$BRANCH 는 이미 있습니다"
+          else
+            echo "::error::브랜치 생성 실패: $out"
+            exit 1
+          fi
+
+      - name: GitHub 이슈 생성
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KEY: ${{ steps.parse.outputs.key }}
+          LABEL: ${{ steps.parse.outputs.label }}
+          BRANCH: ${{ steps.parse.outputs.branch }}
+          SUMMARY: ${{ github.event.client_payload.summary }}
+          ASSIGNEE: ${{ github.event.client_payload.assignee }}
+          JIRA_URL: ${{ github.event.client_payload.url }}
+        run: |
+          existing=$(gh issue list --state all --search "\"[$KEY]\" in:title" \
+                       --json number,title \
+                       --jq "first(.[] | select(.title | startswith(\"[$KEY]\")) | .number) // empty")
+
+          if [ -n "$existing" ]; then
+            echo "::notice::#$existing 이 이미 $KEY 를 추적하고 있습니다"
+            exit 0
+          fi
+
+          body=$(printf '%s\n' \
+            "**Jira:** $JIRA_URL" \
+            "**담당자:** ${ASSIGNEE:-미지정}" \
+            "**브랜치:** \`$BRANCH\`" \
+            "" \
+            "---" \
+            "" \
+            "Jira에서 자동 생성된 미러 이슈입니다. 작업 내용은 Jira 티켓에서 관리하고," \
+            "이 이슈는 PR이 병합되면 자동으로 닫힙니다.")
+
+          gh issue create --title "[$KEY] $SUMMARY" --body "$body" --label "$LABEL"
+
+      - name: Slack 알림
+        env:
+          # Checked in-script rather than in `if:` — step-level env isn't
+          # available to the `if` expression, and secrets never are.
+          WEBHOOK: ${{ secrets.SLACK_WEBHOOK_TICKETS }}
+          KEY: ${{ steps.parse.outputs.key }}
+          BRANCH: ${{ steps.parse.outputs.branch }}
+          SUMMARY: ${{ github.event.client_payload.summary }}
+          ASSIGNEE: ${{ github.event.client_payload.assignee }}
+          JIRA_URL: ${{ github.event.client_payload.url }}
+        run: |
+          [ -n "$WEBHOOK" ] || { echo "::notice::SLACK_WEBHOOK_TICKETS 미설정 — 알림 건너뜀"; exit 0; }
+
+          text=$(printf '🚀 *%s 착수* — %s\n담당 %s · 브랜치 `%s`\n%s' \
+                   "$KEY" "$SUMMARY" "${ASSIGNEE:-미지정}" "$BRANCH" "$JIRA_URL")
+
+          curl -sS --fail-with-body -X POST "$WEBHOOK" \
+            -H 'Content-Type: application/json' \
+            -d "$(jq -nc --arg t "$text" '{text: $t}')"

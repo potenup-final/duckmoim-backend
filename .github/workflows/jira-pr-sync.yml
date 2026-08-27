@@ -1,0 +1,123 @@
+name: PR ↔ Jira 동기화
+
+# Everything in the GitHub → Jira direction lives here rather than in Jira
+# Automation: Actions runs are effectively unmetered, Jira Free rule runs are
+# capped at 100 a month for the whole site.
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, closed]
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 티켓 키 추출
+        id: key
+        env:
+          BRANCH: ${{ github.head_ref }}
+          PROJECT_KEY: ${{ secrets.JIRA_PROJECT_KEY }}
+        run: |
+          key=$(printf '%s' "$BRANCH" | grep -oE "${PROJECT_KEY}-[0-9]+" | head -n 1 || true)
+
+          # No key means a hotfix or a bot PR. Those must not be blocked, so the
+          # rest of the job simply skips rather than failing.
+          if [ -z "$key" ]; then
+            echo "::notice::'$BRANCH' 에 ${PROJECT_KEY} 키가 없어 건너뜁니다 (핫픽스·봇 PR은 정상 통과)"
+          fi
+          echo "key=$key" >> "$GITHUB_OUTPUT"
+
+      - name: 체크아웃
+        if: steps.key.outputs.key != ''
+        uses: actions/checkout@v5
+        with:
+          sparse-checkout: .github/scripts
+          sparse-checkout-cone-mode: false
+
+      - name: PR 본문 보강
+        if: steps.key.outputs.key != '' && github.event.action != 'closed'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KEY: ${{ steps.key.outputs.key }}
+          PR: ${{ github.event.pull_request.number }}
+          JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
+          JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+        run: |
+          . .github/scripts/jira.sh
+
+          jira_get "$KEY" > issue.json
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/commits?per_page=100" > commits.json
+          gh pr view "$PR" --json body --jq '.body // ""' > body.txt
+
+          # The mirrored GitHub issue, so the body can carry `Closes #N` and the
+          # issue closes itself on merge.
+          num=$(gh issue list --state all --search "\"[$KEY]\" in:title" \
+                  --json number,title \
+                  --jq "first(.[] | select(.title | startswith(\"[$KEY]\")) | .number) // empty")
+
+          jq -n --slurpfile issue issue.json \
+                --slurpfile commits commits.json \
+                --rawfile body body.txt \
+                --arg num "$num" \
+                '{issue: $issue[0], commits: $commits[0], body: $body,
+                  issue_number: (if $num == "" then null else ($num | tonumber) end)}' \
+            > payload.json
+
+          python3 .github/scripts/pr_body.py < payload.json > new_body.md
+          gh pr edit "$PR" --body-file new_body.md
+
+          echo "::notice::PR #$PR 본문 갱신 (Jira $KEY${num:+, closes #$num})"
+
+      - name: Jira → 검토 중
+        if: |
+          steps.key.outputs.key != '' &&
+          (github.event.action == 'opened' || github.event.action == 'reopened')
+        env:
+          KEY: ${{ steps.key.outputs.key }}
+          JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
+          JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+        run: |
+          . .github/scripts/jira.sh
+          jira_transition "$KEY" "10002"   # 검토 중
+
+      - name: Jira → 완료
+        if: |
+          steps.key.outputs.key != '' &&
+          github.event.action == 'closed' &&
+          github.event.pull_request.merged == true
+        env:
+          KEY: ${{ steps.key.outputs.key }}
+          JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
+          JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+        run: |
+          . .github/scripts/jira.sh
+          jira_transition "$KEY" "10003"   # 완료
+
+      - name: Slack 완료 알림
+        if: |
+          steps.key.outputs.key != '' &&
+          github.event.action == 'closed' &&
+          github.event.pull_request.merged == true
+        env:
+          WEBHOOK: ${{ secrets.SLACK_WEBHOOK_TICKETS }}
+          KEY: ${{ steps.key.outputs.key }}
+          TITLE: ${{ github.event.pull_request.title }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+          JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
+        run: |
+          [ -n "$WEBHOOK" ] || { echo "::notice::SLACK_WEBHOOK_TICKETS 미설정 — 알림 건너뜀"; exit 0; }
+
+          text=$(printf '✅ *%s 완료* — %s\n%s 님이 병합 · %s\n%s/browse/%s' \
+                   "$KEY" "$TITLE" "$AUTHOR" "$PR_URL" "${JIRA_BASE_URL%/}" "$KEY")
+
+          curl -sS --fail-with-body -X POST "$WEBHOOK" \
+            -H 'Content-Type: application/json' \
+            -d "$(jq -nc --arg t "$text" '{text: $t}')"
