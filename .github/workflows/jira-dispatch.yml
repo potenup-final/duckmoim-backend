@@ -53,30 +53,47 @@ jobs:
           jira_get "$KEY" > issue.json
 
           # Matched on issue type id, not name: this Jira was created from the
-          # Korean template, so the names are 스토리/버그 — and a rename in the
-          # Jira UI would silently reroute every branch. Ids never move.
-          # The GitHub label is normalised to English regardless.
+          # Korean template, so the names are 스토리/버그, and a rename in the
+          # Jira UI would silently change what is in scope. Ids never move.
+          # This decides only *whether* a ticket gets a branch — what kind of
+          # work it is comes from the title prefix below.
           type_id=$(jq -r '.fields.issuetype.id' issue.json)
           case "$type_id" in
-            10004) prefix=feature; label=Story ;;  # 스토리
-            10007) prefix=bug;     label=Bug   ;;  # 버그
-            10009) prefix=chore;   label=Chore ;;  # Chore
+            10004|10007|10003) : ;;  # 스토리 · 버그 · 작업
             *)
-              echo "::error::이슈 타입 id=${type_id} 는 자동화 대상이 아닙니다 (스토리·버그·Chore만). Jira Automation 룰의 조건을 확인하세요."
+              echo "::error::이슈 타입 id=${type_id} 는 자동화 대상이 아닙니다 (스토리·버그·작업만). Jira 자동화 흐름의 조건을 확인하세요."
               exit 1 ;;
           esac
-
-          {
-            echo "branch=${prefix}/${KEY}"
-            echo "label=$label"
-          } >> "$GITHUB_OUTPUT"
 
           # Titles carry quotes and the odd newline, so these travel as files
           # rather than through step outputs.
           jq -r '.fields.summary' issue.json > summary.txt
           jq -r '.fields.assignee.displayName // "미지정"' issue.json > assignee.txt
 
-          echo "::notice::${KEY} · $(cat summary.txt) · 담당 $(cat assignee.txt)"
+          # 'feat: 소셜 로그인 구현' → feat. That one word becomes the branch
+          # prefix, the GitHub label and the commit type, so there is a single
+          # convention to teach rather than three.
+          lower=$(tr 'A-Z' 'a-z' < summary.txt)
+          kind=$(printf '%s' "$lower" \
+                 | sed -nE 's/^[[:space:]]*(feat|fix|refactor|test|chore|docs)[[:space:]]*:.*/\1/p')
+
+          # Forgetting the prefix must not block the work, so fall back to the
+          # issue type and warn rather than fail.
+          if [ -z "$kind" ]; then
+            case "$type_id" in
+              10004) kind=feat  ;;
+              10007) kind=fix   ;;
+              10003) kind=chore ;;
+            esac
+            echo "::warning::${KEY} 제목에 작업 종류 접두사가 없어 업무 유형으로 대체했습니다 → ${kind}. 권장 형식: 'feat: 소셜 로그인 구현'"
+          fi
+
+          {
+            echo "branch=${kind}/${KEY}"
+            echo "label=$kind"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "::notice::${KEY} · $(cat summary.txt) · 담당 $(cat assignee.txt) · 종류 ${kind}"
 
       - name: 브랜치 생성
         env:
