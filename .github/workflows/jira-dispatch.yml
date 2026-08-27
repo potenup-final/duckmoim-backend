@@ -116,6 +116,7 @@ jobs:
           fi
 
       - name: GitHub 이슈 생성
+        id: issue
         env:
           GH_TOKEN: ${{ github.token }}
           KEY: ${{ steps.key.outputs.key }}
@@ -127,22 +128,27 @@ jobs:
                        --json number,title \
                        --jq "first(.[] | select(.title | startswith(\"[$KEY]\")) | .number) // empty")
 
+          # Both paths set the url output — the Slack step links to the issue, and
+          # re-entering 진행 중 must not drop that link.
           if [ -n "$existing" ]; then
             echo "::notice::#$existing 이 이미 $KEY 를 추적하고 있습니다"
-            exit 0
+            url=$(gh issue view "$existing" --json url --jq .url)
+          else
+            body=$(printf '%s\n' \
+              "**Jira:** ${JIRA_BASE_URL%/}/browse/$KEY" \
+              "**담당자:** $(cat assignee.txt)" \
+              "**브랜치:** \`$BRANCH\`" \
+              "" \
+              "---" \
+              "" \
+              "Jira에서 자동 생성된 미러 이슈입니다. 작업 내용은 Jira 티켓에서 관리하고," \
+              "이 이슈는 PR이 병합되면 자동으로 닫힙니다.")
+
+            url=$(gh issue create --title "[$KEY] $(cat summary.txt)" \
+                    --body "$body" --label "$LABEL")
           fi
 
-          body=$(printf '%s\n' \
-            "**Jira:** ${JIRA_BASE_URL%/}/browse/$KEY" \
-            "**담당자:** $(cat assignee.txt)" \
-            "**브랜치:** \`$BRANCH\`" \
-            "" \
-            "---" \
-            "" \
-            "Jira에서 자동 생성된 미러 이슈입니다. 작업 내용은 Jira 티켓에서 관리하고," \
-            "이 이슈는 PR이 병합되면 자동으로 닫힙니다.")
-
-          gh issue create --title "[$KEY] $(cat summary.txt)" --body "$body" --label "$LABEL"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
 
       - name: Slack 알림
         env:
@@ -151,17 +157,19 @@ jobs:
           WEBHOOK: ${{ secrets.SLACK_WEBHOOK_TICKETS }}
           KEY: ${{ steps.key.outputs.key }}
           BRANCH: ${{ steps.jira.outputs.branch }}
+          ISSUE_URL: ${{ steps.issue.outputs.url }}
           JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
         run: |
           [ -n "$WEBHOOK" ] || { echo "::notice::SLACK_WEBHOOK_TICKETS 미설정 — 알림 건너뜀"; exit 0; }
 
           # <url|text> is Slack's link syntax, so the raw URL never takes up a
           # line. unfurl is off because this channel is meant to stay two lines
-          # per message — a GitHub or Jira preview card would swamp it, and the
-          # same PR already unfurls in #2-리뷰-요청.
-          text=$(printf '🚀 *%s 시작* — %s\n담당 %s · 브랜치 `%s` · <%s/browse/%s|Jira 티켓>' \
-                   "$KEY" "$(cat summary.txt)" "$(cat assignee.txt)" "$BRANCH" \
-                   "${JIRA_BASE_URL%/}" "$KEY")
+          # per message — a preview card would swamp it, and the same PR already
+          # unfurls in #2-리뷰-요청.
+          meta="담당 $(cat assignee.txt) | \`$BRANCH\` | <${JIRA_BASE_URL%/}/browse/$KEY|Jira 티켓>"
+          [ -n "$ISSUE_URL" ] && meta="$meta | <$ISSUE_URL|GitHub 이슈>"
+
+          text=$(printf '🚀 *%s 시작* — %s\n%s' "$KEY" "$(cat summary.txt)" "$meta")
 
           curl -sS --fail-with-body -X POST "$WEBHOOK" \
             -H 'Content-Type: application/json' \

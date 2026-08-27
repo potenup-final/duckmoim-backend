@@ -111,9 +111,9 @@ jobs:
           github.event.action == 'closed' &&
           github.event.pull_request.merged == true
         env:
+          GH_TOKEN: ${{ github.token }}
           WEBHOOK: ${{ secrets.SLACK_WEBHOOK_TICKETS }}
           KEY: ${{ steps.key.outputs.key }}
-          PR_URL: ${{ github.event.pull_request.html_url }}
           AUTHOR: ${{ github.event.pull_request.user.login }}
           JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
           JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
@@ -127,8 +127,14 @@ jobs:
           . .github/scripts/jira.sh
           summary=$(jira_get "$KEY" | jq -r '.fields.summary')
 
-          text=$(printf '✅ *%s 완료* — %s\n%s 님이 병합 · <%s|GitHub PR> · <%s/browse/%s|Jira 티켓>' \
-                   "$KEY" "$summary" "$AUTHOR" "$PR_URL" "${JIRA_BASE_URL%/}" "$KEY")
+          issue_url=$(gh issue list --state all --search "\"[$KEY]\" in:title" \
+                        --json number,title,url \
+                        --jq "first(.[] | select(.title | startswith(\"[$KEY]\")) | .url) // empty")
+
+          meta="$AUTHOR 님이 병합 | <${JIRA_BASE_URL%/}/browse/$KEY|Jira 티켓>"
+          [ -n "$issue_url" ] && meta="$meta | <$issue_url|GitHub 이슈>"
+
+          text=$(printf '✅ *%s 완료* — %s\n%s' "$KEY" "$summary" "$meta")
 
           curl -sS --fail-with-body -X POST "$WEBHOOK" \
             -H 'Content-Type: application/json' \
