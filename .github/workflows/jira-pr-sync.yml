@@ -42,6 +42,22 @@ jobs:
           sparse-checkout: .github/scripts
           sparse-checkout-cone-mode: false
 
+      # Runs before the body is composed, so the status in the Jira block reads
+      # 검토 중 rather than the value from a moment ago. After this the status
+      # only changes at merge, by which point nobody reads the body for it.
+      - name: Jira → 검토 중
+        if: |
+          steps.key.outputs.key != '' &&
+          (github.event.action == 'opened' || github.event.action == 'reopened')
+        env:
+          KEY: ${{ steps.key.outputs.key }}
+          JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
+          JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+        run: |
+          . .github/scripts/jira.sh
+          jira_transition "$KEY" "10002"   # 검토 중
+
       - name: PR 본문 보강
         if: steps.key.outputs.key != '' && github.event.action != 'closed'
         env:
@@ -74,19 +90,6 @@ jobs:
           gh pr edit "$PR" --body-file new_body.md
 
           echo "::notice::PR #$PR 본문 갱신 (Jira $KEY${num:+, closes #$num})"
-
-      - name: Jira → 검토 중
-        if: |
-          steps.key.outputs.key != '' &&
-          (github.event.action == 'opened' || github.event.action == 'reopened')
-        env:
-          KEY: ${{ steps.key.outputs.key }}
-          JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
-          JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
-          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
-        run: |
-          . .github/scripts/jira.sh
-          jira_transition "$KEY" "10002"   # 검토 중
 
       - name: Jira → 완료
         if: |
