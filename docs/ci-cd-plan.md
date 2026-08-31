@@ -19,12 +19,35 @@
 
 ### 스택
 
-| 항목 | 값 | 확정도 | 근거 |
-|---|---|---|---|
-| 빌드 도구 | **Gradle** | ✅ 확정 | `.githooks/prepare-commit-msg` 7행이 `build.gradle` 을 참조 |
-| 언어·프레임워크 | Java 17 / Spring Boot 3.x | ⚠️ 확인 필요 | Gradle 백엔드의 통상 조합 |
-| DB | MySQL 8 | ⚠️ 확인 필요 | — |
-| 배포 | Docker 이미지 → EC2 단일 인스턴스 | ⚠️ 확인 필요 | — |
+| 항목 | 값 | 확정도 |
+|---|---|---|
+| 빌드 도구 | **Gradle 9.7.1** (래퍼 동봉) | ✅ 확정 |
+| 언어 | **Java 17** (Temurin) | ✅ 확정 |
+| 프레임워크 | **Spring Boot 3.5.16** | ✅ 확정 |
+| DB | MySQL 8 | ⚠️ 확인 필요 (아직 의존성에 없음) |
+| 배포 | Docker 이미지 → EC2 단일 인스턴스 | ⚠️ 확인 필요 |
+
+> **Spring Boot 3.5.16 을 쓰는 이유**
+>
+> start.spring.io 는 이제 **4.0.0 이상만 생성해 준다.** 그럼에도 3.5 를 택한 것은,
+> 국내 학습자료와 강의 대부분이 Boot 3 기준이라 팀원 3명이 참고자료를 그대로
+> 쓸 수 있기 때문이다. 골격만 4.0.8 로 받아 스타터 이름(`spring-boot-starter-webmvc`
+> → `spring-boot-starter-web`)과 플러그인 버전을 3.5 에 맞춰 고쳤다.
+>
+> Gradle 9.7.1 + Boot 3.5.16 + Java 17 조합은 로컬 빌드로 검증했다.
+
+> **JPA·MySQL 드라이버는 아직 넣지 않았다**
+>
+> 클래스패스에 있으면 DataSource 자동설정이 접속 정보를 찾다가 **기동 자체가
+> 실패한다.** 아무 코드를 안 짜도 그렇다.
+>
+> ```
+> Failed to configure a DataSource: 'url' attribute is not specified
+> and no embedded datasource could be configured.
+> ```
+>
+> DB 없이 컨테이너만 EC2 에 올려보는 첫 배포를 위해 일부러 뺐다.
+> 첫 엔티티를 만들 때 MySQL 과 함께 추가한다.
 
 > **스택이 왜 지금 필요한가**
 >
@@ -134,16 +157,20 @@ CD는 배포 속도를 올리는 장치이고, 검증이 없으면 사고 나는
 ## 3. 단계별 계획
 
 ```
-Phase 0  앱 코드 골격          ─┐
-Phase 1  CI 워크플로우          │ AWS 불필요 — 오늘 시작 가능
-Phase 2  브랜치 보호 규칙       │
-Phase 3  Docker화              ─┘
-─────────────────────────────────
-Phase 4  EC2 수동 배포         ─┐
-Phase 5  CD 워크플로우          │ AWS 필요
-─────────────────────────────────┘
-Phase 6  frontend CI            후순위
+✅ Phase 0  앱 코드 골격         ─┐
+✅ Phase 1  CI 워크플로우         │ AWS 불필요
+⬜ Phase 2  브랜치 보호 규칙      │
+⬜ Phase 3  Docker화             ─┘
+──────────────────────────────────
+⬜ Phase 4  EC2 수동 배포        ─┐
+⬜ Phase 5  CD 워크플로우         │ AWS 필요
+──────────────────────────────────┘
+⬜ Phase 6  frontend CI           후순위
 ```
+
+> Phase 3 은 **3a(Dockerfile + `docker run`)** 와 **3b(compose + MySQL)** 로 나눠
+> 진행한다. 첫 배포는 컨테이너 하나만 올려 파이프라인 경로부터 검증하고, MySQL 과
+> Caddy 는 실제로 필요해지는 시점에 더한다. 원칙 ②(한 번에 하나씩)에 따른 것이다.
 
 ---
 
@@ -153,15 +180,14 @@ Phase 6  frontend CI            후순위
 
 **작업**
 
-- [ ] Spring Initializr로 프로젝트 생성
-      - 의존성: `Spring Web`, `Spring Data JPA`, `MySQL Driver`, `Validation`, `Lombok`
-- [ ] `.gitignore` 확인 (`build/`, `.gradle/`, `.env`, `*.log`)
-- [ ] 헬스체크 엔드포인트 `GET /api/health` → `200 {"status":"UP"}`
-- [ ] 테스트 2개
-      - 컨텍스트 로딩 테스트 (Spring이 뜨는지)
-      - 헬스체크 응답 200 검증 (`@WebMvcTest` 또는 `MockMvc`)
-- [ ] 로컬 개발용 `docker-compose.local.yml` — MySQL만 띄움
-- [ ] `gradlew` 실행 권한 부여 후 커밋 ← **아래 함정 참고**
+- [x] 프로젝트 생성 — 의존성: `Spring Web`, `Validation` **만**
+      (JPA·MySQL·Lombok 은 필요해질 때 추가. 위 스택 항목 참고)
+- [x] `.gitignore` (`build/`, `.gradle/`, `.env`, `.DS_Store`)
+- [x] 헬스체크 엔드포인트 `GET /api/health` → `200 {"status":"UP"}`
+- [x] 테스트 2개 — 컨텍스트 로딩, 헬스체크 응답 검증
+- [x] `installGitHooks` 태스크 — 빌드가 `core.hooksPath` 를 대신 설정
+- [x] `gradlew` 실행 권한 유지한 채 커밋 (`100755` 확인)
+- [ ] 로컬 개발용 MySQL compose — Phase 3b 로 미룸
 
 **⚠️ 함정 — `gradlew` 실행 권한**
 
@@ -185,11 +211,13 @@ git commit -m "chore: gradlew 실행 권한 부여"
 
 **작업**
 
-- [ ] `.github/workflows/ci.yml` 생성
-- [ ] 트리거: `pull_request` (main 대상) + `push` (main)
-- [ ] 스텝: 체크아웃 → JDK 17 설치(Gradle 캐시 포함) → `./gradlew build`
-- [ ] `concurrency` 설정 — 같은 PR에 새 커밋이 오면 이전 실행 취소 (분 낭비 방지)
-- [ ] 테스트 실패 시 리포트를 아티팩트로 업로드 (선택, 디버깅에 유용)
+- [x] `.github/workflows/ci.yml` 생성
+- [x] 트리거: `pull_request` (main 대상) + `push` (main)
+- [x] 스텝: 체크아웃 → JDK 17 설치(Gradle 캐시 포함) → `./gradlew build`
+- [x] `concurrency` — PR 에 새 커밋이 오면 이전 실행 취소. **main 은 취소하지 않음**
+      (머지된 커밋의 검증 이력이 남아야 어느 커밋부터 깨졌는지 추적 가능)
+- [x] 실패 시에만 테스트 리포트를 아티팩트로 업로드
+- [ ] **일부러 깨뜨린 PR 에서 ❌ 뜨는지 확인** ← 아직 미검증
 
 **완료 조건**
 > 성공만 확인하지 말 것.
@@ -392,9 +420,10 @@ Phase 0~3은 AWS와 무관하므로 **지금 즉시 착수 가능**하다.
 
 ## 7. 다음 액션
 
-1. **팀원에게 스택 확정 요청** — Java 버전, Spring Boot 여부, DB (Gradle은 확정)
-2. **팀원에게 DB 위치 의견 요청** — A안(docker compose) vs B안(RDS)
-3. **운영진에게 AWS 확인** — EC2 생성 권한 / Access Key 발급 여부 / 인스턴스 타입 제한 / RDS 권한
-4. 스택 확정 후 Phase 0 착수
+1. **PR 을 열어 CI 가 실제로 도는지 확인** — 초록불 확인
+2. **일부러 테스트를 깨뜨린 커밋으로 ❌ 확인** — 이걸 해야 CI 를 믿을 수 있다
+3. **Phase 2 브랜치 보호 규칙** — 1번으로 `빌드 및 테스트` 잡이 목록에 나타난 뒤 설정
+4. **팀원에게 DB 위치 의견 요청** — A안(docker compose) vs B안(RDS)
+5. **운영진에게 AWS 확인** — EC2 생성 권한 / Access Key 발급 여부 / 인스턴스 타입 제한 / RDS 권한
 
-1~3의 답변을 기다리는 동안에도 Phase 0~3은 AWS 없이 진행 가능하다. 다만 **Phase 0은 스택 확정이 선행돼야 한다.**
+4~5의 답변을 기다리는 동안 1~3 은 그대로 진행할 수 있다.
