@@ -1,0 +1,50 @@
+plugins {
+	id 'java'
+	id 'org.springframework.boot' version '3.5.16'
+	id 'io.spring.dependency-management' version '1.1.7'
+}
+
+group = 'com.youstar'
+version = '0.0.1-SNAPSHOT'
+
+java {
+	toolchain {
+		languageVersion = JavaLanguageVersion.of(17)
+	}
+}
+
+repositories {
+	mavenCentral()
+}
+
+dependencies {
+	implementation 'org.springframework.boot:spring-boot-starter-web'
+	implementation 'org.springframework.boot:spring-boot-starter-validation'
+
+	testImplementation 'org.springframework.boot:spring-boot-starter-test'
+	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+// JPA 와 MySQL 드라이버는 아직 넣지 않는다. 클래스패스에 있으면 DataSource
+// 자동설정이 접속 정보를 찾다가 기동 자체가 실패해서, DB 없이 EC2 에 올려보는
+// 첫 배포가 막힌다. 첫 엔티티를 만들 때 함께 추가한다.
+
+tasks.named('test') {
+	useJUnitPlatform()
+}
+
+// .githooks/prepare-commit-msg 는 클론마다 한 번씩 켜야 하는데 잊기 쉽다.
+// 빌드가 대신 켜 주므로 팀원은 별도 설정 없이 커밋 제목에 Jira 키가 붙는다.
+tasks.register('installGitHooks', Exec) {
+	description = '커밋 제목에 Jira 키를 자동으로 붙이는 .githooks 를 활성화한다'
+	group = 'build setup'
+	// .git 이 없는 환경(소스 아카이브, 일부 CI 체크아웃)에서는 건너뛴다.
+	onlyIf { file("${rootDir}/.git").exists() }
+	commandLine 'git', 'config', 'core.hooksPath', '.githooks'
+	// git 이 없는 이미지에서 빌드가 통째로 실패하지는 않도록 한다.
+	ignoreExitValue = true
+}
+
+tasks.named('compileJava') {
+	dependsOn 'installGitHooks'
+}
