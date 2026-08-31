@@ -1,0 +1,52 @@
+name: CI
+
+# 머지 전 관문. 이 워크플로가 통과해야 main 에 들어갈 수 있도록,
+# Settings > Rules 에서 아래 build 잡을 필수 상태 체크로 지정한다.
+# (필수 체크 목록에는 한 번이라도 실행된 적 있는 잡만 나타나므로,
+#  이 워크플로로 PR 을 한 번 돌린 뒤에 설정해야 한다.)
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# PR 에 새 커밋이 오면 진행 중이던 검사를 취소한다. 어차피 최신 커밋 결과만
+# 의미가 있고, 무료 사용 분을 아낀다. main 은 취소하지 않는다 — 머지된 커밋의
+# 검증 결과는 남아 있어야 나중에 어느 커밋부터 깨졌는지 추적할 수 있다.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# 빌드와 테스트는 저장소를 읽기만 하면 된다.
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: 빌드 및 테스트
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 체크아웃
+        uses: actions/checkout@v7
+
+      - name: JDK 17 설치
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+          # 의존성과 Gradle 배포판을 캐시한다. 없으면 매 실행마다 몇 분씩 더 걸린다.
+          cache: gradle
+
+      - name: 빌드 및 테스트
+        run: ./gradlew build
+
+      - name: 테스트 리포트 업로드
+        # 실패했을 때만 올린다. 성공한 빌드의 리포트는 아무도 열어보지 않는다.
+        # 로그만으로는 어느 단언에서 깨졌는지 보기 어려울 때 이 아티팩트를 받는다.
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-report
+          path: build/reports/tests/test/
+          retention-days: 7
