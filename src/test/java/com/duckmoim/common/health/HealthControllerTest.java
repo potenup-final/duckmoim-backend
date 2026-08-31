@@ -1,4 +1,4 @@
-package com.youstar.common.health;
+package com.duckmoim.common.health;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;

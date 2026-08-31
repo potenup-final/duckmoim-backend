@@ -1,4 +1,4 @@
-package com.youstar.common.health;
+package com.duckmoim.common.health;
 
 import java.util.Map;
 
