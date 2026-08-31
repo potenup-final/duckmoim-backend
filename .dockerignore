@@ -1,0 +1,10 @@
+.git
+.github
+.githooks
+.gradle
+build
+docs
+*.md
+.DS_Store
+.env
+.env.*
