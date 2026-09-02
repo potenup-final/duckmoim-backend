@@ -132,6 +132,7 @@ jobs:
             --restart unless-stopped \
             --log-opt max-size=10m \
             --log-opt max-file=3 \
+            -e SPRING_PROFILES_ACTIVE=prod \
             -p 8080:8080 \
             "$IMAGE"
           docker image prune -af --filter "until=72h"
