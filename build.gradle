@@ -1,0 +1,42 @@
+plugins {
+	id 'java'
+	id 'org.springframework.boot' version '3.5.16'
+	id 'io.spring.dependency-management' version '1.1.7'
+}
+
+group = 'com.duckmoim'
+version = '0.0.1-SNAPSHOT'
+
+java {
+	toolchain {
+		languageVersion = JavaLanguageVersion.of(17)
+	}
+}
+
+repositories {
+	mavenCentral()
+}
+
+dependencies {
+	implementation 'org.springframework.boot:spring-boot-starter-web'
+	implementation 'org.springframework.boot:spring-boot-starter-validation'
+
+	testImplementation 'org.springframework.boot:spring-boot-starter-test'
+	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.named('test') {
+	useJUnitPlatform()
+}
+
+tasks.register('installGitHooks', Exec) {
+	description = '커밋 제목에 Jira 키를 자동으로 붙이는 .githooks 를 활성화한다'
+	group = 'build setup'
+	onlyIf { file("${rootDir}/.git").exists() }
+	commandLine 'git', 'config', 'core.hooksPath', '.githooks'
+	ignoreExitValue = true
+}
+
+tasks.named('compileJava') {
+	dependsOn 'installGitHooks'
+}
