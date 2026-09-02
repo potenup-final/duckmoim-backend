@@ -1,0 +1,7 @@
+# 프로덕션에서는 Swagger UI 와 OpenAPI 스펙을 모두 닫는다.
+# 스펙(/v3/api-docs)까지 끄지 않으면 UI 만 가려도 문서가 그대로 노출된다.
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
