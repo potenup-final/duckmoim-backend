@@ -5,6 +5,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 concurrency:
   group: ci-cd-${{ github.ref }}
@@ -12,6 +13,10 @@ concurrency:
 
 permissions:
   contents: read
+
+env:
+  AWS_REGION: ap-northeast-2
+  ECR_REPO: duckmoim-backend
 
 jobs:
   build:
@@ -47,7 +52,10 @@ jobs:
 
     permissions:
       contents: read
-      packages: write
+      id-token: write        # OIDC 로 AWS 역할을 맡기 위해 필요
+
+    outputs:
+      image: ${{ steps.tag.outputs.image }}
 
     steps:
       - name: 체크아웃
@@ -56,28 +64,89 @@ jobs:
       - name: Buildx 준비
         uses: docker/setup-buildx-action@v4
 
-      - name: GHCR 로그인
-        uses: docker/login-action@v4
+      # 장기 액세스 키 없이 역할을 맡는다. 자격증명은 이 잡 안에서만 유효하다.
+      - name: AWS 자격증명 (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
 
-      - name: 태그 생성
-        id: meta
-        uses: docker/metadata-action@v6
-        with:
-          images: ghcr.io/${{ github.repository }}
-          tags: |
-            type=sha,format=long
-            type=raw,value=latest,enable={{is_default_branch}}
+      - name: ECR 로그인
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
 
+      - name: 이미지 주소 결정
+        id: tag
+        run: |
+          IMAGE="${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPO }}:${{ github.sha }}"
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+          echo "이미지 주소: $IMAGE"
+
+      # PR 에서는 빌드만 해서 Dockerfile 을 검증하고 ECR 은 더럽히지 않는다.
+      # main push 와 workflow_dispatch 에서는 푸시한다.
       - name: 빌드 및 푸시
         uses: docker/build-push-action@v7
         with:
           context: .
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.tag.outputs.image }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  deploy:
+    name: EC2 배포
+    needs: image
+    # main 으로 향하는 push 는 PR 머지뿐이다 (브랜치 보호가 직접 push 를 막는다).
+    # workflow_dispatch 로 main 을 골라도 event_name 이 달라 걸러진다.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+
+    env:
+      IMAGE: ${{ needs.image.outputs.image }}
+      EC2_HOST: ${{ secrets.EC2_HOST }}
+      EC2_USER: ${{ secrets.EC2_USER }}
+
+    steps:
+      - name: SSH 키 준비
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/deploy.pem
+          chmod 600 ~/.ssh/deploy.pem
+          ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts
+
+      # EC2 는 인스턴스 IAM 역할로 ECR 에 인증한다. 서버에 비밀을 두지 않는다.
+      - name: 컨테이너 교체
+        run: |
+          ssh -i ~/.ssh/deploy.pem "$EC2_USER@$EC2_HOST" \
+            "IMAGE='$IMAGE' AWS_REGION='$AWS_REGION' bash -s" <<'REMOTE'
+          set -euo pipefail
+          aws ecr get-login-password --region "$AWS_REGION" \
+            | docker login --username AWS --password-stdin "${IMAGE%%/*}"
+          docker pull "$IMAGE"
+          docker stop duckmoim-app 2>/dev/null || true
+          docker rm   duckmoim-app 2>/dev/null || true
+          # 루트 볼륨이 8GB 다. 기본 json-file 드라이버는 상한이 없어
+          # 오래 돌수록 컨테이너 로그가 디스크를 먹는다. 30MB 로 묶는다.
+          docker run -d \
+            --name duckmoim-app \
+            --restart unless-stopped \
+            --log-opt max-size=10m \
+            --log-opt max-file=3 \
+            -p 8080:8080 \
+            "$IMAGE"
+          docker image prune -af --filter "until=72h"
+          REMOTE
+
+      - name: 헬스체크
+        run: |
+          for i in $(seq 1 20); do
+            if curl -fsS "http://$EC2_HOST:8080/api/health" | grep -q '"status":"UP"'; then
+              echo "배포 확인 — ${i}회차에서 UP"
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "::error::60초 안에 UP 이 되지 않았다"
+          ssh -i ~/.ssh/deploy.pem "$EC2_USER@$EC2_HOST" \
+            "docker logs --tail 50 duckmoim-app" || true
+          exit 1
