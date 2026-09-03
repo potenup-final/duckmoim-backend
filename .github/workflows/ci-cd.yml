@@ -2,9 +2,9 @@ name: CI/CD
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
-    branches: [main]
+    branches: [main, develop]
   workflow_dispatch:
 
 concurrency:
@@ -64,8 +64,19 @@ jobs:
       - name: Buildx 준비
         uses: docker/setup-buildx-action@v4
 
+      # 이미지는 배포할 때만 필요하고 배포는 main 만 한다. 그래서 AWS 를 건드리는
+      # 두 스텝은 main 에서만 돈다 — develop 머지마다 역할을 맡을 이유가 없다.
+      #
+      # 도커 빌드 자체는 모든 이벤트에서 돈다. Dockerfile 이 깨진 것을 main 머지
+      # 순간에 알게 되면 그때는 이미 배포가 나가려는 중이다.
+      #
+      #   PR                    refs/pull/N/merge  → 빌드만. AWS 안 건드림
+      #   develop push          refs/heads/develop → 빌드만. AWS 안 건드림
+      #   main push · dispatch  refs/heads/main    → ECR 로그인 + 푸시
+
       # 장기 액세스 키 없이 역할을 맡는다. 자격증명은 이 잡 안에서만 유효하다.
       - name: AWS 자격증명 (OIDC)
+        if: github.ref == 'refs/heads/main'
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
@@ -73,22 +84,28 @@ jobs:
 
       - name: ECR 로그인
         id: ecr
+        if: github.ref == 'refs/heads/main'
         uses: aws-actions/amazon-ecr-login@v2
 
+      # main 이 아니면 ECR 주소가 없다. 로컬 태그를 붙여 빌드만 한다 —
+      # 태그가 비면 build-push-action 이 파싱에서 죽는다.
       - name: 이미지 주소 결정
         id: tag
         run: |
-          IMAGE="${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPO }}:${{ github.sha }}"
+          if [ "$GITHUB_REF" = "refs/heads/main" ]; then
+            IMAGE="${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPO }}:${{ github.sha }}"
+            echo "이미지 주소: $IMAGE  (ECR 로 푸시한다)"
+          else
+            IMAGE="${{ env.ECR_REPO }}:${{ github.sha }}"
+            echo "이미지 주소: $IMAGE  (로컬 태그. 빌드만 하고 버린다)"
+          fi
           echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
-          echo "이미지 주소: $IMAGE"
 
-      # PR 에서는 빌드만 해서 Dockerfile 을 검증하고 ECR 은 더럽히지 않는다.
-      # main push 와 workflow_dispatch 에서는 푸시한다.
       - name: 빌드 및 푸시
         uses: docker/build-push-action@v7
         with:
           context: .
-          push: ${{ github.event_name != 'pull_request' }}
+          push: ${{ github.ref == 'refs/heads/main' }}
           tags: ${{ steps.tag.outputs.image }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

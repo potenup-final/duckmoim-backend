@@ -41,3 +41,8 @@ out/
 .env.*
 !.env.example
 .DS_Store
+
+### Claude Code ###
+# 팀 공용 설정(.claude/settings.json)과 훅·규칙·스킬은 커밋한다.
+# 개인 오버라이드만 제외한다.
+.claude/settings.local.json
