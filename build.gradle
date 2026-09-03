@@ -22,12 +22,28 @@ dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-validation'
 	implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.13'
 
+	// 로컬은 docker-compose 의 MySQL, 운영은 RDS(MySQL). 드라이버는 같다.
+	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+	runtimeOnly 'com.mysql:mysql-connector-j'
+
+	compileOnly 'org.projectlombok:lombok'
+	annotationProcessor 'org.projectlombok:lombok'
+
 	testImplementation 'org.springframework.boot:spring-boot-starter-test'
 	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+
+	// 테스트는 실제 MySQL 로 돌린다. H2 는 제약 위반 예외와 락 동작이 운영과 달라
+	// 유니크 제약·동시성 검증이 의미를 잃는다 (테스트 코드 컨벤션).
+	testImplementation 'org.testcontainers:mysql'
+	testImplementation 'org.testcontainers:junit-jupiter'
 }
 
 tasks.named('test') {
 	useJUnitPlatform()
+
+	systemProperty 'spring.datasource.url', 'jdbc:tc:mysql:8.4:///duckmoim'
+	systemProperty 'spring.datasource.driver-class-name', 'org.testcontainers.jdbc.ContainerDatabaseDriver'
+	systemProperty 'spring.jpa.hibernate.ddl-auto', 'create-drop'
 }
 
 tasks.register('installGitHooks', Exec) {

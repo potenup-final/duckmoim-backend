@@ -5,3 +5,26 @@ springdoc:
     enabled: false
   swagger-ui:
     enabled: false
+
+# RDS(MySQL). 값은 배포 시 환경변수로 주입한다 — 기본값을 두지 않는다.
+#
+# 기본값이 있으면 환경변수를 빠뜨린 배포가 실패하지 않고 엉뚱한 곳에 붙는다.
+# 없으면 기동 자체가 안 되므로 헬스체크가 잡아낸다.
+#
+# ⚠️ 아직 주입되지 않는다. ci-cd.yml 의 `docker run` 에 -e 세 개를 추가하고
+#    GitHub Secrets 에 값을 넣어야 prod 가 뜬다. RDS 생성 전에는 main 에
+#    머지하면 배포가 깨진다.
+spring:
+  datasource:
+    url: ${DB_URL}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+
+  jpa:
+    hibernate:
+      # 운영에서 스키마를 코드가 바꾸지 않는다. 컬럼 삭제·타입 변경이
+      # 배포와 함께 조용히 실행되는 경로를 만들지 않는다.
+      ddl-auto: none
+    properties:
+      hibernate:
+        format_sql: false
