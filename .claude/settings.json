@@ -41,6 +41,17 @@
             "statusMessage": "공용 파일 가드 확인"
           }
         ]
+      },
+      {
+        "matcher": "Write|Edit|NotebookEdit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "g=\"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/guard-plan.sh\"; [ -f \"$g\" ] || g=\".claude/hooks/guard-plan.sh\"; if [ -f \"$g\" ]; then sh \"$g\"; else cat >/dev/null; printf '{\"systemMessage\":\"계획 게시 가드(.claude/hooks/guard-plan.sh)를 찾지 못해 [2] 강제가 꺼져 있습니다.\"}\\n'; fi",
+            "timeout": 15,
+            "statusMessage": "계획 게시 확인"
+          }
+        ]
       }
     ]
   }
