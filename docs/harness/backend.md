@@ -499,17 +499,56 @@ git commit -m "chore: 위키 서브모듈 포인터 갱신"
    `feature/STAR-30 → develop` PR 은 **빌드도 테스트도 안 돌고 초록불 없이 머지
    가능하다**
 
-세 곳을 고친다.
-
-- [ ] `develop` 브랜치 생성 (`main` 에서)
-- [ ] default branch 를 `develop` 으로 변경 — 이래야 Jira 가 딴 브랜치의 base 와
-      PR 의 기본 base 가 맞는다
-- [ ] `ci-cd.yml` 의 `pull_request.branches` 에 `develop` 추가.
-      **`deploy` 잡은 건드리지 않는다** — `github.ref == 'refs/heads/main'` 조건이
-      하드코딩돼 있어 develop 머지로 배포가 나가지 않는다
-
 이걸 안 고치면 루프의 [5]("CI 초록")가 성립하지 않고, 마지막 관문을 CI 가 아니라
 사람이 떠맡는다.
+
+### 순서가 중요하다
+
+**CI 트리거를 먼저 고친다.** 반대로 하면 develop 으로 향하는 첫 PR 이 검증 없이
+열리고, 깨진 건지 아닌지 알 수 없다.
+
+```
+① ci-cd.yml 트리거에 develop 추가 → main 으로 PR → 머지     ← 완료
+      ↑ main 이 아직 default 라 이 PR 자체는 CI 가 돈다
+② develop 브랜치를 main 에서 생성                          ← 웹 UI / gh
+③ default branch 를 develop 으로 변경                      ← 웹 UI
+④ 브랜치 보호를 main · develop 양쪽에 설정                   ← 웹 UI
+```
+
+①에서 이미지 푸시 조건도 같이 고쳤다. 원래 `github.event_name != 'pull_request'`
+였는데 그대로 두면 **develop push 가 ECR 에 이미지를 올린다** — 배포되지 않을
+이미지다. `github.ref == 'refs/heads/main'` 으로 바꿨다. PR 과 develop 에서도
+빌드는 돌아 Dockerfile 검증은 유지된다.
+
+### ②③④ 는 웹 UI 다
+
+파일로 되지 않는다. `Settings → Rules → Rulesets` 에서 한다.
+
+**`main` 규칙**
+
+| 항목 | 값 | 근거 |
+|---|---|---|
+| 직접 push | 금지 | 협업 규칙 1장 |
+| 머지 전 PR | 필수 | |
+| Require status checks | `빌드 및 테스트` · `제목 형식` | CI 결과에 강제력을 준다 |
+| 승인 리뷰 | 1명 | 협업 규칙 4장 |
+| 머지 후 브랜치 삭제 | 켬 | 지금 머지된 브랜치가 남아 있다 |
+| **Require review from Code Owners** | **끔** | 아래 |
+
+**`develop` 규칙** — `main` 과 같게 한다. develop 머지로는 배포가 나가지 않으므로
+세기를 낮출 이유가 없다.
+
+**⚠️ Code Owners 승인을 요구하지 않는다.** CODEOWNERS 의 공용 부진은 소유자가 한
+사람이다. 그 사람이 그 파일을 고치는 PR 을 열면 **자기 승인이 불가능해 영구
+차단된다.** CI/CD 계획이 프론트(1인 작업)에 대해 지적한 것과 같은 함정이고,
+소유자가 한 명인 경로에서는 사람이 셋이어도 똑같이 걸린다.
+
+CODEOWNERS 의 값은 승인이 아니라 **자동 리뷰 요청**이다. 남이 공용 부진을
+건드리면 관리자에게 알려진다. 승인 인원 1명 규칙으로 게이트는 이미 충분하다.
+
+**⚠️ status check 목록에는 한 번이라도 실행된 job 만 나타난다.** `빌드 및 테스트`
+는 PR #5·#7 에서 돌았으니 이미 있다. **`제목 형식` 은 이 PR 이 처음이다** — PR 을
+한 번 돌린 뒤에 설정해야 목록에 뜬다.
 
 ## 손대면 안 되는 곳
 
@@ -588,7 +627,13 @@ ls docs/wiki                   # 비어 있으면 위키 접근 권한을 받아
 
 ## 남은 것
 
-- [ ] `develop` 생성 · default branch 변경 · CI 트리거에 develop 추가
+- [ ] **`develop` 생성 · default branch 변경 · 브랜치 보호** — 웹 UI 작업이다.
+      순서와 함정은 위 "브랜치 전략" 절에 있다. CI 트리거는 이미 고쳤다
+- [ ] `제목 형식` job 을 status check 로 올린다. **PR 을 한 번 돌린 뒤에** 해야
+      목록에 나타난다
+- [ ] 머지된 브랜치 정리 — `chore/STAR-20` · `chore/STAR-26` 은 머지됐고
+      `chore/STAR-21` 은 한 번도 안 쓰인 고아다. 브랜치 보호의 "머지 후 자동 삭제"
+      를 켜면 앞으로는 자동이다
 - [ ] **훅 발동 확인** — `/hooks` 를 열거나 재시작한 뒤 `sed -i '' 's/x/y/' .githooks/prepare-commit-msg`
       같은 명령이 실제로 막히는지 본다. 파이프 테스트는 통과했지만 세션 안에서는
       증명할 수 없었다
