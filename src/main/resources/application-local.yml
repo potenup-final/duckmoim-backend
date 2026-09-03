@@ -17,11 +17,7 @@ spring:
 
   jpa:
     hibernate:
-      # 임시다. 엔티티가 아직 없어 로컬에서 손으로 테이블을 만들지 않으려고 켜둔다.
-      # EV-02 스키마 매핑이 확정되면 버전 관리되는 마이그레이션으로 옮기고 none 으로 내린다.
-      # EV-03 이 "재실행해도 중복 생성 없음", EV-09 가 롤백 절차를 요구하는데
-      # ddl-auto 는 둘 다 보장하지 못한다.
-      ddl-auto: update
+      ddl-auto: validate
     properties:
       hibernate:
         format_sql: true

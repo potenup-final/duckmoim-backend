@@ -25,6 +25,8 @@ dependencies {
 	// 로컬은 docker-compose 의 MySQL, 운영은 RDS(MySQL). 드라이버는 같다.
 	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
 	runtimeOnly 'com.mysql:mysql-connector-j'
+	implementation 'org.flywaydb:flyway-core'
+	implementation 'org.flywaydb:flyway-mysql'
 
 	compileOnly 'org.projectlombok:lombok'
 	annotationProcessor 'org.projectlombok:lombok'
@@ -43,7 +45,6 @@ tasks.named('test') {
 
 	systemProperty 'spring.datasource.url', 'jdbc:tc:mysql:8.4:///duckmoim'
 	systemProperty 'spring.datasource.driver-class-name', 'org.testcontainers.jdbc.ContainerDatabaseDriver'
-	systemProperty 'spring.jpa.hibernate.ddl-auto', 'create-drop'
 }
 
 tasks.register('installGitHooks', Exec) {
