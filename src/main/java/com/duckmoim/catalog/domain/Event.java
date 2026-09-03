@@ -1,5 +1,6 @@
 package com.duckmoim.catalog.domain;
 
+import com.duckmoim.common.domain.BaseEntity;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -10,7 +11,6 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import java.math.BigDecimal;
 import java.time.LocalDate;
-import java.time.LocalDateTime;
 import java.time.LocalTime;
 import lombok.AccessLevel;
 import lombok.Getter;
@@ -20,7 +20,7 @@ import lombok.NoArgsConstructor;
 @Table(name = "event")
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
-public class Event {
+public class Event extends BaseEntity {
 
 	@Id
 	@GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -100,10 +100,4 @@ public class Event {
 	// Region 은 Event 애그리게이트 밖이라 객체 참조를 두지 않는다 (도메인 3.2).
 	@Column(name = "region_id", nullable = false)
 	private Long regionId;
-
-	@Column(name = "created_at", nullable = false, updatable = false)
-	private LocalDateTime createdAt;
-
-	@Column(name = "updated_at", nullable = false)
-	private LocalDateTime updatedAt;
 }
