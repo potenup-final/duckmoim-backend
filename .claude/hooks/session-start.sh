@@ -29,6 +29,21 @@ git config core.hooksPath .githooks >/dev/null 2>&1
 # `M docs/wiki` 로 더러워지고, 팀원이 "이건 커밋해야 하나" 를 매번 판단하게 된다.
 git config submodule.docs/wiki.ignore all >/dev/null 2>&1
 
+# git pull 이 서브모듈에 손대지 못하게 한다.
+#
+# submodule.recurse=true 면 pull 이 위키를 **기록된 핀**으로 체크아웃한다. 그런데
+# 우리는 핀을 관리하지 않기로 했으므로 핀은 아무도 안 챙기는 옛 값이다. 즉 pull 이
+# 도와주려 하면 위키가 뒤로 간다 — 실측했다: a25d114(최신) → 46651e7(6시간 낡음).
+# submodule.docs/wiki.ignore 는 status·diff 표시만 바꾸므로 이걸 막지 못한다.
+#
+# unset 이 아니라 false 로 명시한다. 전역 설정(~/.gitconfig)에 true 가 있으면
+# 로컬을 지우는 것으로는 덮이지 않는다.
+#
+# 새 클론에는 이 설정이 없어서 pull 이 원래 서브모듈을 건드리지 않는다. 문제는
+# STAR-22 시절 Gradle 태스크가 true 를 심어둔 기존 클론뿐이고, 이 줄이 그것을
+# 되돌린다.
+git config submodule.recurse false >/dev/null 2>&1
+
 git submodule update --init --remote docs/wiki >/dev/null 2>&1 && exit 0
 
 # 여기부터는 실패 경로. 조용히 넘기지 않는다 — 위키를 못 읽는데 못 읽는 줄
