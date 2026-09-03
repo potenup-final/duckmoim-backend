@@ -15,20 +15,17 @@ import org.springframework.test.web.servlet.MockMvc;
 @DisplayName("기본 프로파일에서는 API 문서가 열려 있다")
 class OpenApiExposureTest {
 
-	@Autowired
-	private MockMvc mockMvc;
+  @Autowired private MockMvc mockMvc;
 
-	@Test
-	@DisplayName("OpenAPI 스펙을 200 으로 내려준다")
-	void servesApiDocs() throws Exception {
-		mockMvc.perform(get("/v3/api-docs"))
-			.andExpect(status().isOk());
-	}
+  @Test
+  @DisplayName("OpenAPI 스펙을 200 으로 내려준다")
+  void servesApiDocs() throws Exception {
+    mockMvc.perform(get("/v3/api-docs")).andExpect(status().isOk());
+  }
 
-	@Test
-	@DisplayName("Swagger UI 로 이동시킨다")
-	void servesSwaggerUi() throws Exception {
-		mockMvc.perform(get("/swagger-ui.html"))
-			.andExpect(status().is3xxRedirection());
-	}
+  @Test
+  @DisplayName("Swagger UI 로 이동시킨다")
+  void servesSwaggerUi() throws Exception {
+    mockMvc.perform(get("/swagger-ui.html")).andExpect(status().is3xxRedirection());
+  }
 }

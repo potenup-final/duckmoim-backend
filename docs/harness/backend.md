@@ -269,46 +269,90 @@ Layer 'service' is empty
 규칙 정의를 한 곳에 두고, **위반 픽스처를 일부러 만들어 규칙이 그것을 잡는지
 검사한다.**
 
-```java
-// src/test/java/com/duckmoim/architecture/
-//   LayerRules.java              규칙의 단일 정의
-//   LayerDependencyTest.java     프로덕션 코드를 검사한다 (지금은 빈 레이어라 통과)
-//   LayerRuleIsAliveTest.java    규칙이 위반을 잡는지 검사한다
-//   fixture/service/ViolatingPaymentService.java   service → infra 직접 참조
-//   fixture/infra/PaymentJpaRepository.java
+```
+src/test/java/com/duckmoim/architecture/
+  ArchitectureRules.java     규칙의 단일 정의
+  ArchitectureTest.java      프로덕션 코드를 검사한다 (지금은 빈 입력이라 통과)
+  RulesAreAliveTest.java     같은 규칙 객체로 위반 픽스처를 검사한다
+  fixture/                   일부러 어기는 클래스들. test 태스크에서 exclude
+```
 
-EvaluationResult result = LayerRules.LAYER_DEPENDENCY.evaluate(fixture);
+**규칙 객체가 하나여야 한다.** 규칙을 복제해 두 곳에 적으면 둘이 갈라지고, 생존
+증명이 증명하지 않게 된다.
+
+```java
+EvaluationResult result = ArchitectureRules.LAYER_DEPENDENCY.evaluate(fixtures);
 
 assertThat(result.hasViolation()).isTrue();
 assertThat(result.getFailureReport().toString()).contains("ViolatingPaymentService");
 ```
 
-`@AnalyzeClasses` 는 `ImportOption.DoNotIncludeTests` 를 쓰므로 픽스처가
-프로덕션 검사에 섞이지 않는다. 실측으로 둘 다 통과하는 것을 확인했다.
-
 이건 CI/CD 계획 Phase 1 의 완료 조건 ②(*일부러 테스트를 깨뜨린 PR 에서 ❌ 가
-뜨는지 확인*)를 **사람 손에서 떼어내 테스트로 만든 것**이다. 규칙을 추가할
-때마다 살아있음 테스트를 같이 추가한다. 이게 이 게이트를 믿을 수 있게 만드는
-유일한 근거다.
+뜨는지 확인*)를 **사람 손에서 떼어내 테스트로 만든 것**이다. **규칙을 추가할
+때는 여기에도 한 줄을 추가한다.** 안 하면 그 규칙은 있는 척만 한다.
+
+픽스처만으로는 반쪽이라, 프로덕션 코드에 실제 위반을 넣어 네 규칙이 다 빨간불이
+되는 것까지 확인하고 지웠다.
+
+### 게이트를 만들면서 걸린 것 셋
+
+전부 **규칙이 실제로 걸리게 해보지 않으면 드러나지 않는** 종류였다.
+
+**① Checkstyle 메시지에 `{}` 를 쓰면 Checkstyle 이 죽는다.** 로그 문자열 더하기
+규칙의 메시지에 *placeholder `{}` 를 쓰세요* 라고 적었는데, Checkstyle 은 메시지를
+`MessageFormat` 으로 처리해서 `{}` 를 인자 자리로 읽는다. 빈 문자열을 숫자로
+파싱하다 `NumberFormatException` 이 나고, 위반 보고가 아니라 **태스크 자체가
+터진다.** `'{}'` 로 감싸 고쳤다.
+
+무서운 것은 **규칙이 처음 걸리는 날까지 아무 이상이 없었다**는 점이다. 빌드는
+초록불이었고 규칙은 거기 있었고 아무도 위반하지 않았으니 아무 일도 없었다.
+실제 위반이 처음 들어오는 날 — 즉 사람이 가장 급한 날 — 빌드가 "위반 3건"이
+아니라 "Checkstyle 을 실행할 수 없음"으로 터졌을 것이다.
+
+**② ArchUnit 은 빈 입력을 두 방식으로 거부한다.**
+
+| 스타일 | 빈 입력일 때 | 인정하려면 |
+|---|---|---|
+| `layeredArchitecture()` | `Layer 'domain' is empty` | `withOptionalLayers(true)` |
+| `noClasses()` · `classes()` | `failed to check any classes` | `allowEmptyShould(true)` |
+
+둘 다 **"지금은 검사할 게 없다"를 명시적으로 인정하게 만든다.** 좋은 설계다 —
+조용히 통과시키지 않는다. 그리고 그 인정의 대가가 정확히 생존 증명 테스트다.
+
+**③ 픽스처가 테스트로 실행된다.** 클래스 이름을 `*Test` 로 안 지으면 JUnit 이
+수집하지 않을 것이라 봤는데 실행됐다. Gradle 은 클래스 파일을 훑어 JUnit
+Platform 에 넘기므로 이름 규칙이 걸리지 않는다. `test` 태스크에서 픽스처 경로를
+`exclude` 했다. 컴파일은 그대로여서 ArchUnit 은 계속 읽는다.
 
 ### 무엇을 옮기고 무엇을 남기나
 
-| 위키 규칙 | 옮길 곳 | 지금 |
-|---|---|---|
-| 의존성 방향 4개 규칙 | ArchUnit | ✅ |
-| service 가 기술 객체·infra 구현 직접 참조 금지 | ArchUnit | ✅ |
-| domain 이 다른 레이어를 참조하지 않음 | ArchUnit | ✅ |
-| 저장소 인터페이스는 domain 에 선언 | ArchUnit | ✅ |
-| `@Transactional` 은 service 에만 | ArchUnit | ✅ |
-| Entity 의 `@Data`·무분별한 `@Setter` 금지 | ArchUnit | ✅ |
-| 테스트 메서드명 `pay_pointIsNotEnough` 형식 | Checkstyle `MethodName` | ✅ |
-| `@Test` 에 `@DisplayName` 누락 | ArchUnit (메서드 어노테이션) | ✅ |
-| 로그 prefix `[Class.method]` | Checkstyle `RegexpSinglelineJava` | ✅ |
-| 로그 문자열 더하기 금지 | Checkstyle `RegexpSinglelineJava` | ✅ |
-| 포맷·임포트 순서 | Spotless | ✅ |
-| Entity 를 Response 로 직접 반환 금지 | ArchUnit | 첫 엔티티 이후 |
-| H2 금지 (테스트 컨벤션) | Gradle 의존성 금지 규칙 | 첫 엔티티 이후 |
-| 커밋 제목 `[KEY]` 누락 | CI 정규식 워크플로 | ✅ |
+**들어간 것.** 전부 위반을 실제로 잡는 것까지 확인했다.
+
+| 위키 규칙 | 수단 |
+|---|---|
+| 의존성 방향 · service 가 infra 구현 직접 참조 금지 | ArchUnit `LAYER_DEPENDENCY` |
+| domain 이 다른 레이어를 참조하지 않음 | ArchUnit `DOMAIN_REFERENCES_NOTHING` |
+| domain 을 Spring 없이 단위 테스트할 수 있어야 함 | ArchUnit `DOMAIN_IS_FRAMEWORK_FREE` |
+| 저장소 인터페이스는 domain 에 선언 | ArchUnit `REPOSITORY_INTERFACE_LIVES_IN_DOMAIN` |
+| `@Test` 에 `@DisplayName` 누락 | ArchUnit `TEST_HAS_DISPLAY_NAME` |
+| 로그 prefix `[Class.method]` | Checkstyle `RegexpSingleline` |
+| 로그 문자열 더하기 금지 | Checkstyle `RegexpSingleline` |
+| `FIXME`·`XXX`·`HACK` 마커 금지 | Checkstyle `RegexpSingleline` |
+| 메서드 네이밍 (`main` / `test` 분리) | Checkstyle `MethodName` |
+| 포맷·임포트 순서 | Spotless googleJavaFormat |
+
+**미룬 것.** 이유가 하나같다 — **지금은 위반 픽스처를 컴파일할 수 없어 규칙이 사는지
+증명할 방법이 없다.** 증명 못 하는 규칙은 넣지 않는다. 첫 엔티티 티켓에서 의존성이
+들어오면 같이 넣는다.
+
+| 위키 규칙 | 왜 지금은 못 하나 |
+|---|---|
+| `@Transactional` 은 service 에만 | `spring-tx` 가 클래스패스에 없다 |
+| service 가 JPA Entity·QueryDSL 직접 사용 금지 | `jakarta.persistence` 가 없다 |
+| Entity 의 `@Data`·무분별한 `@Setter` 금지 | Lombok 이 없다 |
+| Entity 를 Response 로 직접 반환 금지 | Entity 가 없다 |
+| H2 금지 | 테스트 DB 의존성 자체가 없다 |
+| 커밋 제목 `[KEY]` 누락 | 게이트가 아니라 CI 워크플로. 강제 단계에서 |
 
 **기계가 못 보는 것은 남는다.** 이건 CLAUDE.md 와 사람 리뷰의 몫이다.
 
