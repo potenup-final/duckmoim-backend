@@ -75,54 +75,58 @@ tasks.register('installGitHooks', Exec) {
 	ignoreExitValue = true
 }
 
-// git pull 과 checkout 이 서브모듈까지 따라오게 한다. 이게 없으면 위키가
-// 조용히 옛 커밋에 머물고, 사람은 최신 스펙을 읽는다고 착각한다.
-tasks.register('configureSubmoduleRecurse', Exec) {
-	description = 'pull · checkout 이 서브모듈을 함께 갱신하도록 설정한다'
+// 위키 포인터를 git 이 아예 안 보게 한다. 위키는 빌드하는 의존성이 아니라 읽는
+// 문서라 커밋에 고정할 이유가 없고, 최신으로 당겨오면 status 가 `M docs/wiki` 로
+// 계속 더러워진다. 그 상태를 방치하면 팀원이 "이건 커밋해야 하나" 를 매번 판단하게
+// 되고, `git add -A` 에 섞여 옛 핀이 올라가기도 한다. ignore=all 이면 둘 다 사라진다.
+tasks.register('configureWikiIgnore', Exec) {
+	description = '위키 서브모듈의 포인터 변화를 git 이 무시하도록 설정한다'
 	group = 'build setup'
-	onlyIf { file("${rootDir}/.git").exists() }
-	commandLine 'git', 'config', 'submodule.recurse', 'true'
+	onlyIf { file("${rootDir}/.gitmodules").exists() }
+	commandLine 'git', 'config', 'submodule.docs/wiki.ignore', 'all'
 	ignoreExitValue = true
 }
 
-// docs/wiki 는 [1] 컨텍스트 확보가 읽는 곳이다. 클론 직후 비어 있을 때만 채운다.
+// docs/wiki 는 [1] 컨텍스트 확보가 읽는 곳이다. **최신으로 맞춘다.**
 //
-// ⚠️ 비었을 때만 도는 것이 중요하다. `git submodule update --init` 은 **기록된
-//    커밋**으로 체크아웃하므로, 조건 없이 매 빌드마다 돌리면 포인터를 올리려고
-//    실행한 `--remote` 를 되돌린다. 그 상태에서 `git add docs/wiki` 를 하면 옛
-//    핀이 커밋되고, 팀원은 갱신된 줄 알았던 옛 문서를 읽는다. 실제로 겪었다.
+// 예전에는 `--init` 만 하고 조건이 "docs/wiki/README.md 가 없을 때" 였다. 그래서
+// 한 번 채워지면 다시 돌지 않았고, 누가 위키를 고쳐도 포인터를 올려주지 않으면
+// 팀원은 낡은 문서를 최신이라 믿고 읽었다. 실제로 그 상태였다 — 백엔드가 가리키는
+// 핀이 위키 최신보다 커밋 2개 뒤처져 있었고 아무 경고도 없었다.
+//
+// --remote 를 조건 없이 돌리는 것이 예전에는 위험했다. 포인터를 올리려고 실행한
+// --remote 를 되돌렸기 때문이다. 지금은 방향이 반대다 — 항상 최신을 가져오므로
+// 되돌릴 핀이라는 개념 자체가 없고, configureWikiIgnore 가 그 변화를 커밋에서
+// 떼어낸다.
 //
 // 위키는 PRIVATE 이라 접근 권한이 없으면 실패한다. 그때 조용히 넘기지 않는다 —
-// 빌드는 통과하는데 에이전트가 스펙을 못 읽는 상태가 가장 나쁘다. 알아채지
-// 못한 채로 "일반적으로 맞는" 코드가 나온다.
-tasks.register('initWiki', Exec) {
-	description = '위키 서브모듈이 비어 있으면 초기화한다 (docs/wiki)'
+// 빌드는 통과하는데 에이전트가 스펙을 못 읽는 상태가 가장 나쁘다.
+tasks.register('syncWiki', Exec) {
+	description = '위키 서브모듈을 최신으로 맞춘다 (docs/wiki)'
 	group = 'build setup'
-	onlyIf {
-		file("${rootDir}/.gitmodules").exists() &&
-			!file("${rootDir}/docs/wiki/README.md").exists()
-	}
-	commandLine 'git', 'submodule', 'update', '--init', 'docs/wiki'
+	onlyIf { file("${rootDir}/.gitmodules").exists() }
+	commandLine 'git', 'submodule', 'update', '--init', '--remote', 'docs/wiki'
 	ignoreExitValue = true
 
 	doLast {
 		if (executionResult.get().exitValue != 0) {
 			logger.warn('''
 ========================================================================
- 위키 서브모듈(docs/wiki) 을 가져오지 못했습니다.
+ 위키 서브모듈(docs/wiki) 을 최신으로 맞추지 못했습니다.
 
  빌드와 테스트는 그대로 됩니다. 다만 요구사항 검증 기준 · 불변식 ·
- 설계 결정을 읽을 수 없어, 에이전트가 컨텍스트 없이 코드를 씁니다.
+ 설계 결정을 읽을 수 없거나, 낡은 것을 읽습니다.
 
- 위키는 PRIVATE 입니다. potenup-final/duckmoim-wiki 접근 권한을
- 받은 뒤 아래를 실행하세요.
+ 네트워크가 끊겼다면 이미 받아둔 위키를 그대로 쓰면 됩니다.
+ 그게 아니면 위키는 PRIVATE 이므로 potenup-final/duckmoim-wiki
+ 접근 권한을 받은 뒤 아래를 실행하세요.
 
-   git submodule update --init docs/wiki
+   git submodule update --init --remote docs/wiki
 ========================================================================'''.stripIndent())
 		}
 	}
 }
 
 tasks.named('compileJava') {
-	dependsOn 'installGitHooks', 'configureSubmoduleRecurse', 'initWiki'
+	dependsOn 'installGitHooks', 'configureWikiIgnore', 'syncWiki'
 }
