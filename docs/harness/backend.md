@@ -194,6 +194,30 @@ docs/wiki/   →  potenup-final/duckmoim-wiki   (서브모듈)
 팀원에게도 걸리는 것은 아래 두 줄뿐이다.** 위쪽 넷은 에이전트를 쓰는 사람에게만
 값이 있다. 규칙을 진짜로 팀 전체에 걸고 싶으면 아래 두 줄로 내려보내야 한다.
 
+실제 배치는 이렇다. 전부 저장소에 체크인되므로 셋 다에게 걸린다.
+
+```
+CLAUDE.md                              122줄. 명령 · 루프 · 겪은 함정
+.claude/settings.json                  permissions.deny / ask + PreToolUse 훅
+.claude/hooks/guard-shared.sh          Bash 우회 차단
+.claude/rules/{domain,service,infra,presentation,test}.md
+.claude/skills/ticket-context/SKILL.md [1] 컨텍스트 수집
+```
+
+`CLAUDE.md` 는 **위키에 없는 것만** 담는다. 위키가 `docs/wiki/` 에 붙어 있으므로
+컨벤션을 옮겨 적으면 두 곳이 갈라진다. 담는 것은 명령, 루프 순서, 게이트가 무엇을
+보는지, 그리고 **겪은 함정**이다.
+
+`.claude/rules/*.md` 는 `paths:` 로 레이어를 가리켜 **해당 파일을 열 때만** 얹힌다.
+위키 컨벤션 중 그 레이어에 걸리는 부분을 요약하고 원문을 링크한다. 다섯 파일
+합계 147줄이라 다 얹혀도 `CLAUDE.md` 하나 값이지만, `paths:` 가 먹으면 그중
+하나씩만 얹힌다.
+
+**`paths:` 가 먹는지는 `/context` 로 확인해야 한다.** Memory files 목록에 그
+파일이 안 떠야 성공이다. 떠 있으면 토큰은 그대로 나가면서 조용히 실패한 것이다.
+안 먹으면 하위 디렉터리 `CLAUDE.md` 로 바꾼다 — 그건 확인된 동작이다. 다만 도메인
+패키지마다 하나씩 두게 되어 관리 비용이 올라간다.
+
 ## 게이트 — `./gradlew check`
 
 ### 왜 CI 를 안 고쳐도 되는가
@@ -514,9 +538,22 @@ cat > .githooks/prepare-commit-msg
 git checkout main -- .github/workflows/ci-cd.yml
 ```
 
-그래서 PreToolUse 훅으로 그 문을 닫는다. 보호 경로와 쓰기 표현이 같이 나오면
-막고 읽기는 통과시킨다. 프론트의 `guard-shared.mjs` 와 같은 구조이고, 보호
-목록에 규칙 파일이 더해진다.
+그래서 `.claude/hooks/guard-shared.sh` 를 PreToolUse(Bash) 로 걸어 그 문을 닫는다.
+보호 경로와 쓰기 표현이 같이 나오면 막고 **읽기는 통과시킨다** — `cat .githooks/x`
+는 되고 `cat > .githooks/x` 는 안 된다. 16가지 명령 형태로 확인했다.
+
+세기는 두 단계다. 팀 공용 파일은 `deny`, 게이트 규칙과 빌드 설정은 `ask` 다.
+후자를 금지로 두면 규칙을 고칠 정당한 이유가 있을 때 길이 막힌다.
+
+**`node` 가 아니라 `sh` + `jq` 로 썼다.** 둘 다 macOS 기본 탑재다. 프론트 절이
+`guard-shared.mjs` 라고 적었지만 백엔드만 하는 팀원 기기에 `node` 가 없을 수
+있고, **훅이 실행되지 않으면 조용히 통과한다.** 가드가 없는데 있다고 믿는 상태가
+가장 나쁘다. 같은 이유로 스크립트를 못 찾으면 경고를 띄우게 했다 (그 경로도 확인했다).
+
+**아직 발동을 증명하지 못했다.** `.claude/` 가 세션 시작 시점에 없었고, 설정
+감시자는 시작 때 설정 파일이 있던 디렉터리만 본다. 파이프 테스트와 스키마 검증은
+통과했으니 스크립트와 설정은 맞다. `/hooks` 를 한 번 열거나 재시작한 뒤 확인해야
+한다 — "남은 것"에 적어뒀다.
 
 **이것도 완전하지 않다.** 쓰기를 표현하는 방법은 무한하고 훅에 적힌 패턴은
 유한하다. 훅은 로컬이라 끌 수도 있다. 그래서 백엔드에서는 프론트와 달리 **아래
@@ -552,6 +589,11 @@ ls docs/wiki                   # 비어 있으면 위키 접근 권한을 받아
 ## 남은 것
 
 - [ ] `develop` 생성 · default branch 변경 · CI 트리거에 develop 추가
+- [ ] **훅 발동 확인** — `/hooks` 를 열거나 재시작한 뒤 `sed -i '' 's/x/y/' .githooks/prepare-commit-msg`
+      같은 명령이 실제로 막히는지 본다. 파이프 테스트는 통과했지만 세션 안에서는
+      증명할 수 없었다
+- [ ] **`/context` 로 `.claude/rules/*.md` 확인** — Memory files 목록에 안 떠야
+      `paths:` 가 먹은 것이다. 조용히 실패하는 지점이다
 - [ ] 브랜치 보호 (CI/CD 계획 Phase 2. 아직 ⬜). status check 목록에는 **한 번이라도
       실행된 job 만** 나타나므로 PR 을 한 번 돌린 뒤에 설정한다
 - [ ] 커밋 제목 `[KEY]` 검사 워크플로 추가 (프론트 절에도 같은 항목이 남아 있다)

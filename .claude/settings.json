@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "permissions": {
+    "deny": [
+      "Edit(.githooks/**)",
+      "Edit(.github/scripts/**)",
+      "Edit(.github/workflows/jira-dispatch.yml)",
+      "Edit(.github/workflows/jira-pr-sync.yml)",
+      "Edit(.github/PULL_REQUEST_TEMPLATE.md)",
+      "Edit(docs/wiki/**)"
+    ],
+    "ask": [
+      "Edit(config/checkstyle/**)",
+      "Edit(src/test/java/com/duckmoim/architecture/**)",
+      "Edit(.github/workflows/ci-cd.yml)",
+      "Edit(gradlew)",
+      "Edit(gradle/wrapper/**)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "g=\"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/guard-shared.sh\"; [ -f \"$g\" ] || g=\".claude/hooks/guard-shared.sh\"; if [ -f \"$g\" ]; then sh \"$g\"; else cat >/dev/null; printf '{\"systemMessage\":\"공용 파일 가드(.claude/hooks/guard-shared.sh)를 찾지 못해 Bash 우회 차단이 꺼져 있습니다.\"}\\n'; fi",
+            "timeout": 10,
+            "statusMessage": "공용 파일 가드 확인"
+          }
+        ]
+      }
+    ]
+  }
+}
