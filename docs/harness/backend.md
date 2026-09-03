@@ -527,10 +527,28 @@ git commit -m "chore: 위키 서브모듈 포인터 갱신"
 ④ 브랜치 보호를 main · develop 양쪽에 설정                   ← 웹 UI
 ```
 
-①에서 이미지 푸시 조건도 같이 고쳤다. 원래 `github.event_name != 'pull_request'`
-였는데 그대로 두면 **develop push 가 ECR 에 이미지를 올린다** — 배포되지 않을
-이미지다. `github.ref == 'refs/heads/main'` 으로 바꿨다. PR 과 develop 에서도
-빌드는 돌아 Dockerfile 검증은 유지된다.
+### develop 은 CI 까지, main 은 CD 까지
+
+①에서 `image` 잡도 같이 고쳤다. 원래 조건은 `github.event_name != 'pull_request'`
+였고, 그대로 두면 **develop push 가 ECR 에 배포되지 않을 이미지를 올린다.**
+게다가 `image` 잡에 `if` 가 없어 **develop 머지마다 AWS OIDC 로 역할을 맡는다.**
+신뢰 정책이 `sub = repo:.../duckmoim-backend:*` 로 ref 와일드카드라 실패하지는
+않지만, 어차피 안 올라갈 이미지를 위해 AWS 를 건드리는 것이다.
+
+그래서 **AWS 를 건드리는 두 스텝만** main 전용으로 만들었다. 도커 빌드 자체는
+모든 이벤트에서 돈다 — Dockerfile 이 깨진 것을 main 머지 순간에 알게 되면 그때는
+이미 배포가 나가려는 중이다.
+
+| 이벤트 | `build` | 도커 빌드 | ECR 로그인·푸시 | `deploy` |
+|---|---|---|---|---|
+| PR → main · develop | ✓ | ✓ | ✗ | ✗ |
+| push → develop | ✓ | ✓ | ✗ | ✗ |
+| push → main | ✓ | ✓ | ✓ | ✓ |
+
+**태그 계산을 분기시켜야 했다.** ECR 로그인을 건너뛰면 `steps.ecr.outputs.registry`
+가 비고, 원래 식은 태그를 `/duckmoim-backend:sha` 로 만든다. 슬래시로 시작하면
+docker 가 그것을 레지스트리 호스트로 오해해 **빌드가 파싱에서 죽는다.** main 이
+아니면 로컬 태그(`duckmoim-backend:sha`)를 붙인다. 두 경우 다 시뮬레이션으로 확인했다.
 
 ### ②③④ 는 웹 UI 다
 
