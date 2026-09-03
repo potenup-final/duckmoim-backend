@@ -16,16 +16,16 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class Region {
 
-	@Id
-	@GeneratedValue(strategy = GenerationType.IDENTITY)
-	private Long id;
+  @Id
+  @GeneratedValue(strategy = GenerationType.IDENTITY)
+  private Long id;
 
-	@Column(name = "code", nullable = false, length = 20, unique = true)
-	private String code;
+  @Column(name = "code", nullable = false, length = 20, unique = true)
+  private String code;
 
-	@Column(name = "name", nullable = false, length = 20)
-	private String name;
+  @Column(name = "name", nullable = false, length = 20)
+  private String name;
 
-	@Column(name = "sort_order", nullable = false)
-	private int sortOrder;
+  @Column(name = "sort_order", nullable = false)
+  private int sortOrder;
 }

@@ -12,20 +12,20 @@ import lombok.Getter;
 @Getter
 public abstract class BaseEntity {
 
-	@Column(name = "created_at", nullable = false, updatable = false)
-	private LocalDateTime createdAt;
+  @Column(name = "created_at", nullable = false, updatable = false)
+  private LocalDateTime createdAt;
 
-	@Column(name = "updated_at", nullable = false)
-	private LocalDateTime updatedAt;
+  @Column(name = "updated_at", nullable = false)
+  private LocalDateTime updatedAt;
 
-	@PrePersist
-	void onPersist() {
-		this.createdAt = LocalDateTime.now(ZoneOffset.UTC);
-		this.updatedAt = this.createdAt;
-	}
+  @PrePersist
+  void onPersist() {
+    this.createdAt = LocalDateTime.now(ZoneOffset.UTC);
+    this.updatedAt = this.createdAt;
+  }
 
-	@PreUpdate
-	void onUpdate() {
-		this.updatedAt = LocalDateTime.now(ZoneOffset.UTC);
-	}
+  @PreUpdate
+  void onUpdate() {
+    this.updatedAt = LocalDateTime.now(ZoneOffset.UTC);
+  }
 }
