@@ -85,16 +85,23 @@ tasks.register('configureSubmoduleRecurse', Exec) {
 	ignoreExitValue = true
 }
 
-// docs/wiki 는 [1] 컨텍스트 확보가 읽는 곳이다. 기록된 커밋으로 초기화하는
-// 것뿐이라 최신이면 네트워크를 타지 않는다.
+// docs/wiki 는 [1] 컨텍스트 확보가 읽는 곳이다. 클론 직후 비어 있을 때만 채운다.
+//
+// ⚠️ 비었을 때만 도는 것이 중요하다. `git submodule update --init` 은 **기록된
+//    커밋**으로 체크아웃하므로, 조건 없이 매 빌드마다 돌리면 포인터를 올리려고
+//    실행한 `--remote` 를 되돌린다. 그 상태에서 `git add docs/wiki` 를 하면 옛
+//    핀이 커밋되고, 팀원은 갱신된 줄 알았던 옛 문서를 읽는다. 실제로 겪었다.
 //
 // 위키는 PRIVATE 이라 접근 권한이 없으면 실패한다. 그때 조용히 넘기지 않는다 —
 // 빌드는 통과하는데 에이전트가 스펙을 못 읽는 상태가 가장 나쁘다. 알아채지
 // 못한 채로 "일반적으로 맞는" 코드가 나온다.
 tasks.register('initWiki', Exec) {
-	description = '위키 서브모듈을 초기화한다 (docs/wiki)'
+	description = '위키 서브모듈이 비어 있으면 초기화한다 (docs/wiki)'
 	group = 'build setup'
-	onlyIf { file("${rootDir}/.gitmodules").exists() }
+	onlyIf {
+		file("${rootDir}/.gitmodules").exists() &&
+			!file("${rootDir}/docs/wiki/README.md").exists()
+	}
 	commandLine 'git', 'submodule', 'update', '--init', 'docs/wiki'
 	ignoreExitValue = true
 
