@@ -2,9 +2,9 @@ name: CI/CD
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
-    branches: [main]
+    branches: [main, develop]
   workflow_dispatch:
 
 concurrency:
@@ -82,13 +82,16 @@ jobs:
           echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
           echo "이미지 주소: $IMAGE"
 
-      # PR 에서는 빌드만 해서 Dockerfile 을 검증하고 ECR 은 더럽히지 않는다.
-      # main push 와 workflow_dispatch 에서는 푸시한다.
+      # 이미지는 배포할 때만 필요하고 배포는 main 만 한다. 그래서 조건을 ref 로 본다.
+      #
+      #   PR                    refs/pull/N/merge  → 빌드만. Dockerfile 은 검증된다
+      #   develop push          refs/heads/develop → 빌드만. ECR 을 더럽히지 않는다
+      #   main push · dispatch  refs/heads/main    → 푸시
       - name: 빌드 및 푸시
         uses: docker/build-push-action@v7
         with:
           context: .
-          push: ${{ github.event_name != 'pull_request' }}
+          push: ${{ github.ref == 'refs/heads/main' }}
           tags: ${{ steps.tag.outputs.image }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
