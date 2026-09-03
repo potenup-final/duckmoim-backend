@@ -1,0 +1,31 @@
+---
+paths:
+  - "src/main/java/**/service/**"
+---
+
+# service 레이어
+
+비즈니스 로직을 **직접 구현하는 곳이 아니라 비즈니스 흐름을 표현하는 곳**이다.
+신규 입사자·기획자·운영 담당자가 메서드를 읽고 업무 흐름을 이해할 수 있어야 한다.
+
+허용 — 유스케이스 public 메서드, 트랜잭션 경계, 도메인 서비스와 도메인 모델을
+조합한 흐름, 저장소 인터페이스를 통한 조회·저장.
+
+금지 —
+
+- JPA Entity · QueryDSL · Redis · Kafka · HTTP Client 같은 **기술 객체 직접 사용**
+- infra 패키지의 **구현 클래스 직접 주입**
+- 요청 DTO 를 그대로 인자로 받기 (Command·Query 객체로 변환해서 받는다)
+- 응답 DTO 를 여기서 조립하기
+- 복잡한 if·for·switch 가 누적되어 구현 상세가 드러나는 코드
+
+트랜잭션 경계는 **public 메서드**에 둔다. 조회 전용은 `@Transactional(readOnly = true)`.
+하위에서 독립 트랜잭션이 필요하면 이유를 PR 에 적는다.
+
+게이트가 검사하는 것 — `LAYER_DEPENDENCY` (infra 를 참조하면 잡힌다).
+
+`@Transactional` 위치와 JPA 참조 금지 규칙은 **아직 게이트에 없다** — `spring-tx` 와
+`jakarta.persistence` 가 클래스패스에 없어 위반 픽스처를 만들 수 없었다.
+첫 엔티티 티켓에서 들어온다. 그때까지는 사람 리뷰가 본다.
+
+상세: `docs/wiki/04-협업-규칙/아키텍처-컨벤션.md`
