@@ -1,22 +1,10 @@
-# 로컬 개발용 MySQL.
-#
-# 운영은 이 파일을 쓰지 않는다. RDS 채택 여부가 아직 미결이고
-# (배포-파이프라인 7장 · 강사 피드백 액션 아이템 6번), 배포는 EC2 에
-# 애플리케이션 컨테이너 하나만 띄운다.
-#
-#   docker compose up -d          기동
-#   docker compose logs -f mysql  로그
-#   docker compose down           정지 (데이터는 볼륨에 남는다)
-#   docker compose down -v        데이터까지 삭제
 services:
   mysql:
     image: mysql:8.4
     container_name: duckmoim-mysql
     restart: unless-stopped
 
-    # 호스트 쪽은 3307 이다. 개발자 PC 에 이미 네이티브 MySQL 이 3306 을
-    # 잡고 있는 경우가 흔하고, 그러면 컨테이너가 기동조차 못 한다.
-    # 컨테이너 안쪽은 3306 으로 고정이라 접속 설정만 3307 을 보면 된다.
+    # 호스트 쪽만 3307 이다. 개발자 PC 의 네이티브 MySQL 과 부딪히지 않아야 한다.
     ports:
       - "${DB_PORT:-3307}:3306"
 
@@ -30,14 +18,11 @@ services:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_0900_ai_ci
       - --default-time-zone=+00:00
-      # 컨테이너 안에서 클라이언트 IP 를 역방향 조회하다 접속이 수 초씩 늦어지는 것을 막는다.
       - --skip-name-resolve
 
     volumes:
       - mysql-data:/var/lib/mysql
 
-    # 스키마 적용이나 마이그레이션 스크립트를 컨테이너가 뜬 직후 돌릴 때
-    # "아직 초기화 중" 상태와 구분되어야 한다. depends_on 의 판단 근거이기도 하다.
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "--silent"]
       interval: 5s

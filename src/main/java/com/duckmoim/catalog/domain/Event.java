@@ -60,7 +60,6 @@ public class Event {
 	@Column(name = "open_hours", length = 100)
 	private String openHours;
 
-	// 콘서트만 갖는다. 생카·팝업은 기간 중 아무 때나 가면 되므로 null 이다.
 	@Column(name = "starts_at")
 	private LocalTime startsAt;
 
@@ -88,7 +87,6 @@ public class Event {
 	@Column(name = "place_address", nullable = false, length = 200)
 	private String placeAddress;
 
-	// double 이 아니라 BigDecimal 이다. 적재 전후 대조가 부동소수 오차에 걸리지 않아야 한다.
 	@Column(name = "place_lat", nullable = false, precision = 10, scale = 7)
 	private BigDecimal placeLat;
 
