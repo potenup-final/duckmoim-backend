@@ -13,14 +13,14 @@ import org.springframework.test.web.servlet.MockMvc;
 @WebMvcTest(HealthController.class)
 class HealthControllerTest {
 
-	@Autowired
-	private MockMvc mockMvc;
+  @Autowired private MockMvc mockMvc;
 
-	@Test
-	@DisplayName("헬스체크는 200 과 status=UP 을 반환한다")
-	void returnsUp() throws Exception {
-		mockMvc.perform(get("/api/health"))
-			.andExpect(status().isOk())
-			.andExpect(jsonPath("$.status").value("UP"));
-	}
+  @Test
+  @DisplayName("헬스체크는 200 과 status=UP 을 반환한다")
+  void returnsUp() throws Exception {
+    mockMvc
+        .perform(get("/api/health"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status").value("UP"));
+  }
 }
