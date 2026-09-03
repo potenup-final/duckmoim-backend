@@ -38,6 +38,47 @@ tasks.register('installGitHooks', Exec) {
 	ignoreExitValue = true
 }
 
+// git pull 과 checkout 이 서브모듈까지 따라오게 한다. 이게 없으면 위키가
+// 조용히 옛 커밋에 머물고, 사람은 최신 스펙을 읽는다고 착각한다.
+tasks.register('configureSubmoduleRecurse', Exec) {
+	description = 'pull · checkout 이 서브모듈을 함께 갱신하도록 설정한다'
+	group = 'build setup'
+	onlyIf { file("${rootDir}/.git").exists() }
+	commandLine 'git', 'config', 'submodule.recurse', 'true'
+	ignoreExitValue = true
+}
+
+// docs/wiki 는 [1] 컨텍스트 확보가 읽는 곳이다. 기록된 커밋으로 초기화하는
+// 것뿐이라 최신이면 네트워크를 타지 않는다.
+//
+// 위키는 PRIVATE 이라 접근 권한이 없으면 실패한다. 그때 조용히 넘기지 않는다 —
+// 빌드는 통과하는데 에이전트가 스펙을 못 읽는 상태가 가장 나쁘다. 알아채지
+// 못한 채로 "일반적으로 맞는" 코드가 나온다.
+tasks.register('initWiki', Exec) {
+	description = '위키 서브모듈을 초기화한다 (docs/wiki)'
+	group = 'build setup'
+	onlyIf { file("${rootDir}/.gitmodules").exists() }
+	commandLine 'git', 'submodule', 'update', '--init', 'docs/wiki'
+	ignoreExitValue = true
+
+	doLast {
+		if (executionResult.get().exitValue != 0) {
+			logger.warn('''
+========================================================================
+ 위키 서브모듈(docs/wiki) 을 가져오지 못했습니다.
+
+ 빌드와 테스트는 그대로 됩니다. 다만 요구사항 검증 기준 · 불변식 ·
+ 설계 결정을 읽을 수 없어, 에이전트가 컨텍스트 없이 코드를 씁니다.
+
+ 위키는 PRIVATE 입니다. potenup-final/duckmoim-wiki 접근 권한을
+ 받은 뒤 아래를 실행하세요.
+
+   git submodule update --init docs/wiki
+========================================================================'''.stripIndent())
+		}
+	}
+}
+
 tasks.named('compileJava') {
-	dependsOn 'installGitHooks'
+	dependsOn 'installGitHooks', 'configureSubmoduleRecurse', 'initWiki'
 }
