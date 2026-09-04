@@ -1,6 +1,7 @@
 package com.duckmoim.catalog.domain;
 
 import com.duckmoim.common.domain.BaseEntity;
+import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -8,10 +9,14 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.OneToMany;
+import jakarta.persistence.OrderBy;
 import jakarta.persistence.Table;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalTime;
+import java.util.ArrayList;
+import java.util.List;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -100,4 +105,8 @@ public class Event extends BaseEntity {
   // Region 은 Event 애그리게이트 밖이라 객체 참조를 두지 않는다 (도메인 3.2).
   @Column(name = "region_id", nullable = false)
   private Long regionId;
+
+  @OneToMany(mappedBy = "event", cascade = CascadeType.ALL, orphanRemoval = true)
+  @OrderBy("sortOrder ASC")
+  private List<Goods> goods = new ArrayList<>();
 }

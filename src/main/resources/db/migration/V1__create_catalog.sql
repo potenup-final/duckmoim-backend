@@ -55,3 +55,18 @@ CREATE TABLE event
     CONSTRAINT ck_event_lng CHECK (place_lng BETWEEN -180 AND 180)
 ) DEFAULT CHARSET = utf8mb4
   COLLATE = utf8mb4_0900_ai_ci;
+
+CREATE TABLE event_goods
+(
+    id         BIGINT       NOT NULL AUTO_INCREMENT,
+
+    event_id   BIGINT       NOT NULL,
+    name       VARCHAR(100) NOT NULL,
+    is_random  BOOLEAN      NOT NULL DEFAULT FALSE,
+    sort_order INT          NOT NULL,
+
+    PRIMARY KEY (id),
+    CONSTRAINT uk_event_goods_order UNIQUE (event_id, sort_order),
+    CONSTRAINT fk_event_goods_event FOREIGN KEY (event_id) REFERENCES event (id) ON DELETE CASCADE
+) DEFAULT CHARSET = utf8mb4
+  COLLATE = utf8mb4_0900_ai_ci;
