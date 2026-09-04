@@ -3,6 +3,7 @@ package com.duckmoim.catalog.service;
 import com.duckmoim.catalog.domain.Event;
 import com.duckmoim.catalog.domain.EventCursor;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 행사 목록 한 페이지 (EV-06).
@@ -20,10 +21,10 @@ public record EventSlice(List<EventSummary> events, EventCursor nextCursor, bool
    *
    * <p>한 건이 더 왔으면 다음 페이지가 있다는 뜻이고, 그 여분은 응답에 넣지 않는다.
    *
-   * <p><b>커서는 마지막 항목에서 뽑는다.</b> 잘라내기 전 목록에서 뽑으면 여분 한 건을 가리키게 되어, 다음 페이지가 그 행사를 건너뛴다 — EV-06 이 금지한
-   * 누락이 정확히 이 실수에서 나온다.
+   * <p><b>커서는 자른 뒤의 마지막 항목에서 뽑는다.</b> 잘라내기 전 목록에서 뽑으면 여분 한 건을 가리키게 되어, 다음 페이지가 그 행사를 건너뛴다 — EV-06 이
+   * 금지한 누락이 정확히 이 실수에서 나온다.
    */
-  static EventSlice of(List<Event> found, int size) {
+  static EventSlice of(List<Event> found, int size, Map<Long, String> districtByRegionId) {
     boolean hasNext = found.size() > size;
     List<Event> page = hasNext ? found.subList(0, size) : found;
 
@@ -34,6 +35,11 @@ public record EventSlice(List<EventSummary> events, EventCursor nextCursor, bool
     Event last = page.get(page.size() - 1);
     EventCursor nextCursor = hasNext ? EventCursor.of(last.getEndsOn(), last.getId()) : null;
 
-    return new EventSlice(page.stream().map(EventSummary::from).toList(), nextCursor, hasNext);
+    List<EventSummary> events =
+        page.stream()
+            .map(event -> EventSummary.from(event, districtByRegionId.get(event.getRegionId())))
+            .toList();
+
+    return new EventSlice(events, nextCursor, hasNext);
   }
 }

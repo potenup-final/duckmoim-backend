@@ -42,23 +42,27 @@ class EventControllerTest {
   private static EventSummary summary() {
     return new EventSummary(
         1L,
-        "pg_8166",
+        "pg_8709",
         EventKind.POPUP,
         SubjectType.IDOL,
         Trust.PARSED,
-        "아이브",
-        "IVE 팝업",
-        LocalDate.of(2026, 10, 1),
-        LocalDate.of(2026, 10, 10),
-        "매일 11:00 ~ 20:00",
+        "BIGBANG",
+        "빅뱅 20주년 미디어 전시",
+        LocalDate.of(2026, 8, 24),
+        LocalDate.of(2026, 9, 27),
+        "매일 10:00 ~ 22:00",
         LocalTime.of(19, 30),
+        "MD 구매 특전 포토카드 1장 랜덤 증정",
+        "성인 인증 필요",
         "https://cdn.example.test/1.webp",
-        "https://example.test/1",
-        3L,
-        "토리든 커넥트 성수",
-        "서울 성동구 성수이로7가길 17",
-        new BigDecimal("37.5418230"),
-        new BigDecimal("127.0552876"),
+        "https://www.instagram.com/p/Db8AYzJCEIY/",
+        "https://booking.naver.com/booking/12/bizes/1711626",
+        9L,
+        "myeongdong",
+        "두두두 서울",
+        "서울 중구 을지로 지하 42",
+        new BigDecimal("37.5660510"),
+        new BigDecimal("126.9823729"),
         PlaceKind.POPUP_VENUE);
   }
 
@@ -75,7 +79,7 @@ class EventControllerTest {
         .perform(get("/api/v1/events"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.items").isArray())
-        .andExpect(jsonPath("$.items[0].externalId").value("pg_8166"))
+        .andExpect(jsonPath("$.items[0].externalId").value("pg_8709"))
         .andExpect(jsonPath("$.nextCursor").value(cursor.encode()))
         .andExpect(jsonPath("$.hasNext").value(true));
   }
@@ -106,9 +110,50 @@ class EventControllerTest {
     // when & then
     mockMvc
         .perform(get("/api/v1/events"))
-        .andExpect(jsonPath("$.items[0].place.name").value("토리든 커넥트 성수"))
+        .andExpect(jsonPath("$.items[0].place.name").value("두두두 서울"))
         .andExpect(jsonPath("$.items[0].place.kind").value("POPUP_VENUE"))
-        .andExpect(jsonPath("$.items[0].place.lat").value(37.5418230));
+        .andExpect(jsonPath("$.items[0].place.lat").value(37.5660510));
+  }
+
+  @DisplayName("행사 장소의 district 는 지역 코드 문자열이다.")
+  @Test
+  void getEvents_hasDistrict() throws Exception {
+    // given
+    given(eventQueryService.findEvents(any()))
+        .willReturn(new EventSlice(List.of(summary()), null, false));
+
+    // when & then — 프론트가 60곳에서 쓰는 값이라 번호가 아니라 코드여야 한다
+    mockMvc
+        .perform(get("/api/v1/events"))
+        .andExpect(jsonPath("$.items[0].place.district").value("myeongdong"));
+  }
+
+  @DisplayName("상세 시트가 쓰는 특전·참여조건·예약링크가 목록에 실린다.")
+  @Test
+  void getEvents_hasDetailFields() throws Exception {
+    // given
+    given(eventQueryService.findEvents(any()))
+        .willReturn(new EventSlice(List.of(summary()), null, false));
+
+    // when & then — 프론트에 상세 조회 호출이 없어 목록 배열로 상세를 그린다
+    mockMvc
+        .perform(get("/api/v1/events"))
+        .andExpect(jsonPath("$.items[0].perks").value("MD 구매 특전 포토카드 1장 랜덤 증정"))
+        .andExpect(jsonPath("$.items[0].conditions").value("성인 인증 필요"))
+        .andExpect(
+            jsonPath("$.items[0].reservationUrl")
+                .value("https://booking.naver.com/booking/12/bizes/1711626"));
+  }
+
+  @DisplayName("굿즈는 목록에 실리지 않는다.")
+  @Test
+  void getEvents_omitsGoods() throws Exception {
+    // given
+    given(eventQueryService.findEvents(any()))
+        .willReturn(new EventSlice(List.of(summary()), null, false));
+
+    // when & then — 지연 컬렉션이라 목록에서 건드리면 N+1 이다
+    mockMvc.perform(get("/api/v1/events")).andExpect(jsonPath("$.items[0].goods").doesNotExist());
   }
 
   @DisplayName("콘서트 시작 시각은 HH:mm 으로 나간다.")

@@ -2,10 +2,14 @@ package com.duckmoim.catalog.service;
 
 import com.duckmoim.catalog.domain.Event;
 import com.duckmoim.catalog.domain.EventQuery;
+import com.duckmoim.catalog.domain.Region;
 import com.duckmoim.catalog.infra.EventRepository;
+import com.duckmoim.catalog.infra.RegionRepository;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -16,6 +20,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class EventQueryService {
 
   private final EventRepository eventRepository;
+  private final RegionRepository regionRepository;
   private final Clock clock;
 
   /**
@@ -31,6 +36,17 @@ public class EventQueryService {
     LocalDate today = LocalDate.now(clock);
     List<Event> found = eventRepository.findSlice(query, today);
 
-    return EventSlice.of(found, query.size());
+    return EventSlice.of(found, query.size(), districtByRegionId());
+  }
+
+  /**
+   * 지역 번호를 화면이 쓰는 코드 문자열로 바꿀 표를 읽는다.
+   *
+   * <p>{@code Event} 가 {@code Region} 을 객체로 참조하지 않아서 (도메인 3.2) 조인 대신 표를 통째로 읽어 맞춘다. 11행이라 목록 조회에 쿼리
+   * 하나가 더 붙는 정도이고, 지역이 늘어날 성질의 표도 아니다.
+   */
+  private Map<Long, String> districtByRegionId() {
+    return regionRepository.findAll().stream()
+        .collect(Collectors.toMap(Region::getId, Region::getCode));
   }
 }

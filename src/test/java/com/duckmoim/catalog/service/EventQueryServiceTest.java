@@ -144,6 +144,27 @@ class EventQueryServiceTest {
     assertThat(externalIdsOf(slice)).containsExactly("e3", "e2", "e1", "e4");
   }
 
+  @DisplayName("행사의 지역이 지역 코드 문자열로 나온다.")
+  @Test
+  void findEvents_hasDistrict() {
+    // given
+    anEvent()
+        .externalId("e1")
+        .regionId(seongsu)
+        .startsOn(OCT_1)
+        .endsOn(LocalDate.of(2026, 10, 10))
+        .insert(jdbc);
+
+    // when
+    EventSlice slice = eventQueryService.findEvents(query(null, null, null));
+
+    // then — 프론트에 번호→지역 대응표가 없다 (화면-계약/행사.md 7장 ⑴)
+    assertThat(slice.events())
+        .singleElement()
+        .extracting(EventSummary::district)
+        .isEqualTo("seongsu");
+  }
+
   @DisplayName("이미 끝난 행사는 목록에 나오지 않는다.")
   @Test
   void findEvents_excludesEnded() {
