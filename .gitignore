@@ -39,6 +39,7 @@ out/
 ### YouStar ###
 .env
 .env.*
+!.env.example
 .DS_Store
 
 ### Claude Code ###
