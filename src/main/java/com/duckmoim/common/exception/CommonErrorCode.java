@@ -4,11 +4,6 @@ import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 
-/**
- * 도메인과 무관한 프로토콜 수준의 실패.
- *
- * <p>도메인 규칙 위반은 여기 넣지 않는다 — {@link ErrorCode} 의 설명 참고.
- */
 @Getter
 @RequiredArgsConstructor
 public enum CommonErrorCode implements ErrorCode {
