@@ -30,6 +30,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
 
 /**
  * 예외를 실제 요청에서 발생시켜 봉투와 로그를 검증한다.
@@ -72,7 +73,7 @@ class GlobalExceptionHandlerTest {
         .andExpect(jsonPath("$.message").value("이미 마감된 모집글입니다."));
   }
 
-  @DisplayName("요청 본문 검증에 실패하면 400 과 공통 봉투가 나간다.")
+  @DisplayName("요청 본문 검증에 실패하면 400 이고 어느 필드가 틀렸는지 메시지로 알려 준다.")
   @Test
   void handle_bodyValidationFailure() throws Exception {
     // when & then
@@ -80,7 +81,7 @@ class GlobalExceptionHandlerTest {
         .perform(post("/test/posts").contentType(MediaType.APPLICATION_JSON).content("{}"))
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.code").value("INVALID_INPUT"))
-        .andExpect(jsonPath("$.message").value("요청 값이 올바르지 않습니다."));
+        .andExpect(jsonPath("$.message").value("제목은 필수입니다."));
   }
 
   @DisplayName("본문 JSON 이 깨져 있으면 400 이고 파싱 오류를 응답에 담지 않는다.")
@@ -101,34 +102,34 @@ class GlobalExceptionHandlerTest {
     assertThat(body).doesNotContain("JsonParseException", "end-of-input", "line: 1");
   }
 
-  @DisplayName("경로 변수의 타입이 맞지 않으면 500 이 아니라 400 이다.")
+  /**
+   * 아래 넷은 원래 400 · 405 · 415 · 418 이 맞는 요청이다. 핸들러를 나열하지 않으면 캐치올로 떨어져 500 이 된다.
+   *
+   * <p>버그가 아니라 <b>합의된 동작</b>이라 여기 못 박아 둔다. 어느 하나를 제대로 된 4xx 로 내리기로 하면 그때
+   * {@link GlobalExceptionHandler} 에 핸들러를 추가하고 이 테스트에서 그 줄을 빼면 된다.
+   */
+  @DisplayName("나열하지 않은 프로토콜 예외는 500 으로 나간다 — 합의된 동작이다.")
   @Test
-  void handle_pathVariableTypeMismatch() throws Exception {
-    // when & then
+  void handle_unmappedProtocolExceptions() throws Exception {
+    // 경로 변수 타입 불일치 — 원래 400
     mockMvc
         .perform(get("/test/posts/abc"))
-        .andExpect(status().isBadRequest())
-        .andExpect(jsonPath("$.code").value("INVALID_INPUT"));
-  }
+        .andExpect(status().isInternalServerError())
+        .andExpect(jsonPath("$.code").value("INTERNAL_ERROR"));
 
-  @DisplayName("필수 쿼리 파라미터가 빠지면 400 이다.")
-  @Test
-  void handle_missingRequestParameter() throws Exception {
-    // when & then
-    mockMvc
-        .perform(get("/test/search"))
-        .andExpect(status().isBadRequest())
-        .andExpect(jsonPath("$.code").value("INVALID_INPUT"));
-  }
+    // 필수 쿼리 파라미터 누락 — 원래 400
+    mockMvc.perform(get("/test/search")).andExpect(status().isInternalServerError());
 
-  @DisplayName("지원하지 않는 메서드로 호출하면 405 와 공통 봉투가 나간다.")
-  @Test
-  void handle_methodNotAllowed() throws Exception {
-    // when & then
+    // 지원하지 않는 메서드 — 원래 405
+    mockMvc.perform(post("/test/business")).andExpect(status().isInternalServerError());
+
+    // 지원하지 않는 Content-Type — 원래 415
     mockMvc
-        .perform(post("/test/business"))
-        .andExpect(status().isMethodNotAllowed())
-        .andExpect(jsonPath("$.code").value("METHOD_NOT_ALLOWED"));
+        .perform(post("/test/posts").contentType(MediaType.TEXT_PLAIN).content("제목"))
+        .andExpect(status().isInternalServerError());
+
+    // 자기 status 를 들고 온 예외 — 원래 418
+    mockMvc.perform(get("/test/teapot")).andExpect(status().isInternalServerError());
   }
 
   @DisplayName("예상하지 못한 예외는 500 이고 내부 사정을 응답에 담지 않는다.")
@@ -161,8 +162,7 @@ class GlobalExceptionHandlerTest {
             event -> {
               assertThat(event.getLevel()).isEqualTo(Level.WARN);
               assertThat(event.getFormattedMessage())
-                  .startsWith("[GlobalExceptionHandler.handleExceptionInternal]")
-                  .contains("POST_ALREADY_CLOSED");
+                  .contains("status=409", "code=POST_ALREADY_CLOSED");
               assertThat(event.getThrowableProxy()).isNull();
             });
   }
@@ -180,8 +180,7 @@ class GlobalExceptionHandlerTest {
             event -> {
               assertThat(event.getLevel()).isEqualTo(Level.ERROR);
               assertThat(event.getFormattedMessage())
-                  .startsWith("[GlobalExceptionHandler.handleExceptionInternal]")
-                  .contains("INTERNAL_ERROR");
+                  .contains("status=500", "code=INTERNAL_ERROR");
               assertThat(event.getThrowableProxy()).isNotNull();
             });
   }
@@ -236,5 +235,10 @@ class GlobalExceptionHandlerTest {
 
     @GetMapping("/search")
     void search(@RequestParam String keyword) {}
+
+    @GetMapping("/teapot")
+    void teapot() {
+      throw new ResponseStatusException(HttpStatus.I_AM_A_TEAPOT, "짧고 뚱뚱해요");
+    }
   }
 }

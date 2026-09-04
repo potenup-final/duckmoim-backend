@@ -1,90 +1,70 @@
 package com.duckmoim.common.exception;
 
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.http.HttpHeaders;
+import org.springframework.context.support.DefaultMessageSourceResolvable;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
-import org.springframework.web.context.request.ServletWebRequest;
-import org.springframework.web.context.request.WebRequest;
-import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 @Slf4j
 @RestControllerAdvice
-public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
-
-  private static final String UNKNOWN_PATH = "unknown";
+public class GlobalExceptionHandler {
 
   @ExceptionHandler(BusinessException.class)
-  public ResponseEntity<Object> handleBusinessException(BusinessException ex, WebRequest request) {
-    ErrorCode errorCode = ex.getErrorCode();
-    return handleExceptionInternal(
-        ex, ErrorResponse.of(errorCode), new HttpHeaders(), errorCode.getStatus(), request);
+  public ResponseEntity<ErrorResponse> handleBusinessException(BusinessException e) {
+    return respond(e, e.getErrorCode());
+  }
+
+  @ExceptionHandler(MethodArgumentNotValidException.class)
+  public ResponseEntity<ErrorResponse> handleValidationException(
+      MethodArgumentNotValidException e) {
+
+    String message =
+        e.getBindingResult().getFieldErrors().stream()
+            .findFirst()
+            .map(DefaultMessageSourceResolvable::getDefaultMessage)
+            .orElse(CommonErrorCode.INVALID_INPUT.getMessage());
+
+    return ResponseEntity.badRequest()
+        .body(new ErrorResponse(CommonErrorCode.INVALID_INPUT.getCode(), message));
+  }
+
+  @ExceptionHandler(HttpMessageNotReadableException.class)
+  public ResponseEntity<ErrorResponse> handleNotReadable(HttpMessageNotReadableException e) {
+    return respond(e, CommonErrorCode.INVALID_INPUT);
+  }
+
+  @ExceptionHandler(NoResourceFoundException.class)
+  public ResponseEntity<ErrorResponse> handleNoResourceFound(NoResourceFoundException e) {
+    return respond(e, CommonErrorCode.ENDPOINT_NOT_FOUND);
   }
 
   @ExceptionHandler(Exception.class)
-  public ResponseEntity<Object> handleUnexpectedException(Exception ex, WebRequest request) {
-    return handleExceptionInternal(
-        ex, null, new HttpHeaders(), HttpStatus.INTERNAL_SERVER_ERROR, request);
+  public ResponseEntity<ErrorResponse> handleException(Exception e) {
+    return respond(e, CommonErrorCode.INTERNAL_ERROR);
   }
 
-  @Override
-  protected ResponseEntity<Object> handleExceptionInternal(
-      Exception ex,
-      Object body,
-      HttpHeaders headers,
-      HttpStatusCode statusCode,
-      WebRequest request) {
+  private ResponseEntity<ErrorResponse> respond(Exception e, ErrorCode errorCode) {
+    HttpStatus status = errorCode.getStatus();
 
-    ErrorResponse response =
-        body instanceof ErrorResponse envelope
-            ? envelope
-            : ErrorResponse.of(resolveErrorCode(statusCode));
-
-    if (statusCode.is5xxServerError()) {
+    if (status.is5xxServerError()) {
       log.error(
-          "[GlobalExceptionHandler.handleExceptionInternal] Request failed. code={}, path={}",
-          response.code(),
-          resolvePath(request),
-          ex);
+          "[GlobalExceptionHandler.respond] Request failed. status={}, code={}",
+          status.value(),
+          errorCode.getCode(),
+          e);
     } else {
       log.warn(
-          "[GlobalExceptionHandler.handleExceptionInternal] Request rejected. code={}, status={},"
-              + " path={}, exception={}",
-          response.code(),
-          statusCode.value(),
-          resolvePath(request),
-          ex.getClass().getSimpleName());
+          "[GlobalExceptionHandler.respond] Request rejected. status={}, code={}, exception={}",
+          status.value(),
+          errorCode.getCode(),
+          e.getClass().getSimpleName());
     }
 
-    return super.handleExceptionInternal(ex, response, headers, statusCode, request);
-  }
-
-  private ErrorCode resolveErrorCode(HttpStatusCode statusCode) {
-    if (HttpStatus.NOT_FOUND.isSameCodeAs(statusCode)) {
-      return CommonErrorCode.ENDPOINT_NOT_FOUND;
-    }
-    if (HttpStatus.METHOD_NOT_ALLOWED.isSameCodeAs(statusCode)) {
-      return CommonErrorCode.METHOD_NOT_ALLOWED;
-    }
-    if (HttpStatus.UNSUPPORTED_MEDIA_TYPE.isSameCodeAs(statusCode)) {
-      return CommonErrorCode.UNSUPPORTED_MEDIA_TYPE;
-    }
-    if (HttpStatus.NOT_ACCEPTABLE.isSameCodeAs(statusCode)) {
-      return CommonErrorCode.NOT_ACCEPTABLE;
-    }
-    if (statusCode.is5xxServerError()) {
-      return CommonErrorCode.INTERNAL_ERROR;
-    }
-    return CommonErrorCode.INVALID_INPUT;
-  }
-
-  private String resolvePath(WebRequest request) {
-    if (request instanceof ServletWebRequest servletRequest) {
-      return servletRequest.getRequest().getRequestURI();
-    }
-    return UNKNOWN_PATH;
+    return ResponseEntity.status(status).body(ErrorResponse.of(errorCode));
   }
 }
