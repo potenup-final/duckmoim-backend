@@ -32,7 +32,7 @@ public record EventSlice(List<EventSummary> events, EventCursor nextCursor, bool
     }
 
     Event last = page.get(page.size() - 1);
-    EventCursor nextCursor = hasNext ? EventCursor.of(last.getStartsOn(), last.getId()) : null;
+    EventCursor nextCursor = hasNext ? EventCursor.of(last.getEndsOn(), last.getId()) : null;
 
     return new EventSlice(page.stream().map(EventSummary::from).toList(), nextCursor, hasNext);
   }

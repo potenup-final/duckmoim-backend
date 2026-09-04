@@ -2,6 +2,7 @@ package com.duckmoim.catalog.infra;
 
 import com.duckmoim.catalog.domain.Event;
 import com.duckmoim.catalog.domain.EventQuery;
+import java.time.LocalDate;
 import java.util.List;
 
 /**
@@ -13,10 +14,13 @@ import java.util.List;
 public interface EventQueryRepository {
 
   /**
-   * 조건에 맞는 행사를 {@code (startsOn, id)} 오름차순으로 읽는다.
+   * {@code (endsOn, id)} 오름차순으로 {@code size + 1} 건까지 읽는다.
    *
-   * <p><b>{@code size + 1} 건을 읽는다.</b> 한 건이 더 나오면 다음 페이지가 있다는 뜻이다. 별도 count 쿼리를 돌리지 않는 이유는 그쪽이 필터
-   * 조합마다 전체를 훑기 때문이다 — 목록 응답에 총 건수가 필요하지도 않다 (API 컨벤션은 items · nextCursor · hasNext 셋만 쓴다).
+   * <p>한 건을 더 읽는 것은 다음 페이지 유무를 알기 위해서다. 별도 count 쿼리를 돌리지 않는 이유는 그쪽이 필터 조합마다 전체를 훑기 때문이다 — 목록 응답에 총
+   * 건수가 필요하지도 않다 (API 컨벤션은 items · nextCursor · hasNext 셋만 쓴다).
+   *
+   * <p>{@code today} 를 인자로 받는 이유는 {@code LocalDate.now()} 를 여기서 부르면 테스트가 실행 날짜에 끌려가기 때문이다. 판정 기준은
+   * KST 다 (도메인 4장).
    */
-  List<Event> findSlice(EventQuery query);
+  List<Event> findSlice(EventQuery query, LocalDate today);
 }

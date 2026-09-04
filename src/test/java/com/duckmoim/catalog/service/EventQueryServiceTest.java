@@ -6,7 +6,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.duckmoim.catalog.domain.EventCursor;
 import com.duckmoim.catalog.domain.EventKind;
 import com.duckmoim.catalog.domain.EventQuery;
+import java.time.Clock;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Stream;
@@ -18,6 +20,9 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Primary;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -26,14 +31,28 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * <p>실제 MySQL 로 돈다. 커서 경계는 정렬과 비교 연산이 개입해서 mock 으로는 검증되지 않고, 테스트 컨벤션이 H2 도 금지했다.
  *
- * <p>매 테스트가 시드(V3, 205건)를 지우고 자기 데이터만 넣는다. {@code @Transactional} 롤백이 시드를 되돌린다.
+ * <p>시계를 고정한다. 끝난 행사를 거르는 조건이 붙어 있어 시계를 놓아두면 같은 데이터가 어제와 오늘 다르게 나온다.
+ *
+ * <p>매 테스트가 시드(V3)를 지우고 자기 데이터만 넣는다. {@code @Transactional} 롤백이 시드를 되돌린다.
  */
 @SpringBootTest
 @Transactional
 class EventQueryServiceTest {
 
+  private static final LocalDate TODAY = LocalDate.of(2026, 9, 4);
   private static final LocalDate OCT_1 = LocalDate.of(2026, 10, 1);
   private static final LocalDate OCT_31 = LocalDate.of(2026, 10, 31);
+
+  @TestConfiguration
+  static class FixedClockConfig {
+
+    @Bean
+    @Primary
+    Clock fixedClock() {
+      return Clock.fixed(
+          TODAY.atStartOfDay(ZoneId.of("Asia/Seoul")).toInstant(), ZoneId.of("Asia/Seoul"));
+    }
+  }
 
   @Autowired private EventQueryService eventQueryService;
   @Autowired private JdbcTemplate jdbc;
@@ -63,9 +82,9 @@ class EventQueryServiceTest {
   }
 
   /**
-   * 검증 기준이 "필터 조합별 결과 정확" 이라 조합을 세운다.
+   * 네 건의 행사. <b>종료일 순서가 시작일 순서와 다르게</b> 잡아두었다.
    *
-   * <p>넷을 각각 켜고 끄면 16가지인데, 의미가 겹치는 조합을 빼고 <b>필터 하나씩 · 둘 · 넷 전부</b>를 남겼다.
+   * <p>e1 과 e2 는 같은 날 시작하지만 e2 가 먼저 끝난다. 정렬이 실수로 {@code startsOn} 으로 돌아가면 기대값이 어긋나 바로 드러난다.
    */
   private void givenFourEvents() {
     // 팝업 · 성수 · 10/01~10/10 · 아이브
@@ -112,7 +131,7 @@ class EventQueryServiceTest {
         .insert(jdbc);
   }
 
-  @DisplayName("필터 없이 조회하면 시작일 빠른 순으로 나온다.")
+  @DisplayName("필터 없이 조회하면 마감 임박 순으로 나온다.")
   @Test
   void findEvents() {
     // given
@@ -121,8 +140,56 @@ class EventQueryServiceTest {
     // when
     EventSlice slice = eventQueryService.findEvents(query(null, null, null));
 
-    // then — e1 과 e2 는 시작일이 같아 id 순으로 갈린다
-    assertThat(externalIdsOf(slice)).containsExactly("e1", "e2", "e3", "e4");
+    // then — 시작일 순서(e1 e2 e3 e4)가 아니라 종료일 순서다
+    assertThat(externalIdsOf(slice)).containsExactly("e3", "e2", "e1", "e4");
+  }
+
+  @DisplayName("이미 끝난 행사는 목록에 나오지 않는다.")
+  @Test
+  void findEvents_excludesEnded() {
+    // given — 어제 끝난 것, 오늘 끝나는 것, 내일 끝나는 것
+    anEvent()
+        .externalId("ended")
+        .regionId(seongsu)
+        .startsOn(TODAY.minusDays(10))
+        .endsOn(TODAY.minusDays(1))
+        .insert(jdbc);
+    anEvent()
+        .externalId("endsToday")
+        .regionId(seongsu)
+        .startsOn(TODAY.minusDays(10))
+        .endsOn(TODAY)
+        .insert(jdbc);
+    anEvent()
+        .externalId("ongoing")
+        .regionId(seongsu)
+        .startsOn(TODAY.minusDays(10))
+        .endsOn(TODAY.plusDays(1))
+        .insert(jdbc);
+
+    // when
+    EventSlice slice = eventQueryService.findEvents(query(null, null, null));
+
+    // then — 오늘 끝나는 행사는 오늘까지 갈 수 있으므로 남는다
+    assertThat(externalIdsOf(slice)).containsExactly("endsToday", "ongoing");
+  }
+
+  @DisplayName("아직 시작하지 않은 행사도 목록에 나온다.")
+  @Test
+  void findEvents_includesUpcoming() {
+    // given
+    anEvent()
+        .externalId("upcoming")
+        .regionId(seongsu)
+        .startsOn(TODAY.plusMonths(2))
+        .endsOn(TODAY.plusMonths(3))
+        .insert(jdbc);
+
+    // when
+    EventSlice slice = eventQueryService.findEvents(query(null, null, null));
+
+    // then — 거르는 기준은 종료일이지 시작일이 아니다
+    assertThat(externalIdsOf(slice)).containsExactly("upcoming");
   }
 
   @DisplayName("종류로 거르면 그 종류의 행사만 나온다.")
@@ -135,7 +202,7 @@ class EventQueryServiceTest {
     EventSlice slice = eventQueryService.findEvents(query(EventKind.POPUP, null, null));
 
     // then
-    assertThat(externalIdsOf(slice)).containsExactly("e1", "e2");
+    assertThat(externalIdsOf(slice)).containsExactly("e2", "e1");
   }
 
   @DisplayName("지역으로 거르면 그 지역의 행사만 나온다.")
@@ -148,7 +215,7 @@ class EventQueryServiceTest {
     EventSlice slice = eventQueryService.findEvents(query(null, seongsu, null));
 
     // then
-    assertThat(externalIdsOf(slice)).containsExactly("e1", "e3", "e4");
+    assertThat(externalIdsOf(slice)).containsExactly("e3", "e1", "e4");
   }
 
   @DisplayName("행사일 범위로 거르면 그 기간에 열려 있는 행사만 나온다.")
@@ -172,14 +239,14 @@ class EventQueryServiceTest {
     // given
     givenFourEvents();
 
-    // when — 9월 말에서 10/02 까지. 셋 다 이 시점에 이미 시작했거나 진행 중이다
+    // when — 9월 말에서 10/02 까지. 둘 다 이 시점에 이미 시작했거나 진행 중이다
     EventSlice slice =
         eventQueryService.findEvents(
             new EventQuery(
                 null, null, LocalDate.of(2026, 9, 25), LocalDate.of(2026, 10, 2), null, null, 20));
 
     // then — e3 는 10/03 시작이라 아직 안 열렸다
-    assertThat(externalIdsOf(slice)).containsExactly("e1", "e2");
+    assertThat(externalIdsOf(slice)).containsExactly("e2", "e1");
   }
 
   @DisplayName("키워드로 거르면 대상명이나 원제에 그 말이 든 행사만 나온다.")
@@ -192,7 +259,7 @@ class EventQueryServiceTest {
     EventSlice slice = eventQueryService.findEvents(query(null, null, "아이브"));
 
     // then — e3 만 르세라핌이라 빠진다
-    assertThat(externalIdsOf(slice)).containsExactly("e1", "e2", "e4");
+    assertThat(externalIdsOf(slice)).containsExactly("e2", "e1", "e4");
   }
 
   @DisplayName("키워드가 원제에만 있어도 걸린다.")
@@ -210,7 +277,7 @@ class EventQueryServiceTest {
 
   static Stream<Arguments> filterCombinations() {
     return Stream.of(
-        Arguments.of("종류만", EventKind.POPUP, null, null, List.of("e1", "e2")),
+        Arguments.of("종류만", EventKind.POPUP, null, null, List.of("e2", "e1")),
         Arguments.of("종류와 지역", EventKind.POPUP, "seongsu", null, List.of("e1")),
         Arguments.of("종류와 키워드", EventKind.CONCERT, null, "아이브", List.of("e4")),
         Arguments.of("지역과 키워드", null, "seongsu", "아이브", List.of("e1", "e4")),
@@ -254,18 +321,20 @@ class EventQueryServiceTest {
   }
 
   /**
-   * EV-06 의 검증 기준을 위해 <b>시작일이 전부 같은</b> 행사를 만든다.
+   * EV-06 의 검증 기준을 위해 <b>종료일이 전부 같은</b> 행사를 만든다.
    *
-   * <p>이래야 페이지 경계가 시작일 안에서 갈린다. 시작일이 다 다르면 커서에 id 가 없어도 우연히 통과한다.
+   * <p>이래야 페이지 경계가 종료일 안에서 갈린다. 종료일이 다 다르면 커서에 id 가 없어도 우연히 통과한다.
+   *
+   * <p>시작일은 일부러 어긋나게 둔다. 정렬이 시작일로 새면 순서가 뒤집혀 바로 드러난다.
    */
-  private void givenFiveEventsOnSameDay() {
+  private void givenFiveEventsEndingOnSameDay() {
     LocalDate sameDay = LocalDate.of(2026, 12, 1);
 
     for (int i = 1; i <= 5; i++) {
       anEvent()
           .externalId("same-" + i)
           .regionId(seongsu)
-          .startsOn(sameDay)
+          .startsOn(sameDay.minusDays(i))
           .endsOn(sameDay)
           .insert(jdbc);
     }
@@ -287,11 +356,11 @@ class EventQueryServiceTest {
     }
   }
 
-  @DisplayName("시작일이 같은 행사가 페이지 경계에 걸려도 누락되지 않는다.")
+  @DisplayName("종료일이 같은 행사가 페이지 경계에 걸려도 누락되지 않는다.")
   @Test
   void findEvents_byCursorMissesNothing() {
     // given
-    givenFiveEventsOnSameDay();
+    givenFiveEventsEndingOnSameDay();
 
     // when
     List<String> read = readAllByCursor(2);
@@ -300,11 +369,11 @@ class EventQueryServiceTest {
     assertThat(read).containsExactly("same-1", "same-2", "same-3", "same-4", "same-5");
   }
 
-  @DisplayName("시작일이 같은 행사가 페이지 경계에 걸려도 중복되지 않는다.")
+  @DisplayName("종료일이 같은 행사가 페이지 경계에 걸려도 중복되지 않는다.")
   @Test
   void findEvents_byCursorDuplicatesNothing() {
     // given
-    givenFiveEventsOnSameDay();
+    givenFiveEventsEndingOnSameDay();
 
     // when
     List<String> read = readAllByCursor(2);
@@ -316,8 +385,8 @@ class EventQueryServiceTest {
   @DisplayName("페이지 크기가 1이어도 전체를 정확히 한 번씩 읽는다.")
   @Test
   void findEvents_byCursorOfSizeOne() {
-    // given — 경계가 매번 시작일 안에서 갈리는 가장 빡빡한 경우다
-    givenFiveEventsOnSameDay();
+    // given — 경계가 매번 종료일 안에서 갈리는 가장 빡빡한 경우다
+    givenFiveEventsEndingOnSameDay();
 
     // when
     List<String> read = readAllByCursor(1);
@@ -330,7 +399,7 @@ class EventQueryServiceTest {
   @Test
   void findEvents_atLastPage() {
     // given
-    givenFiveEventsOnSameDay();
+    givenFiveEventsEndingOnSameDay();
 
     // when — 다섯 건을 한 번에 담을 수 있는 크기다
     EventSlice slice = eventQueryService.findEvents(query(null, null, null));
@@ -345,7 +414,7 @@ class EventQueryServiceTest {
   @Test
   void findEvents_atExactPageBoundary() {
     // given — 5건을 5씩 읽으면 여분이 없다. size + 1 판정이 여기서 틀리기 쉽다
-    givenFiveEventsOnSameDay();
+    givenFiveEventsEndingOnSameDay();
 
     // when
     EventSlice slice =
@@ -359,14 +428,14 @@ class EventQueryServiceTest {
   @DisplayName("필터를 건 채로 커서를 넘겨도 누락·중복이 없다.")
   @Test
   void findEvents_byCursorWithFilter() {
-    // given — 같은 날 팝업 3건과 생카 2건. 필터가 커서 조건과 함께 걸려야 한다
+    // given — 같은 날 끝나는 팝업 3건과 생카 2건. 필터가 커서 조건과 함께 걸려야 한다
     LocalDate sameDay = LocalDate.of(2026, 12, 1);
     for (int i = 1; i <= 3; i++) {
       anEvent()
           .externalId("popup-" + i)
           .kind(EventKind.POPUP)
           .regionId(seongsu)
-          .startsOn(sameDay)
+          .startsOn(sameDay.minusDays(i))
           .endsOn(sameDay)
           .insert(jdbc);
     }
@@ -375,7 +444,7 @@ class EventQueryServiceTest {
           .externalId("cafe-" + i)
           .kind(EventKind.BIRTHDAY_CAFE)
           .regionId(seongsu)
-          .startsOn(sameDay)
+          .startsOn(sameDay.minusDays(i))
           .endsOn(sameDay)
           .insert(jdbc);
     }

@@ -20,16 +20,16 @@ public class EventQueryRepositoryImpl implements EventQueryRepository {
   @PersistenceContext private EntityManager entityManager;
 
   @Override
-  public List<Event> findSlice(EventQuery query) {
+  public List<Event> findSlice(EventQuery query, LocalDate today) {
     CriteriaBuilder builder = entityManager.getCriteriaBuilder();
     CriteriaQuery<Event> criteria = builder.createQuery(Event.class);
     Root<Event> event = criteria.from(Event.class);
 
     criteria
         .select(event)
-        .where(toPredicates(builder, event, query))
-        // 커서 키와 같은 순서다. 이게 어긋나면 페이지 경계에서 누락이 생긴다 (EV-06).
-        .orderBy(builder.asc(event.get("startsOn")), builder.asc(event.get("id")));
+        .where(toPredicates(builder, event, query, today))
+        // 커서 키와 같은 순서여야 한다. 어긋나면 페이지 경계에서 누락이 생긴다 (EV-06).
+        .orderBy(builder.asc(event.get("endsOn")), builder.asc(event.get("id")));
 
     return entityManager
         .createQuery(criteria)
@@ -38,8 +38,13 @@ public class EventQueryRepositoryImpl implements EventQueryRepository {
         .getResultList();
   }
 
-  private Predicate[] toPredicates(CriteriaBuilder builder, Root<Event> event, EventQuery query) {
+  private Predicate[] toPredicates(
+      CriteriaBuilder builder, Root<Event> event, EventQuery query, LocalDate today) {
     List<Predicate> predicates = new ArrayList<>();
+
+    // 끝난 행사는 목록에 넣지 않는다. 사용자가 끌 수 있는 필터가 아니라 목록의 성질이다
+    // (화면-계약/행사.md 9장 — "지난 정보는 없는 정보보다 나쁘다").
+    predicates.add(builder.greaterThanOrEqualTo(event.get("endsOn"), today));
 
     if (query.kind() != null) {
       predicates.add(builder.equal(event.get("kind"), query.kind()));
@@ -93,14 +98,14 @@ public class EventQueryRepositoryImpl implements EventQueryRepository {
   /**
    * 커서 위치 다음부터 읽는다 (EV-06).
    *
-   * <p>{@code (startsOn, id) > (?, ?)} 튜플 비교를 Criteria 로 풀어 쓴 것이다. 뒤쪽 {@code AND} 절이 EV-06 의 검증 기준을
-   * 지킨다 — 시작일이 같은 행사들 사이를 id 로 갈라서, 경계에 걸린 행사가 두 페이지에 다 나오거나 어느 쪽에도 안 나오는 일이 없게 한다.
+   * <p>{@code (endsOn, id) > (?, ?)} 튜플 비교를 Criteria 로 풀어 쓴 것이다. 뒤쪽 {@code AND} 절이 EV-06 의 검증 기준을
+   * 지킨다 — 종료일이 같은 행사들 사이를 id 로 갈라서, 경계에 걸린 행사가 두 페이지에 다 나오거나 어느 쪽에도 안 나오는 일이 없게 한다.
    */
   private Predicate afterCursor(CriteriaBuilder builder, Root<Event> event, EventCursor cursor) {
     return builder.or(
-        builder.greaterThan(event.get("startsOn"), cursor.startsOn()),
+        builder.greaterThan(event.get("endsOn"), cursor.endsOn()),
         builder.and(
-            builder.equal(event.get("startsOn"), cursor.startsOn()),
+            builder.equal(event.get("endsOn"), cursor.endsOn()),
             builder.greaterThan(event.get("id"), cursor.id())));
   }
 }

@@ -74,7 +74,7 @@ class EventCursorTest {
         .isInstanceOf(IllegalArgumentException.class);
   }
 
-  @DisplayName("커서는 startsOn 과 id 를 모두 가져야 만들어진다.")
+  @DisplayName("커서는 endsOn 과 id 를 모두 가져야 만들어진다.")
   @Test
   void of_hasNullKey() {
     assertThatThrownBy(() -> EventCursor.of(null, 42L))
