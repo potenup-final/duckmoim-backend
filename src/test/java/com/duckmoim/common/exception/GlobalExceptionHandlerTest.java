@@ -105,8 +105,8 @@ class GlobalExceptionHandlerTest {
   /**
    * 아래 넷은 원래 400 · 405 · 415 · 418 이 맞는 요청이다. 핸들러를 나열하지 않으면 캐치올로 떨어져 500 이 된다.
    *
-   * <p>버그가 아니라 <b>합의된 동작</b>이라 여기 못 박아 둔다. 어느 하나를 제대로 된 4xx 로 내리기로 하면 그때
-   * {@link GlobalExceptionHandler} 에 핸들러를 추가하고 이 테스트에서 그 줄을 빼면 된다.
+   * <p>버그가 아니라 <b>합의된 동작</b>이라 여기 못 박아 둔다. 어느 하나를 제대로 된 4xx 로 내리기로 하면 그때 {@link
+   * GlobalExceptionHandler} 에 핸들러를 추가하고 이 테스트에서 그 줄을 빼면 된다.
    */
   @DisplayName("나열하지 않은 프로토콜 예외는 500 으로 나간다 — 합의된 동작이다.")
   @Test
@@ -179,8 +179,7 @@ class GlobalExceptionHandlerTest {
         .satisfies(
             event -> {
               assertThat(event.getLevel()).isEqualTo(Level.ERROR);
-              assertThat(event.getFormattedMessage())
-                  .contains("status=500", "code=INTERNAL_ERROR");
+              assertThat(event.getFormattedMessage()).contains("status=500", "code=INTERNAL_ERROR");
               assertThat(event.getThrowableProxy()).isNotNull();
             });
   }
