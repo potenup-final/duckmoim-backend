@@ -5,3 +5,18 @@ springdoc:
     enabled: false
   swagger-ui:
     enabled: false
+
+# TODO: RDS 생성 전이라 이 값들이 아직 주입되지 않는다. 이 값이 없으면 prod 기동이 실패한다.
+# RDS 를 만들고 GitHub Secrets 와 ci-cd.yml 의 docker run 에 DB_URL · DB_USERNAME · DB_PASSWORD 를 넣으면 이 주석을 지운다.
+spring:
+  datasource:
+    url: ${DB_URL}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+
+  jpa:
+    hibernate:
+      ddl-auto: none
+    properties:
+      hibernate:
+        format_sql: false

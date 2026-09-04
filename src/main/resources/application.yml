@@ -2,8 +2,9 @@ spring:
   application:
     name: duckmoim
 
-# Swagger UI 는 /swagger-ui.html, 스펙은 /v3/api-docs 로 노출한다.
-# 프로덕션(prod 프로파일)에서는 application-prod.yml 이 둘 다 끈다.
+  jpa:
+    open-in-view: false
+
 springdoc:
   api-docs:
     enabled: true
