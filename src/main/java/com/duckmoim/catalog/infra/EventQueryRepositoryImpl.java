@@ -16,6 +16,7 @@ import java.util.List;
 public class EventQueryRepositoryImpl implements EventQueryRepository {
 
   private static final String KEYWORD_WILDCARD = "%";
+  private static final char KEYWORD_ESCAPE = '!';
 
   @PersistenceContext private EntityManager entityManager;
 
@@ -86,13 +87,31 @@ public class EventQueryRepositoryImpl implements EventQueryRepository {
    * 키워드 검색 (EV-05).
    *
    * <p>{@code subject} 는 정규화된 대상명이고 {@code title} 은 수집원의 원제다. 둘 다 봐야 "아이브" 로도 "IVE 팝업스토어" 로도 걸린다.
+   *
+   * <p>{@code LOWER()} 를 씌우지 않는다. 콜레이션이 {@code utf8mb4_0900_ai_ci} 라 비교가 이미 대소문자를 무시하고, 함수를 씌우면 나중에
+   * {@code subject} 에 인덱스를 걸어도 쓰이지 않는다.
    */
   private Predicate keywordMatches(CriteriaBuilder builder, Root<Event> event, String keyword) {
-    String pattern = KEYWORD_WILDCARD + keyword.toLowerCase() + KEYWORD_WILDCARD;
+    String pattern = KEYWORD_WILDCARD + escapeLike(keyword) + KEYWORD_WILDCARD;
 
     return builder.or(
-        builder.like(builder.lower(event.get("subject")), pattern),
-        builder.like(builder.lower(event.get("title")), pattern));
+        builder.like(event.get("subject"), pattern, KEYWORD_ESCAPE),
+        builder.like(event.get("title"), pattern, KEYWORD_ESCAPE));
+  }
+
+  /**
+   * 사용자가 넣은 {@code %} 와 {@code _} 를 찾을 글자로 되돌린다.
+   *
+   * <p>그대로 두면 {@code keyword=%} 가 전체를 매칭하고 {@code _} 가 임의의 한 글자가 된다. 주입은 아니지만 EV-05 의 검증 기준이 "필터
+   * 조합별 결과 정확" 이다.
+   *
+   * <p>이스케이프 문자 자신을 <b>가장 먼저</b> 치환해야 한다. 나중에 하면 앞서 붙인 이스케이프까지 다시 이스케이프해서 패턴이 망가진다.
+   */
+  private String escapeLike(String keyword) {
+    return keyword
+        .replace(String.valueOf(KEYWORD_ESCAPE), KEYWORD_ESCAPE + String.valueOf(KEYWORD_ESCAPE))
+        .replace("%", KEYWORD_ESCAPE + "%")
+        .replace("_", KEYWORD_ESCAPE + "_");
   }
 
   /**

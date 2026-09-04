@@ -296,6 +296,58 @@ class EventQueryServiceTest {
     assertThat(externalIdsOf(slice)).containsExactly("e1", "e4");
   }
 
+  @DisplayName("키워드에 든 와일드카드는 찾을 글자로 취급한다.")
+  @Test
+  void findEvents_byKeywordWithWildcard() {
+    // given
+    givenFourEvents();
+
+    // when — 이스케이프하지 않으면 %가 전체를 매칭한다
+    EventSlice slice = eventQueryService.findEvents(query(null, null, "%"));
+
+    // then
+    assertThat(slice.events()).isEmpty();
+  }
+
+  @DisplayName("밑줄은 임의의 한 글자가 아니라 밑줄로 찾는다.")
+  @Test
+  void findEvents_byKeywordWithUnderscore() {
+    // given — 밑줄이 든 대상과 안 든 대상
+    anEvent()
+        .externalId("under")
+        .regionId(seongsu)
+        .startsOn(OCT_1)
+        .endsOn(OCT_31)
+        .subject("A_B")
+        .insert(jdbc);
+    anEvent()
+        .externalId("plain")
+        .regionId(seongsu)
+        .startsOn(OCT_1)
+        .endsOn(OCT_31)
+        .subject("AXB")
+        .insert(jdbc);
+
+    // when
+    EventSlice slice = eventQueryService.findEvents(query(null, null, "A_B"));
+
+    // then — 이스케이프하지 않으면 AXB 까지 걸린다
+    assertThat(externalIdsOf(slice)).containsExactly("under");
+  }
+
+  @DisplayName("대소문자가 달라도 키워드로 걸린다.")
+  @Test
+  void findEvents_byKeywordIgnoringCase() {
+    // given — title 이 "IVE 팝업" 인 e1
+    givenFourEvents();
+
+    // when — LOWER() 를 걷어낸 뒤에도 콜레이션이 대소문자를 무시한다
+    EventSlice slice = eventQueryService.findEvents(query(null, null, "ive"));
+
+    // then
+    assertThat(externalIdsOf(slice)).containsExactly("e1", "e4");
+  }
+
   static Stream<Arguments> filterCombinations() {
     return Stream.of(
         Arguments.of("종류만", EventKind.POPUP, null, null, List.of("e2", "e1")),
