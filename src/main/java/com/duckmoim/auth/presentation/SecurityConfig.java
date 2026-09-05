@@ -15,7 +15,12 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 public class SecurityConfig {
 
   private static final String[] DOCS = {
-    "/api/health", "/error", "/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html"
+    "/api/health",
+    "/error",
+    "/v3/api-docs/**",
+    "/swagger-ui/**",
+    "/swagger-ui.html",
+    "/api/v1/dev/token"
   };
 
   @Bean
