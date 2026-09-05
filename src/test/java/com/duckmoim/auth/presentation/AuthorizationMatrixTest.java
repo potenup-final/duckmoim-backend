@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.duckmoim.auth.domain.AuthUser;
@@ -125,6 +126,47 @@ class AuthorizationMatrixTest {
 
     assertThat(response.getCookie("JSESSIONID")).isNull();
     assertThat(response.getHeaders(HttpHeaders.SET_COOKIE)).isEmpty();
+  }
+
+  @Test
+  @DisplayName("인증 실패 응답도 code 와 message 두 필드로 나간다.")
+  void unauthorizedResponseUsesCommonEnvelope() throws Exception {
+    mockMvc
+        .perform(delete("/api/v1/auth/token"))
+        .andExpect(status().isUnauthorized())
+        .andExpect(jsonPath("$.code").value("AUTH_ACCESS_TOKEN_INVALID"))
+        .andExpect(jsonPath("$.message").isNotEmpty())
+        .andExpect(jsonPath("$.length()").value(2));
+  }
+
+  @Test
+  @DisplayName("만료된 토큰은 재발급하라는 에러 코드로 구분해서 알려준다.")
+  void expiredTokenTellsClientToRefresh() throws Exception {
+    String expired =
+        new JwtProvider(LOCAL_SECRET, Duration.ofMinutes(-1)).issueAccessToken(SIGNUP_COMPLETED);
+
+    mockMvc
+        .perform(get("/api/v1/users/me").header(HttpHeaders.AUTHORIZATION, "Bearer " + expired))
+        .andExpect(status().isUnauthorized())
+        .andExpect(jsonPath("$.code").value("AUTH_ACCESS_TOKEN_EXPIRED"));
+  }
+
+  @Test
+  @DisplayName("가입 미완료로 막히면 가입 정보를 입력하라는 에러 코드가 나간다.")
+  void forbiddenBySignupIncomplete() throws Exception {
+    mockMvc
+        .perform(post("/api/v1/posts").headers(bearer(SIGNUP_INCOMPLETE)))
+        .andExpect(status().isForbidden())
+        .andExpect(jsonPath("$.code").value("USER_SIGNUP_INFO_REQUIRED"));
+  }
+
+  @Test
+  @DisplayName("관리자가 아니라서 막히면 권한 없음 에러 코드가 나간다.")
+  void forbiddenByNotAdmin() throws Exception {
+    mockMvc
+        .perform(get("/api/v1/admin/reports").headers(bearer(SIGNUP_COMPLETED)))
+        .andExpect(status().isForbidden())
+        .andExpect(jsonPath("$.code").value("AUTH_FORBIDDEN"));
   }
 
   private void assertPasses(RequestBuilder requestBuilder) throws Exception {

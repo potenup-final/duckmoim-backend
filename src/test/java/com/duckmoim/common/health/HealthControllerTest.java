@@ -5,6 +5,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.duckmoim.auth.domain.TokenProvider;
+import com.duckmoim.auth.presentation.RestAccessDeniedHandler;
+import com.duckmoim.auth.presentation.RestAuthenticationEntryPoint;
 import com.duckmoim.auth.presentation.SecurityConfig;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -22,7 +24,7 @@ import org.springframework.test.web.servlet.MockMvc;
  * 검증이 사라진다.
  */
 @WebMvcTest(HealthController.class)
-@Import(SecurityConfig.class)
+@Import({SecurityConfig.class, RestAuthenticationEntryPoint.class, RestAccessDeniedHandler.class})
 class HealthControllerTest {
 
   @Autowired private MockMvc mockMvc;

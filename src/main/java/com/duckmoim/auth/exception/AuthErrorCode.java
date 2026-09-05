@@ -10,7 +10,8 @@ import org.springframework.http.HttpStatus;
 public enum AuthErrorCode implements ErrorCode {
   AUTH_REFRESH_TOKEN_INVALID(HttpStatus.UNAUTHORIZED, "다시 로그인해 주세요."),
   AUTH_ACCESS_TOKEN_EXPIRED(HttpStatus.UNAUTHORIZED, "로그인이 만료되었습니다. 토큰을 재발급해 주세요."),
-  AUTH_ACCESS_TOKEN_INVALID(HttpStatus.UNAUTHORIZED, "로그인이 필요합니다.");
+  AUTH_ACCESS_TOKEN_INVALID(HttpStatus.UNAUTHORIZED, "로그인이 필요합니다."),
+  AUTH_FORBIDDEN(HttpStatus.FORBIDDEN, "이 요청을 수행할 권한이 없습니다.");
 
   private final HttpStatus status;
   private final String message;
