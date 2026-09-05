@@ -1,6 +1,7 @@
 package com.duckmoim.common.config;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import org.junit.jupiter.api.DisplayName;
@@ -21,6 +22,16 @@ class OpenApiExposureTest {
   @DisplayName("OpenAPI 스펙을 200 으로 내려준다")
   void servesApiDocs() throws Exception {
     mockMvc.perform(get("/v3/api-docs")).andExpect(status().isOk());
+  }
+
+  @Test
+  @DisplayName("문서에 Bearer 토큰 입력란이 노출된다")
+  void exposesBearerScheme() throws Exception {
+    mockMvc
+        .perform(get("/v3/api-docs"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.components.securitySchemes.bearerAuth.scheme").value("bearer"))
+        .andExpect(jsonPath("$.components.securitySchemes.bearerAuth.bearerFormat").value("JWT"));
   }
 
   @Test
