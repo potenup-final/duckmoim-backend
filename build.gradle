@@ -102,13 +102,24 @@ tasks.register('installGitHooks', Exec) {
 	ignoreExitValue = true
 }
 
-// git 이 위키 포인터를 아예 신경 쓰지 않게 한다. 설정 두 개가 짝이다.
+// git 이 위키 포인터를 아예 신경 쓰지 않게 한다. 설정 두 개가 짝이고, 태스크가
+// 둘로 나뉘어 있어도 configureWikiGit 이 configureWikiIgnore 에 의존하므로 항상
+// 함께 돈다. 한 태스크에서 `sh -c` 로 이어 붙이지 않는 이유는 Windows 다 — Git
+// for Windows 가 sh.exe 를 PATH 에 없는 Git\bin 에 두어서 프로세스 기동 자체가
+// 실패하고, ignoreExitValue 는 뜬 프로세스의 종료 코드만 무시하므로 못 막는다.
 //
 // ① submodule.docs/wiki.ignore=all — 위키는 빌드하는 의존성이 아니라 읽는 문서라
 //    커밋에 고정할 이유가 없고, 최신으로 당겨오면 status 가 `M docs/wiki` 로 계속
 //    더러워진다. 방치하면 팀원이 "이건 커밋해야 하나" 를 매번 판단하게 되고
 //    `git add -A` 에 옛 핀이 섞인다.
-//
+tasks.register('configureWikiIgnore', Exec) {
+	description = 'git 이 위키 서브모듈 포인터를 건드리지 않도록 설정한다'
+	group = 'build setup'
+	onlyIf { file("${rootDir}/.gitmodules").exists() }
+	commandLine 'git', 'config', 'submodule.docs/wiki.ignore', 'all'
+	ignoreExitValue = true
+}
+
 // ② submodule.recurse=false — recurse 가 켜져 있으면 `git pull` 이 위키를 **기록된
 //    핀**으로 체크아웃한다. 핀을 관리하지 않기로 했으니 그건 아무도 안 챙기는 옛
 //    값이고, 결과적으로 pull 이 위키를 뒤로 되돌린다. 실측했다:
@@ -116,11 +127,11 @@ tasks.register('installGitHooks', Exec) {
 //    막지 못한다. STAR-22 시절 configureSubmoduleRecurse 가 true 를 심어둔 기존
 //    클론을 되돌리기 위해 unset 이 아니라 false 로 명시한다.
 tasks.register('configureWikiGit', Exec) {
-	description = 'git 이 위키 서브모듈 포인터를 건드리지 않도록 설정한다'
+	description = 'git pull 이 위키를 옛 핀으로 되돌리지 않게 한다'
 	group = 'build setup'
+	dependsOn 'configureWikiIgnore'
 	onlyIf { file("${rootDir}/.gitmodules").exists() }
-	commandLine 'sh', '-c',
-		'git config submodule.docs/wiki.ignore all; git config submodule.recurse false'
+	commandLine 'git', 'config', 'submodule.recurse', 'false'
 	ignoreExitValue = true
 }
 

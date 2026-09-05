@@ -426,10 +426,10 @@ Platform 에 넘기므로 이름 규칙이 걸리지 않는다. `test` 태스크
 
 | 위키 규칙 | 수단 |
 |---|---|
-| 의존성 방향 · service 가 infra 구현 직접 참조 금지 | ArchUnit `LAYER_DEPENDENCY` |
+| 의존성 방향 (infra 는 service 만 접근) | ArchUnit `LAYER_DEPENDENCY` |
 | domain 이 다른 레이어를 참조하지 않음 | ArchUnit `DOMAIN_REFERENCES_NOTHING` |
 | domain 을 Spring 없이 단위 테스트할 수 있어야 함 | ArchUnit `DOMAIN_IS_FRAMEWORK_FREE` |
-| 저장소 인터페이스는 domain 에 선언 | ArchUnit `REPOSITORY_INTERFACE_LIVES_IN_DOMAIN` |
+| 저장소 인터페이스는 infra 에 선언 | ArchUnit `REPOSITORY_INTERFACE_LIVES_IN_INFRA` |
 | `@Test` 에 `@DisplayName` 누락 | ArchUnit `TEST_HAS_DISPLAY_NAME` |
 | 로그 prefix `[Class.method]` | Checkstyle `RegexpSingleline` |
 | 로그 문자열 더하기 금지 | Checkstyle `RegexpSingleline` |

@@ -24,8 +24,13 @@ final class ArchitectureRules {
   /**
    * 의존성은 아래 방향으로만 흐른다 (아키텍처 컨벤션 "의존성 방향").
    *
-   * <p>withOptionalLayers 가 필요한 이유 — 도메인 코드가 아직 0줄이라 네 레이어가 모두 비어 있고, 이것 없이는 "Layer 'domain' is
-   * empty" 로 빌드가 깨진다. <b>대신 규칙이 아무것도 검사하지 않으면서 초록불이 된다.</b> 그래서 RulesAreAliveTest 가 선택이 아니라 필수다.
+   * <p><b>infra 는 service 가 접근한다.</b> 아키텍처 컨벤션 규칙 3 이 "service는 저장소와 외부 API Client를 infra에서 직접
+   * 주입받는다. 그 앞에 별도 인터페이스를 두지 않는다" 로 정했다. 이 규칙은 그 앞 판본(포트-어댑터)을 보고 짜여 있었고, 그대로 두면 DB 를 읽는 service 를
+   * 아예 쓸 수 없다 — infra 에 두면 여기 걸리고 domain 에 두면 {@link #DOMAIN_IS_FRAMEWORK_FREE} 에 걸린다.
+   *
+   * <p>withOptionalLayers 가 필요한 이유 — 아직 네 레이어를 다 갖춘 도메인이 없어 빈 레이어가 생기고, 이것 없이는 "Layer
+   * 'presentation' is empty" 로 빌드가 깨진다. <b>대신 규칙이 아무것도 검사하지 않으면서 초록불이 된다.</b> 그래서 RulesAreAliveTest
+   * 가 선택이 아니라 필수다.
    */
   static final ArchRule LAYER_DEPENDENCY =
       layeredArchitecture()
@@ -43,7 +48,7 @@ final class ArchitectureRules {
           .whereLayer("service")
           .mayOnlyBeAccessedByLayers("presentation")
           .whereLayer("infra")
-          .mayNotBeAccessedByAnyLayer()
+          .mayOnlyBeAccessedByLayers("service")
           .withOptionalLayers(true);
 
   /** domain 은 의존 그래프의 종착점이다. 어떤 레이어도 참조하지 않는다 (아키텍처 컨벤션 규칙 3). */
@@ -74,19 +79,27 @@ final class ArchitectureRules {
           .allowEmptyShould(true);
 
   /**
-   * 저장소 인터페이스는 domain 이 선언한다 (아키텍처 컨벤션 "저장소 인터페이스").
+   * 저장소 인터페이스는 infra 에 둔다 (아키텍처 컨벤션 「infra · 저장소」).
    *
-   * <p>infra 가 인터페이스를 만들어 상위에 노출하면 service 가 기술 세부사항을 알게 된다.
+   * <p><b>방향이 뒤집혔다.</b> 예전에는 domain 이 선언하고 infra 가 구현하는 포트-어댑터였다. 아키텍처 컨벤션 「패키지 구조」가 그 방식을 기각했다 —
+   * 얻는 것은 DB 기술 교체의 격리 하나인데 로컬·운영 모두 MySQL 이라 바꿀 계획이 없고, 대신 도메인 모델과 {@code @Entity} 를 따로 두고 변환 코드를
+   * 유지하는 비용을 계속 치른다. <b>변환 누락은 컴파일도 테스트도 통과한 뒤 화면에서야 드러난다.</b>
+   *
+   * <p>저장소는 Spring Data 를 상속하므로 domain 에 두면 {@link #DOMAIN_IS_FRAMEWORK_FREE} 와 정면으로 부딪힌다 — 두 규칙을
+   * 동시에 만족시키는 배치가 없어진다.
+   *
+   * <p>그 대가로 service 가 Spring Data 타입을 알게 되는데, 그것은 "Spring Data 타입을 service public 시그니처에 노출하지 않는다"
+   * 는 별도 규칙으로 관리한다. 그쪽은 기계가 판정하기 어려워 리뷰 체크리스트에 남아 있다.
    */
-  static final ArchRule REPOSITORY_INTERFACE_LIVES_IN_DOMAIN =
+  static final ArchRule REPOSITORY_INTERFACE_LIVES_IN_INFRA =
       classes()
           .that()
           .haveSimpleNameEndingWith("Repository")
           .and()
           .areInterfaces()
           .should()
-          .resideInAPackage("..domain..")
-          .because("저장소 인터페이스는 domain 이 선언한다 (아키텍처 컨벤션 · 저장소 인터페이스)")
+          .resideInAPackage("..infra..")
+          .because("저장소 인터페이스는 infra 에 두고 Spring Data 를 상속한다 (아키텍처 컨벤션 · infra 저장소)")
           .allowEmptyShould(true);
 
   /**
