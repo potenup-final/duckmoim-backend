@@ -29,10 +29,15 @@ dependencies {
 	implementation 'org.flywaydb:flyway-core'
 	implementation 'org.flywaydb:flyway-mysql'
 
+	// 토큰은 전부 헤더로 오간다 (ADR 0001). 쿠키도 서블릿 세션도 쓰지 않으므로
+	// SecurityConfig 가 세션 생성 경로를 전부 닫는다.
+	implementation 'org.springframework.boot:spring-boot-starter-security'
+
 	compileOnly 'org.projectlombok:lombok'
 	annotationProcessor 'org.projectlombok:lombok'
 
 	testImplementation 'org.springframework.boot:spring-boot-starter-test'
+	testImplementation 'org.springframework.security:spring-security-test'
 	testCompileOnly 'org.projectlombok:lombok'
 	testAnnotationProcessor 'org.projectlombok:lombok'
 	testImplementation 'com.tngtech.archunit:archunit-junit5:1.4.0'
