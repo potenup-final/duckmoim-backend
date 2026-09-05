@@ -1,7 +1,9 @@
 plugins {
 	id 'java'
+	id 'checkstyle'
 	id 'org.springframework.boot' version '3.5.16'
 	id 'io.spring.dependency-management' version '1.1.7'
+	id 'com.diffplug.spotless' version '7.0.2'
 }
 
 group = 'com.duckmoim'
@@ -22,12 +24,83 @@ dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-validation'
 	implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.13'
 
+	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+	runtimeOnly 'com.mysql:mysql-connector-j'
+	implementation 'org.flywaydb:flyway-core'
+	implementation 'org.flywaydb:flyway-mysql'
+
+	compileOnly 'org.projectlombok:lombok'
+	annotationProcessor 'org.projectlombok:lombok'
+
 	testImplementation 'org.springframework.boot:spring-boot-starter-test'
+	testCompileOnly 'org.projectlombok:lombok'
+	testAnnotationProcessor 'org.projectlombok:lombok'
+	testImplementation 'com.tngtech.archunit:archunit-junit5:1.4.0'
 	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+
+	testImplementation 'org.testcontainers:mysql'
+	testImplementation 'org.testcontainers:junit-jupiter'
 }
 
 tasks.named('test') {
 	useJUnitPlatform()
+
+	systemProperty 'spring.datasource.url', 'jdbc:tc:mysql:8.4:///duckmoim'
+	systemProperty 'spring.datasource.driver-class-name', 'org.testcontainers.jdbc.ContainerDatabaseDriver'
+
+	// 위반 픽스처는 아키텍처 규칙을 일부러 어기는 클래스라 테스트로 실행하지 않는다.
+	// 이름을 *Test 로 안 지으면 안 잡힐 거라 봤지만, Gradle 은 클래스 파일을 훑어
+	// 플랫폼에 넘기므로 이름 규칙이 걸리지 않는다. 컴파일은 그대로여서 ArchUnit 은
+	// 계속 읽는다.
+	exclude '**/architecture/fixture/**'
+}
+
+// 포맷을 부탁하지 않고 강제한다. 에이전트가 어떤 스타일로 써도 spotlessApply 한
+// 번에 통일되고, 어긋난 채로 올라오면 check 가 막는다. 리뷰에서 포맷 지적이 사라진다.
+//
+// googleJavaFormat 은 설정 항목이 없다. 그게 고른 이유다 — 다툴 여지가 생기지 않는다.
+spotless {
+	java {
+		googleJavaFormat()
+		removeUnusedImports()
+		trimTrailingWhitespace()
+		endWithNewline()
+	}
+}
+
+// Spotless 가 포맷을 보고, Checkstyle 은 포맷으로 판정할 수 없는 것을 본다 —
+// 로그 prefix, 로그 문자열 더하기, 테스트 메서드 네이밍. 위키 코드·테스트 컨벤션에서
+// 기계가 판정할 수 있는 항목만 옮겼다.
+//
+// main 과 test 의 메서드 네이밍 규칙이 달라 설정을 둘로 나눈다.
+// 테스트는 실패 케이스를 pay_pointIsNotEnough 형식으로 쓰므로 밑줄을 허용해야 한다.
+checkstyle {
+	toolVersion = '10.21.1'
+	maxWarnings = 0
+}
+
+tasks.named('checkstyleTest') {
+	configFile = file("${rootDir}/config/checkstyle/checkstyle-test.xml")
+}
+
+tasks.register('dbDown', Exec) {
+	description = '로컬 MySQL 볼륨을 버린다'
+	group = 'build setup'
+	commandLine 'docker', 'compose', 'down', '-v'
+}
+
+// 마이그레이션 번호가 영역별 대역으로 갈려 있어 낮은 번호가 나중에 머지된다.
+// 빈 DB 에서 시작하면 항상 번호순으로 적용되므로, 로컬 DB 는 이어 붙이지 않고
+// 버리고 다시 만드는 것을 기본으로 둔다. 적용된 파일을 고쳐 체크섬이 깨진 경우도
+// 같은 명령으로 풀린다.
+//
+// --wait 는 docker-compose.yml 의 healthcheck 가 통과할 때까지 잡아둔다.
+// 태스크가 끝나면 바로 bootRun 해도 된다.
+tasks.register('dbReset', Exec) {
+	description = '로컬 MySQL 을 비우고 마이그레이션을 처음부터 다시 적용한다'
+	group = 'build setup'
+	dependsOn 'dbDown'
+	commandLine 'docker', 'compose', 'up', '-d', '--wait'
 }
 
 tasks.register('installGitHooks', Exec) {
@@ -38,6 +111,79 @@ tasks.register('installGitHooks', Exec) {
 	ignoreExitValue = true
 }
 
+// git 이 위키 포인터를 아예 신경 쓰지 않게 한다. 설정 두 개가 짝이고, 태스크가
+// 둘로 나뉘어 있어도 configureWikiGit 이 configureWikiIgnore 에 의존하므로 항상
+// 함께 돈다. 한 태스크에서 `sh -c` 로 이어 붙이지 않는 이유는 Windows 다 — Git
+// for Windows 가 sh.exe 를 PATH 에 없는 Git\bin 에 두어서 프로세스 기동 자체가
+// 실패하고, ignoreExitValue 는 뜬 프로세스의 종료 코드만 무시하므로 못 막는다.
+//
+// ① submodule.docs/wiki.ignore=all — 위키는 빌드하는 의존성이 아니라 읽는 문서라
+//    커밋에 고정할 이유가 없고, 최신으로 당겨오면 status 가 `M docs/wiki` 로 계속
+//    더러워진다. 방치하면 팀원이 "이건 커밋해야 하나" 를 매번 판단하게 되고
+//    `git add -A` 에 옛 핀이 섞인다.
+tasks.register('configureWikiIgnore', Exec) {
+	description = 'git 이 위키 서브모듈 포인터를 건드리지 않도록 설정한다'
+	group = 'build setup'
+	onlyIf { file("${rootDir}/.gitmodules").exists() }
+	commandLine 'git', 'config', 'submodule.docs/wiki.ignore', 'all'
+	ignoreExitValue = true
+}
+
+// ② submodule.recurse=false — recurse 가 켜져 있으면 `git pull` 이 위키를 **기록된
+//    핀**으로 체크아웃한다. 핀을 관리하지 않기로 했으니 그건 아무도 안 챙기는 옛
+//    값이고, 결과적으로 pull 이 위키를 뒤로 되돌린다. 실측했다:
+//    a25d114(최신) → 46651e7(6시간 낡음). ①은 status·diff 표시만 바꾸므로 이걸
+//    막지 못한다. STAR-22 시절 configureSubmoduleRecurse 가 true 를 심어둔 기존
+//    클론을 되돌리기 위해 unset 이 아니라 false 로 명시한다.
+tasks.register('configureWikiGit', Exec) {
+	description = 'git pull 이 위키를 옛 핀으로 되돌리지 않게 한다'
+	group = 'build setup'
+	dependsOn 'configureWikiIgnore'
+	onlyIf { file("${rootDir}/.gitmodules").exists() }
+	commandLine 'git', 'config', 'submodule.recurse', 'false'
+	ignoreExitValue = true
+}
+
+// docs/wiki 는 [1] 컨텍스트 확보가 읽는 곳이다. **최신으로 맞춘다.**
+//
+// 예전에는 `--init` 만 하고 조건이 "docs/wiki/README.md 가 없을 때" 였다. 그래서
+// 한 번 채워지면 다시 돌지 않았고, 누가 위키를 고쳐도 포인터를 올려주지 않으면
+// 팀원은 낡은 문서를 최신이라 믿고 읽었다. 실제로 그 상태였다 — 백엔드가 가리키는
+// 핀이 위키 최신보다 커밋 2개 뒤처져 있었고 아무 경고도 없었다.
+//
+// --remote 를 조건 없이 돌리는 것이 예전에는 위험했다. 포인터를 올리려고 실행한
+// --remote 를 되돌렸기 때문이다. 지금은 방향이 반대다 — 항상 최신을 가져오므로
+// 되돌릴 핀이라는 개념 자체가 없고, configureWikiIgnore 가 그 변화를 커밋에서
+// 떼어낸다.
+//
+// 위키는 PRIVATE 이라 접근 권한이 없으면 실패한다. 그때 조용히 넘기지 않는다 —
+// 빌드는 통과하는데 에이전트가 스펙을 못 읽는 상태가 가장 나쁘다.
+tasks.register('syncWiki', Exec) {
+	description = '위키 서브모듈을 최신으로 맞춘다 (docs/wiki)'
+	group = 'build setup'
+	onlyIf { file("${rootDir}/.gitmodules").exists() }
+	commandLine 'git', 'submodule', 'update', '--init', '--remote', 'docs/wiki'
+	ignoreExitValue = true
+
+	doLast {
+		if (executionResult.get().exitValue != 0) {
+			logger.warn('''
+========================================================================
+ 위키 서브모듈(docs/wiki) 을 최신으로 맞추지 못했습니다.
+
+ 빌드와 테스트는 그대로 됩니다. 다만 요구사항 검증 기준 · 불변식 ·
+ 설계 결정을 읽을 수 없거나, 낡은 것을 읽습니다.
+
+ 네트워크가 끊겼다면 이미 받아둔 위키를 그대로 쓰면 됩니다.
+ 그게 아니면 위키는 PRIVATE 이므로 potenup-final/duckmoim-wiki
+ 접근 권한을 받은 뒤 아래를 실행하세요.
+
+   git submodule update --init --remote docs/wiki
+========================================================================'''.stripIndent())
+		}
+	}
+}
+
 tasks.named('compileJava') {
-	dependsOn 'installGitHooks'
+	dependsOn 'installGitHooks', 'configureWikiGit', 'syncWiki'
 }

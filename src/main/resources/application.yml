@@ -2,8 +2,15 @@ spring:
   application:
     name: duckmoim
 
-# Swagger UI 는 /swagger-ui.html, 스펙은 /v3/api-docs 로 노출한다.
-# 프로덕션(prod 프로파일)에서는 application-prod.yml 이 둘 다 끈다.
+  # 접속 정보가 프로파일별 파일에만 있어서, 프로파일 없이 띄우면 DataSource 를
+  # 못 찾고 기동이 실패한다. 로컬에서 매번 손으로 지정하지 않게 기본값을 둔다.
+  # active 가 아니라 default 라서 배포의 SPRING_PROFILES_ACTIVE=prod 를 가리지 않는다.
+  profiles:
+    default: local
+
+  jpa:
+    open-in-view: false
+
 springdoc:
   api-docs:
     enabled: true
