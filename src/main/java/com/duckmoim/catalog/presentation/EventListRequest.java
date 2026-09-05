@@ -3,10 +3,10 @@ package com.duckmoim.catalog.presentation;
 import com.duckmoim.catalog.domain.EventCursor;
 import com.duckmoim.catalog.domain.EventKind;
 import com.duckmoim.catalog.domain.EventQuery;
+import com.duckmoim.common.exception.BusinessException;
+import com.duckmoim.common.exception.CommonErrorCode;
 import java.time.LocalDate;
 import org.springframework.format.annotation.DateTimeFormat;
-import org.springframework.http.HttpStatus;
-import org.springframework.web.server.ResponseStatusException;
 
 /**
  * 행사 목록 조회 요청 (API 설계 2-3).
@@ -47,10 +47,11 @@ public record EventListRequest(
     try {
       return EventCursor.decode(cursor);
     } catch (IllegalArgumentException e) {
-      // ResponseStatusException 을 쓰는 이유 — 전역 예외 처리(STAR-30) 가 아직 develop 에
-      // 없다. 이 예외는 지금도 400 을 내고, 그 PR 이 머지되면 핸들러가 상태 코드를 보고
-      // INVALID_INPUT 봉투로 바꿔준다. 그때 이 자리를 BusinessException 으로 옮긴다.
-      throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "커서를 판독할 수 없습니다.", e);
+      // 전역 예외 처리(STAR-30)가 머지됐으므로 예고한 대로 BusinessException 으로 옮긴다.
+      // ResponseStatusException 을 그대로 두면 안 된다 — STAR-30 은 상태 코드를 읽어
+      // 봉투로 바꾸는 방식이 아니라 **명시 핸들러 방식**으로 들어왔다. 목록에 없는 예외는
+      // 전부 INTERNAL_ERROR 500 이라, 망가진 커서가 400 이 아니라 500 으로 나갔다.
+      throw new BusinessException(CommonErrorCode.INVALID_INPUT);
     }
   }
 }
