@@ -54,10 +54,10 @@ class RulesAreAliveTest {
     assertCatches(ArchitectureRules.DOMAIN_IS_FRAMEWORK_FREE, "ViolatingPayment");
   }
 
-  @DisplayName("저장소 인터페이스가 domain 밖에 있으면 잡는다.")
+  @DisplayName("저장소 인터페이스가 infra 밖에 있으면 잡는다.")
   @Test
-  void repositoryInterfaceLivesInDomain() {
-    assertCatches(ArchitectureRules.REPOSITORY_INTERFACE_LIVES_IN_DOMAIN, "MisplacedRepository");
+  void repositoryInterfaceLivesInInfra() {
+    assertCatches(ArchitectureRules.REPOSITORY_INTERFACE_LIVES_IN_INFRA, "MisplacedRepository");
   }
 
   @DisplayName("@Test 에 @DisplayName 이 없으면 잡는다.")

@@ -74,19 +74,20 @@ final class ArchitectureRules {
           .allowEmptyShould(true);
 
   /**
-   * 저장소 인터페이스는 domain 이 선언한다 (아키텍처 컨벤션 "저장소 인터페이스").
+   * 저장소 인터페이스는 infra 가 선언한다 (아키텍처 컨벤션 "infra · 저장소").
    *
-   * <p>infra 가 인터페이스를 만들어 상위에 노출하면 service 가 기술 세부사항을 알게 된다.
+   * <p>저장소는 Spring Data 를 상속한다. domain 에 두면 domain 이 프레임워크에 묶여 {@link #DOMAIN_IS_FRAMEWORK_FREE} 와
+   * 정면으로 부딪힌다 — 두 규칙을 동시에 만족시키는 배치가 없어진다.
    */
-  static final ArchRule REPOSITORY_INTERFACE_LIVES_IN_DOMAIN =
+  static final ArchRule REPOSITORY_INTERFACE_LIVES_IN_INFRA =
       classes()
           .that()
           .haveSimpleNameEndingWith("Repository")
           .and()
           .areInterfaces()
           .should()
-          .resideInAPackage("..domain..")
-          .because("저장소 인터페이스는 domain 이 선언한다 (아키텍처 컨벤션 · 저장소 인터페이스)")
+          .resideInAPackage("..infra..")
+          .because("저장소 인터페이스는 infra 가 선언한다 (아키텍처 컨벤션 · infra 저장소)")
           .allowEmptyShould(true);
 
   /**
