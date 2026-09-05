@@ -79,11 +79,14 @@ final class ArchitectureRules {
           .allowEmptyShould(true);
 
   /**
-   * 저장소 인터페이스는 infra 에 둔다 (아키텍처 컨벤션 "Infra 작성 규칙 · 저장소").
+   * 저장소 인터페이스는 infra 에 둔다 (아키텍처 컨벤션 「infra · 저장소」).
    *
-   * <p><b>방향이 뒤집혔다.</b> 예전에는 domain 이 선언하고 infra 가 구현하는 포트-어댑터였다. 아키텍처 컨벤션 「저장소 인터페이스를 domain에 두지
-   * 않는 이유」가 그 방식을 기각했다 — 얻는 것은 DB 기술 교체의 격리 하나인데 로컬·운영 모두 MySQL 이라 바꿀 계획이 없고, 대신 도메인 모델과
-   * {@code @Entity} 를 따로 두고 변환 코드를 유지하는 비용을 계속 치른다. <b>변환 누락은 컴파일도 테스트도 통과한 뒤 화면에서야 드러난다.</b>
+   * <p><b>방향이 뒤집혔다.</b> 예전에는 domain 이 선언하고 infra 가 구현하는 포트-어댑터였다. 아키텍처 컨벤션 「패키지 구조」가 그 방식을 기각했다 —
+   * 얻는 것은 DB 기술 교체의 격리 하나인데 로컬·운영 모두 MySQL 이라 바꿀 계획이 없고, 대신 도메인 모델과 {@code @Entity} 를 따로 두고 변환 코드를
+   * 유지하는 비용을 계속 치른다. <b>변환 누락은 컴파일도 테스트도 통과한 뒤 화면에서야 드러난다.</b>
+   *
+   * <p>저장소는 Spring Data 를 상속하므로 domain 에 두면 {@link #DOMAIN_IS_FRAMEWORK_FREE} 와 정면으로 부딪힌다 — 두 규칙을
+   * 동시에 만족시키는 배치가 없어진다.
    *
    * <p>그 대가로 service 가 Spring Data 타입을 알게 되는데, 그것은 "Spring Data 타입을 service public 시그니처에 노출하지 않는다"
    * 는 별도 규칙으로 관리한다. 그쪽은 기계가 판정하기 어려워 리뷰 체크리스트에 남아 있다.
@@ -96,7 +99,7 @@ final class ArchitectureRules {
           .areInterfaces()
           .should()
           .resideInAPackage("..infra..")
-          .because("저장소 인터페이스는 infra 에 두고 Spring Data 를 상속한다 (아키텍처 컨벤션 · 저장소)")
+          .because("저장소 인터페이스는 infra 에 두고 Spring Data 를 상속한다 (아키텍처 컨벤션 · infra 저장소)")
           .allowEmptyShould(true);
 
   /**
