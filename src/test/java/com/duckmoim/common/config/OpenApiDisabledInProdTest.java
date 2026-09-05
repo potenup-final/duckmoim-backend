@@ -11,7 +11,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
-@SpringBootTest
+@SpringBootTest(properties = "duckmoim.jwt.secret=prod-profile-test-dummy-secret-not-a-real-key")
 @AutoConfigureMockMvc
 @ActiveProfiles("prod")
 @DisplayName("prod 프로파일에서는 API 문서가 닫혀 있다")

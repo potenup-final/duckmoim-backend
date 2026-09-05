@@ -20,3 +20,9 @@ spring:
     properties:
       hibernate:
         format_sql: false
+
+# 기본값을 두지 않는다. JWT_SECRET 이 없으면 기동이 실패해야 한다 —
+# 조용히 개발용 열쇠로 뜨면 발급한 토큰을 누구나 위조할 수 있다.
+duckmoim:
+  jwt:
+    secret: ${JWT_SECRET}

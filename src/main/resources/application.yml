@@ -14,3 +14,10 @@ springdoc:
     path: /swagger-ui.html
     operations-sorter: alpha
     tags-sorter: alpha
+
+# 토큰 서명 열쇠. local·test 는 아래 기본값으로 뜨고, prod 는 기본값 없이 필수로 건다
+# (application-prod.yml). 기본값을 운영까지 남기면 기본 시크릿으로 배포되는 사고가 난다.
+duckmoim:
+  jwt:
+    secret: ${JWT_SECRET:duckmoim-local-development-secret-do-not-use-in-production}
+    access-token-ttl: 30m
