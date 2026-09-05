@@ -4,12 +4,14 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.duckmoim.auth.domain.TokenProvider;
 import com.duckmoim.auth.presentation.SecurityConfig;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 /**
@@ -24,6 +26,8 @@ import org.springframework.test.web.servlet.MockMvc;
 class HealthControllerTest {
 
   @Autowired private MockMvc mockMvc;
+
+  @MockitoBean private TokenProvider tokenProvider;
 
   @Test
   @DisplayName("헬스체크는 200 과 status=UP 을 반환한다")
