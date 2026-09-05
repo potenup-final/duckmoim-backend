@@ -7,25 +7,18 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.duckmoim.auth.domain.AuthUser;
 import com.duckmoim.auth.domain.TokenProvider;
-import com.duckmoim.auth.infra.JwtProvider;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
-import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
 @WebMvcTest(DevTokenController.class)
 @ActiveProfiles("local")
-@Import({
-  SecurityConfig.class,
-  RestAuthenticationEntryPoint.class,
-  RestAccessDeniedHandler.class,
-  JwtProvider.class
-})
+@ImportSecurity
 @DisplayName("개발용 토큰 발급")
 class DevTokenControllerTest {
 
