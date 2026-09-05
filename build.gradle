@@ -83,6 +83,26 @@ tasks.named('checkstyleTest') {
 	configFile = file("${rootDir}/config/checkstyle/checkstyle-test.xml")
 }
 
+tasks.register('dbDown', Exec) {
+	description = '로컬 MySQL 볼륨을 버린다'
+	group = 'build setup'
+	commandLine 'docker', 'compose', 'down', '-v'
+}
+
+// 마이그레이션 번호가 영역별 대역으로 갈려 있어 낮은 번호가 나중에 머지된다.
+// 빈 DB 에서 시작하면 항상 번호순으로 적용되므로, 로컬 DB 는 이어 붙이지 않고
+// 버리고 다시 만드는 것을 기본으로 둔다. 적용된 파일을 고쳐 체크섬이 깨진 경우도
+// 같은 명령으로 풀린다.
+//
+// --wait 는 docker-compose.yml 의 healthcheck 가 통과할 때까지 잡아둔다.
+// 태스크가 끝나면 바로 bootRun 해도 된다.
+tasks.register('dbReset', Exec) {
+	description = '로컬 MySQL 을 비우고 마이그레이션을 처음부터 다시 적용한다'
+	group = 'build setup'
+	dependsOn 'dbDown'
+	commandLine 'docker', 'compose', 'up', '-d', '--wait'
+}
+
 tasks.register('installGitHooks', Exec) {
 	description = '커밋 제목에 Jira 키를 자동으로 붙이는 .githooks 를 활성화한다'
 	group = 'build setup'
