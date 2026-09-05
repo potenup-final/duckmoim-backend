@@ -22,8 +22,8 @@ class ArchitectureTest {
   static final ArchRule domain_은_Spring_에_의존하지_않는다 = ArchitectureRules.DOMAIN_IS_FRAMEWORK_FREE;
 
   @ArchTest
-  static final ArchRule 저장소_인터페이스는_domain_에_있다 =
-      ArchitectureRules.REPOSITORY_INTERFACE_LIVES_IN_DOMAIN;
+  static final ArchRule 저장소_인터페이스는_infra_에_있다 =
+      ArchitectureRules.REPOSITORY_INTERFACE_LIVES_IN_INFRA;
 
   /**
    * @DisplayName 규칙만 테스트 코드를 대상으로 하므로 @ArchTest 로 쓸 수 없다. 위 @AnalyzeClasses 가 DoNotIncludeTests 로
