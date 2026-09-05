@@ -8,6 +8,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.duckmoim.auth.presentation.ImportSecurity;
 import com.duckmoim.catalog.domain.EventCursor;
 import com.duckmoim.catalog.domain.EventKind;
 import com.duckmoim.catalog.domain.PlaceKind;
@@ -33,6 +34,7 @@ import org.springframework.test.web.servlet.MockMvc;
  * <p>필터 조합과 커서 경계는 통합 테스트가 본다. 여기서 다시 검증하면 같은 규칙을 두 곳에서 관리하게 된다.
  */
 @WebMvcTest(EventController.class)
+@ImportSecurity
 class EventControllerTest {
 
   @Autowired private MockMvc mockMvc;
