@@ -36,10 +36,31 @@ class RulesAreAliveTest {
     assertThat(result.getFailureReport().toString()).contains(expectedClassName);
   }
 
-  @DisplayName("service 가 infra 를 직접 참조하면 레이어 규칙이 잡는다.")
+  @DisplayName("presentation 이 service 를 건너뛰고 infra 를 참조하면 레이어 규칙이 잡는다.")
   @Test
   void layerDependency() {
-    assertCatches(ArchitectureRules.LAYER_DEPENDENCY, "ViolatingPaymentService");
+    assertCatches(ArchitectureRules.LAYER_DEPENDENCY, "ViolatingPaymentController");
+  }
+
+  /**
+   * 규칙이 <b>과하게 잡지 않는지</b>도 본다. service → infra 는 아키텍처 컨벤션 규칙 3 이 허용한 방향이고, 이것이 위반으로 잡히면 DB 를 읽는
+   * service 를 아예 쓸 수 없다.
+   *
+   * <p>여기에 이 테스트가 필요한 이유 — 규칙을 뒤집을 때 방향을 반대로 적어도 위반 픽스처는 여전히 잡히므로 위의 검사만으로는 초록불이 된다.
+   */
+  @DisplayName("service 가 infra 저장소를 주입받는 것은 레이어 규칙이 잡지 않는다.")
+  @Test
+  void layerDependency_serviceMayUseInfra() {
+    EvaluationResult result = evaluateOnFixtures(ArchitectureRules.LAYER_DEPENDENCY);
+
+    // 보고서 전체에서 이름을 찾으면 안 된다. PaymentService 는 ViolatingPayment(domain) 가
+    // 참조하는 *대상* 으로도 등장하므로, 그건 domain 쪽 위반이지 service 쪽 위반이 아니다.
+    assertThat(result.getFailureReport().getDetails())
+        .as("service → infra 는 허용된 방향이다 (아키텍처 컨벤션 규칙 3)")
+        .noneMatch(
+            detail ->
+                detail.contains("fixture.service.PaymentService")
+                    && detail.contains("PaymentJpaRepository"));
   }
 
   @DisplayName("domain 이 상위 레이어를 참조하면 잡는다.")
