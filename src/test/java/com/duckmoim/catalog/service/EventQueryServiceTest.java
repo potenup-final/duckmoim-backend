@@ -158,7 +158,7 @@ class EventQueryServiceTest {
     // when
     EventSlice slice = eventQueryService.findEvents(query(null, null, null));
 
-    // then — 프론트에 번호→지역 대응표가 없다 (화면-계약/행사.md 7장 ⑴)
+    // then — 프론트에 번호→지역 대응표가 없다 (화면-계약.md 「`place.district` — 없으면 앱이 안 돈다」)
     assertThat(slice.events())
         .singleElement()
         .extracting(EventSummary::district)

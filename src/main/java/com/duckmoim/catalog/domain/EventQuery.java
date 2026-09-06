@@ -12,7 +12,7 @@ import java.time.LocalDate;
  * 바뀌면 이미 발급한 커서가 무의미해진다.
  *
  * <p><b>끝난 행사는 여기 없다.</b> 조회 시점({@code today})은 이 조건에 담지 않고 저장소 인자로 받는다. 사용자가 끌 수 있는 필터가 아니라 목록 자체의
- * 성질이라서다 (화면-계약/행사.md 9장).
+ * 성질이라서다 (화면-계약.md 「정렬」).
  */
 public record EventQuery(
     EventKind kind,
