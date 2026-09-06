@@ -140,6 +140,7 @@ gh issue edit <번호> --body-file <파일>
 
 - **Spotless** (googleJavaFormat) — 포맷. 위반은 `spotlessApply` 로 고친다
 - **Checkstyle** — 로그 prefix `[Class.method]`, 로그 문자열 더하기 금지,
+  **로그에 남기지 않는 값**(본문·닉네임·출생연도·카카오 회원번호·인가코드·토큰),
   `FIXME`·`XXX`·`HACK` 금지, 메서드 네이밍
 - **ArchUnit** — 레이어 의존성, domain 의 상위 레이어·Spring 참조,
   저장소 인터페이스 위치, `@Test` 에 `@DisplayName`
