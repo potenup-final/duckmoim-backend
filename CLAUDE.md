@@ -143,7 +143,8 @@ gh issue edit <번호> --body-file <파일>
   **로그에 남기지 않는 값**(본문·닉네임·출생연도·카카오 회원번호·인가코드·토큰),
   `FIXME`·`XXX`·`HACK` 금지, 메서드 네이밍
 - **ArchUnit** — 레이어 의존성, domain 의 상위 레이어·Spring 참조,
-  저장소 인터페이스 위치, `@Test` 에 `@DisplayName`
+  저장소 인터페이스 위치, **`@Transactional` 은 service 에만**,
+  **service 가 Spring Data 타입을 시그니처에 노출하지 않기**, `@Test` 에 `@DisplayName`
 
 **게이트가 막으면 코드를 고친다. 규칙을 고치지 않는다.** 규칙 파일을 바꾸는
 쪽이 쉽고 diff 도 작지만, 그러면 게이트가 게이트가 아니다. 규칙이 틀렸다고
