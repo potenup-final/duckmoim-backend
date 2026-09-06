@@ -223,10 +223,21 @@ Jira 정보는 `pr_body.py` 가 마커 사이에 자동으로 붙인다. 요구�
 
 ## 데이터베이스
 
-**#12 (STAR-29) 에서 들어온다.** MySQL · JPA · Flyway · Testcontainers. 그 PR 이
-머지되기 전까지는 클래스패스에 없다 — 있으면 접속 정보를 찾다가 기동 자체가
-실패하므로 의도적으로 빼둔 상태다.
+MySQL · JPA · Flyway · Testcontainers. `#12`(STAR-29) 로 들어왔고 `#26` 이 로컬
+기동을 정리했다.
 
-머지된 뒤에는 `local` 프로파일을 반드시 지정한다. 접속 정보가 프로파일별 파일에만
-있어서 프로파일 없이 띄우면 `DataSource` 를 못 찾는다. 테스트 컨벤션이 H2 를
-금지했으므로 테스트는 Testcontainers 로 돈다 (Docker 데몬 필요).
+**프로파일을 지정하지 않는다.** `spring.profiles.default` 가 `local` 이다. `active`
+가 아니라 `default` 라서 배포의 `SPRING_PROFILES_ACTIVE=prod` 를 가리지 않는다.
+
+로컬 DB 는 docker compose 로 띄운다.
+
+```bash
+./gradlew dbReset   # 볼륨을 버리고 마이그레이션을 처음부터 다시 적용한다
+./gradlew dbDown    # 볼륨만 버린다
+```
+
+**이어 붙이지 않고 버리고 다시 만드는 것이 기본이다.** 마이그레이션 번호가 영역별
+대역으로 갈려 있어 낮은 번호가 나중에 머지된다. 빈 DB 에서 시작하면 항상 번호순으로
+적용된다. 적용된 파일을 고쳐 체크섬이 깨진 경우도 같은 명령으로 풀린다.
+
+테스트 컨벤션이 H2 를 금지했으므로 테스트는 Testcontainers 로 돈다 (Docker 데몬 필요).
