@@ -32,6 +32,7 @@ class AuthGatewayTest {
   private static final String LOCAL_SECRET =
       "duckmoim-local-development-secret-do-not-use-in-production";
   private static final String OTHER_SECRET = "someone-elses-secret-key-32-bytes-or-longer-here";
+  private static final Duration REFRESH_TTL = Duration.ofDays(14);
 
   private static final AuthUser SIGNUP_INCOMPLETE = new AuthUser(1L, false, false);
   private static final AuthUser SIGNUP_COMPLETED = new AuthUser(2L, true, false);
@@ -55,7 +56,8 @@ class AuthGatewayTest {
   @DisplayName("만료된 토큰으로 요청하면 401 이다.")
   void expiredToken() throws Exception {
     String expired =
-        new JwtProvider(LOCAL_SECRET, Duration.ofMinutes(-1)).issueAccessToken(SIGNUP_COMPLETED);
+        new JwtProvider(LOCAL_SECRET, Duration.ofMinutes(-1), REFRESH_TTL)
+            .issueAccessToken(SIGNUP_COMPLETED);
 
     mockMvc
         .perform(get("/api/v1/users/me").header(HttpHeaders.AUTHORIZATION, "Bearer " + expired))
@@ -66,7 +68,8 @@ class AuthGatewayTest {
   @DisplayName("서명이 위조된 토큰으로 요청하면 401 이다.")
   void forgedToken() throws Exception {
     String forged =
-        new JwtProvider(OTHER_SECRET, Duration.ofMinutes(30)).issueAccessToken(SIGNUP_COMPLETED);
+        new JwtProvider(OTHER_SECRET, Duration.ofMinutes(30), REFRESH_TTL)
+            .issueAccessToken(SIGNUP_COMPLETED);
 
     mockMvc
         .perform(get("/api/v1/users/me").header(HttpHeaders.AUTHORIZATION, "Bearer " + forged))
@@ -88,7 +91,8 @@ class AuthGatewayTest {
   @DisplayName("만료된 토큰은 재발급하라는 에러 코드로 구분해서 알려준다.")
   void expiredTokenTellsClientToRefresh() throws Exception {
     String expired =
-        new JwtProvider(LOCAL_SECRET, Duration.ofMinutes(-1)).issueAccessToken(SIGNUP_COMPLETED);
+        new JwtProvider(LOCAL_SECRET, Duration.ofMinutes(-1), REFRESH_TTL)
+            .issueAccessToken(SIGNUP_COMPLETED);
 
     mockMvc
         .perform(get("/api/v1/users/me").header(HttpHeaders.AUTHORIZATION, "Bearer " + expired))

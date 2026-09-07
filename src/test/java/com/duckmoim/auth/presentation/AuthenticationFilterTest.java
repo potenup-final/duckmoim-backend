@@ -18,8 +18,10 @@ import org.springframework.security.core.context.SecurityContextHolder;
 class AuthenticationFilterTest {
 
   private static final String SECRET = "duckmoim-unit-test-secret-key-32-bytes-or-longer";
+  private static final Duration REFRESH_TTL = Duration.ofDays(14);
 
-  private final JwtProvider jwtProvider = new JwtProvider(SECRET, Duration.ofMinutes(30));
+  private final JwtProvider jwtProvider =
+      new JwtProvider(SECRET, Duration.ofMinutes(30), REFRESH_TTL);
   private final AuthenticationFilter filter = new AuthenticationFilter(jwtProvider);
 
   @AfterEach
@@ -90,7 +92,7 @@ class AuthenticationFilterTest {
   @Test
   @DisplayName("만료된 토큰을 보내면 인증되지 않고 만료 사유가 요청에 남는다.")
   void doFilter_expiredToken() throws Exception {
-    JwtProvider alreadyExpired = new JwtProvider(SECRET, Duration.ofMinutes(-1));
+    JwtProvider alreadyExpired = new JwtProvider(SECRET, Duration.ofMinutes(-1), REFRESH_TTL);
     MockHttpServletRequest request =
         requestWith(alreadyExpired.issueAccessToken(new AuthUser(7L, true, false)));
 
@@ -105,7 +107,10 @@ class AuthenticationFilterTest {
   @DisplayName("서명이 위조된 토큰을 보내면 인증되지 않고 위조 사유가 요청에 남는다.")
   void doFilter_forgedToken() throws Exception {
     JwtProvider forger =
-        new JwtProvider("someone-elses-secret-key-32-bytes-or-longer-here", Duration.ofMinutes(30));
+        new JwtProvider(
+            "someone-elses-secret-key-32-bytes-or-longer-here",
+            Duration.ofMinutes(30),
+            REFRESH_TTL);
     MockHttpServletRequest request =
         requestWith(forger.issueAccessToken(new AuthUser(7L, true, true)));
 
