@@ -11,6 +11,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authorization.AuthorityAuthorizationDecision;
@@ -19,6 +20,7 @@ import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.web.access.AccessDeniedHandler;
 import org.springframework.stereotype.Component;
 
+@Slf4j
 @Component
 @RequiredArgsConstructor
 public class RestAccessDeniedHandler implements AccessDeniedHandler {
@@ -33,6 +35,12 @@ public class RestAccessDeniedHandler implements AccessDeniedHandler {
       throws IOException {
 
     ErrorCode errorCode = reason(accessDeniedException);
+
+    log.warn(
+        "[RestAccessDeniedHandler.handle] Forbidden. code={}, method={}, path={}",
+        errorCode.getCode(),
+        request.getMethod(),
+        request.getRequestURI());
 
     response.setStatus(errorCode.getStatus().value());
     response.setContentType(MediaType.APPLICATION_JSON_VALUE);

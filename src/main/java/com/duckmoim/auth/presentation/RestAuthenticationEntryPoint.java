@@ -9,11 +9,13 @@ import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.web.AuthenticationEntryPoint;
 import org.springframework.stereotype.Component;
 
+@Slf4j
 @Component
 @RequiredArgsConstructor
 public class RestAuthenticationEntryPoint implements AuthenticationEntryPoint {
@@ -28,6 +30,12 @@ public class RestAuthenticationEntryPoint implements AuthenticationEntryPoint {
       throws IOException {
 
     ErrorCode errorCode = reasonOf(request);
+
+    log.warn(
+        "[RestAuthenticationEntryPoint.commence] Unauthorized. code={}, method={}, path={}",
+        errorCode.getCode(),
+        request.getMethod(),
+        request.getRequestURI());
 
     response.setStatus(errorCode.getStatus().value());
     response.setContentType(MediaType.APPLICATION_JSON_VALUE);
