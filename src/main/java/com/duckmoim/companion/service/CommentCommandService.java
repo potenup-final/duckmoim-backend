@@ -15,8 +15,11 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * 댓글 작성 (CM-01 · CM-02 · CM-03).
  *
- * <p><b>요청자가 실재하는 회원인지 여기서 보지 않는다.</b> API-설계.md 「1. 권한 등급」이 SIGNUP 판정을 인터셉터 한 곳으로 모았고, 제재 중 유저
- * 차단(I-14)도 같은 자리다. 인증이 아직 없어 그 확인이 실제로는 비어 있다 — 임시 헤더를 걷어낼 때 함께 닫힌다.
+ * <p><b>요청자가 실재하는 회원인지 여기서 보지 않는다.</b> API-설계.md 「1. 권한 등급」이 SIGNUP 판정을 관문 한 곳으로 모았고, STAR-41 의
+ * SecurityConfig 가 이 경로를 그 등급으로 닫아 두었다 — 토큰이 없으면 401, 가입 미완료면 403 이라 여기까지 오지 않는다.
+ *
+ * <p><b>제재 중 유저 차단(I-14)은 아직 비어 있다.</b> 같은 관문의 일이고, docs/plans/인증-인가-구현-계획.md 가 그것을 D 티켓의 「포트 +
+ * no-op 구현」으로 두고 실제 연결은 Safety 담당 티켓으로 미뤘다. 여기에 판정을 넣으면 그때 지워야 한다.
  */
 @Service
 @RequiredArgsConstructor
