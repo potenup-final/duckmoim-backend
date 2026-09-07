@@ -20,6 +20,11 @@ import org.springframework.stereotype.Component;
 @Component
 public class JwtProvider implements TokenProvider {
 
+
+  private static final String CLAIM_TOKEN_TYPE = "tokenType";
+
+  private static final String ACCESS = "access";
+
   private static final String CLAIM_SIGNUP_COMPLETED = "signupCompleted";
   private static final String CLAIM_ADMIN = "admin";
 
@@ -39,6 +44,7 @@ public class JwtProvider implements TokenProvider {
 
     return Jwts.builder()
         .subject(String.valueOf(authUser.userId()))
+        .claim(CLAIM_TOKEN_TYPE, ACCESS)
         .claim(CLAIM_SIGNUP_COMPLETED, authUser.signupCompleted())
         .claim(CLAIM_ADMIN, authUser.admin())
         .issuedAt(Date.from(now))
@@ -52,6 +58,10 @@ public class JwtProvider implements TokenProvider {
     try {
       Claims claims =
           Jwts.parser().verifyWith(key).build().parseSignedClaims(accessToken).getPayload();
+
+      if (!ACCESS.equals(claims.get(CLAIM_TOKEN_TYPE, String.class))) {
+        throw new BusinessException(AuthErrorCode.AUTH_ACCESS_TOKEN_INVALID);
+      }
 
       return new AuthUser(
           Long.valueOf(claims.getSubject()),
