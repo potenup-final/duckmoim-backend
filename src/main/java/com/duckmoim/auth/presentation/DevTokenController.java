@@ -2,6 +2,8 @@ package com.duckmoim.auth.presentation;
 
 import com.duckmoim.auth.domain.AuthUser;
 import com.duckmoim.auth.domain.TokenProvider;
+import com.duckmoim.auth.presentation.dto.DevTokenRequest;
+import com.duckmoim.auth.presentation.dto.DevTokenResponse;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Profile;

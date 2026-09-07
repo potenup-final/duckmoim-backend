@@ -1,4 +1,4 @@
-package com.duckmoim.auth.presentation;
+package com.duckmoim.auth.presentation.dto;
 
 import jakarta.validation.constraints.NotNull;
 
