@@ -44,7 +44,7 @@ public class EventQueryRepositoryImpl implements EventQueryRepository {
     List<Predicate> predicates = new ArrayList<>();
 
     // 끝난 행사는 목록에 넣지 않는다. 사용자가 끌 수 있는 필터가 아니라 목록의 성질이다
-    // (화면-계약/행사.md 9장 — "지난 정보는 없는 정보보다 나쁘다").
+    // (화면-계약.md 「정렬」 — "지난 정보는 없는 정보보다 나쁘다").
     predicates.add(builder.greaterThanOrEqualTo(event.get("endsOn"), today));
 
     if (query.kind() != null) {
