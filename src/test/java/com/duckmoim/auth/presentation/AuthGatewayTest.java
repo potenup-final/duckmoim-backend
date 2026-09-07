@@ -114,6 +114,16 @@ class AuthGatewayTest {
         .andExpect(jsonPath("$.code").value("AUTH_FORBIDDEN"));
   }
 
+  /** 가입을 마쳐도 관리자가 되지 않으므로, 여기서 「가입 정보를 입력하세요」가 나가면 사용자는 가입을 마치고 다시 막힌다. 빠져나올 수 없는 안내다. */
+  @Test
+  @DisplayName("가입 미완료 계정이 관리자 경로에서 막혀도 가입 안내가 아니라 권한 없음이 나간다.")
+  void forbiddenByNotAdmin_signupIncomplete() throws Exception {
+    mockMvc
+        .perform(get("/api/v1/admin/reports").headers(bearer(SIGNUP_INCOMPLETE)))
+        .andExpect(status().isForbidden())
+        .andExpect(jsonPath("$.code").value("AUTH_FORBIDDEN"));
+  }
+
   @Test
   @DisplayName("인증 요청에 JSESSIONID 쿠키가 발급되지 않는다.")
   void noSessionCookie() throws Exception {
