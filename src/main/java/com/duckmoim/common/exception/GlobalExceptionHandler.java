@@ -8,6 +8,7 @@ import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 @Slf4j
@@ -35,6 +36,19 @@ public class GlobalExceptionHandler {
 
   @ExceptionHandler(HttpMessageNotReadableException.class)
   public ResponseEntity<ErrorResponse> handleNotReadable(HttpMessageNotReadableException e) {
+    return respond(e, CommonErrorCode.INVALID_INPUT);
+  }
+
+  /**
+   * 경로 변수나 쿼리 파라미터를 선언한 타입으로 바꿀 수 없을 때다 — {@code /api/v1/posts/abc/comments} 처럼.
+   *
+   * <p>나열하지 않으면 캐치올로 떨어져 <b>500</b> 이 나간다. 클라이언트가 잘못 부른 것을 서버 장애로 알려주는 셈이고, 5xx 라 로그도 ERROR 로 쌓인다.
+   *
+   * <p>메시지는 어느 파라미터가 틀렸는지 적지 않고 공통 문구를 쓴다. {@code handleNotReadable} 과 같은 판단이다 — 예외 메시지에 변환기와 대상 타입
+   * 이름이 들어 있어서, 그것을 그대로 흘리면 내부 사정이 응답에 나간다.
+   */
+  @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+  public ResponseEntity<ErrorResponse> handleTypeMismatch(MethodArgumentTypeMismatchException e) {
     return respond(e, CommonErrorCode.INVALID_INPUT);
   }
 
