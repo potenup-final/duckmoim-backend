@@ -1,6 +1,10 @@
-package com.duckmoim.auth.presentation;
+package com.duckmoim.auth.config;
 
 import com.duckmoim.auth.domain.TokenProvider;
+import com.duckmoim.auth.presentation.AuthAuthority;
+import com.duckmoim.auth.presentation.AuthenticationFilter;
+import com.duckmoim.auth.presentation.RestAccessDeniedHandler;
+import com.duckmoim.auth.presentation.RestAuthenticationEntryPoint;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;

@@ -1,5 +1,6 @@
 package com.duckmoim.auth.presentation;
 
+import com.duckmoim.auth.config.SecurityConfig;
 import com.duckmoim.auth.infra.JwtProvider;
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
