@@ -44,7 +44,7 @@ public class RefreshToken extends BaseEntity {
   @Column(name = "user_id", nullable = false)
   private Long userId;
 
-  /** SHA-256 hex 라 길이가 64 로 고정된다. 컬럼도 {@code CHAR(64)} 다. */
+  /** SHA-256 hex 라 길이가 64 로 고정된다. 그래도 컬럼은 {@code VARCHAR(64)} 다 — V12 주석에 이유가 있다. */
   @Column(name = "token_hash", nullable = false, length = 64)
   private String tokenHash;
 
