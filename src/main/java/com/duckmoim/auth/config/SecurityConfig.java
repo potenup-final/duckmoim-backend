@@ -34,14 +34,20 @@ public class SecurityConfig {
   };
 
   private static final String[] PUBLIC_READ = {
-    "/api/v1/users/*", "/api/v1/users/*/posts", "/api/v1/events/**", "/api/v1/posts/**"
+    "/api/v1/users/*",
+    "/api/v1/users/*/posts",
+    "/api/v1/events",
+    "/api/v1/events/*",
+    "/api/v1/posts",
+    "/api/v1/posts/*",
+    "/api/v1/posts/*/comments"
   };
 
   private static final String[] SIGNUP_WRITE = {
     "/api/v1/posts/**", "/api/v1/comments/**", "/api/v1/reports"
   };
 
-  private static final String AUTH_ALL = "/api/v1/auth/**";
+  private static final String[] PUBLIC_LOGIN = {"/api/v1/auth/kakao", "/api/v1/auth/token"};
   private static final String AUTH_TOKEN = "/api/v1/auth/token";
   private static final String SIGNUP_INFO = "/api/v1/users/me/signup-info";
   private static final String MY_PAGE = "/api/v1/users/me/**";
@@ -66,7 +72,7 @@ public class SecurityConfig {
             registry -> {
               registry.requestMatchers(INFRA).permitAll();
 
-              registry.requestMatchers(HttpMethod.POST, AUTH_ALL).permitAll();
+              registry.requestMatchers(HttpMethod.POST, PUBLIC_LOGIN).permitAll();
               registry.requestMatchers(HttpMethod.DELETE, AUTH_TOKEN).authenticated();
 
               registry.requestMatchers(HttpMethod.GET, AUTH_READ).authenticated();
