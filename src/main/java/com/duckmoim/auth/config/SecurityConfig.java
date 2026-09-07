@@ -1,7 +1,9 @@
 package com.duckmoim.auth.config;
 
+import static com.duckmoim.auth.presentation.AuthAuthority.ADMIN;
+import static com.duckmoim.auth.presentation.AuthAuthority.SIGNUP;
+
 import com.duckmoim.auth.domain.TokenProvider;
-import com.duckmoim.auth.presentation.AuthAuthority;
 import com.duckmoim.auth.presentation.AuthenticationFilter;
 import com.duckmoim.auth.presentation.RestAccessDeniedHandler;
 import com.duckmoim.auth.presentation.RestAuthenticationEntryPoint;
@@ -18,7 +20,7 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 @Configuration
 public class SecurityConfig {
 
-  private static final String[] DOCS = {
+  private static final String[] INFRA = {
     "/api/health",
     "/error",
     "/v3/api-docs/**",
@@ -26,6 +28,24 @@ public class SecurityConfig {
     "/swagger-ui.html",
     "/api/v1/dev/token"
   };
+
+  private static final String[] AUTH_READ = {
+    "/api/v1/users/me", "/api/v1/users/nickname-availability"
+  };
+
+  private static final String[] PUBLIC_READ = {
+    "/api/v1/users/*", "/api/v1/users/*/posts", "/api/v1/events/**", "/api/v1/posts/**"
+  };
+
+  private static final String[] SIGNUP_WRITE = {
+    "/api/v1/posts/**", "/api/v1/comments/**", "/api/v1/reports"
+  };
+
+  private static final String AUTH_ALL = "/api/v1/auth/**";
+  private static final String AUTH_TOKEN = "/api/v1/auth/token";
+  private static final String SIGNUP_INFO = "/api/v1/users/me/signup-info";
+  private static final String MY_PAGE = "/api/v1/users/me/**";
+  private static final String ADMIN_ALL = "/api/v1/admin/**";
 
   @Bean
   public SecurityFilterChain securityFilterChain(
@@ -43,55 +63,25 @@ public class SecurityConfig {
         .sessionManagement(
             session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
         .authorizeHttpRequests(
-            request ->
-                request
-                    .requestMatchers(DOCS)
-                    .permitAll()
-                    .requestMatchers(HttpMethod.POST, "/api/v1/auth/kakao", "/api/v1/auth/token")
-                    .permitAll()
-                    .requestMatchers(HttpMethod.DELETE, "/api/v1/auth/token")
-                    .authenticated()
-                    .requestMatchers(
-                        HttpMethod.GET, "/api/v1/users/me", "/api/v1/users/nickname-availability")
-                    .authenticated()
-                    .requestMatchers(HttpMethod.PUT, "/api/v1/users/me/signup-info")
-                    .authenticated()
-                    .requestMatchers(HttpMethod.PATCH, "/api/v1/users/me/profile")
-                    .hasAuthority(AuthAuthority.SIGNUP)
-                    .requestMatchers(HttpMethod.POST, "/api/v1/users/me/profile-image")
-                    .hasAuthority(AuthAuthority.SIGNUP)
-                    .requestMatchers(
-                        HttpMethod.GET, "/api/v1/users/me/posts", "/api/v1/users/me/comments")
-                    .hasAuthority(AuthAuthority.SIGNUP)
-                    .requestMatchers(HttpMethod.DELETE, "/api/v1/users/me")
-                    .hasAuthority(AuthAuthority.SIGNUP)
-                    .requestMatchers(
-                        HttpMethod.GET, "/api/v1/users/{userId}", "/api/v1/users/{userId}/posts")
-                    .permitAll()
-                    .requestMatchers(HttpMethod.GET, "/api/v1/events", "/api/v1/events/{eventId}")
-                    .permitAll()
-                    .requestMatchers(HttpMethod.GET, "/api/v1/posts", "/api/v1/posts/{postId}")
-                    .permitAll()
-                    .requestMatchers(HttpMethod.POST, "/api/v1/posts")
-                    .hasAuthority(AuthAuthority.SIGNUP)
-                    .requestMatchers(HttpMethod.PATCH, "/api/v1/posts/{postId}")
-                    .hasAuthority(AuthAuthority.SIGNUP)
-                    .requestMatchers(HttpMethod.POST, "/api/v1/posts/{postId}/close")
-                    .hasAuthority(AuthAuthority.SIGNUP)
-                    .requestMatchers(HttpMethod.GET, "/api/v1/posts/{postId}/comments")
-                    .permitAll()
-                    .requestMatchers(HttpMethod.POST, "/api/v1/posts/{postId}/comments")
-                    .hasAuthority(AuthAuthority.SIGNUP)
-                    .requestMatchers(HttpMethod.PATCH, "/api/v1/comments/{commentId}")
-                    .hasAuthority(AuthAuthority.SIGNUP)
-                    .requestMatchers(HttpMethod.DELETE, "/api/v1/comments/{commentId}")
-                    .hasAuthority(AuthAuthority.SIGNUP)
-                    .requestMatchers(HttpMethod.POST, "/api/v1/reports")
-                    .hasAuthority(AuthAuthority.SIGNUP)
-                    .requestMatchers("/api/v1/admin/**")
-                    .hasAuthority(AuthAuthority.ADMIN)
-                    .anyRequest()
-                    .authenticated())
+            registry -> {
+              registry.requestMatchers(INFRA).permitAll();
+
+              registry.requestMatchers(HttpMethod.POST, AUTH_ALL).permitAll();
+              registry.requestMatchers(HttpMethod.DELETE, AUTH_TOKEN).authenticated();
+
+              registry.requestMatchers(HttpMethod.GET, AUTH_READ).authenticated();
+              registry.requestMatchers(HttpMethod.PUT, SIGNUP_INFO).authenticated();
+              registry.requestMatchers(MY_PAGE).hasAuthority(SIGNUP);
+
+              registry.requestMatchers(HttpMethod.GET, PUBLIC_READ).permitAll();
+
+              registry.requestMatchers(HttpMethod.POST, SIGNUP_WRITE).hasAuthority(SIGNUP);
+              registry.requestMatchers(HttpMethod.PATCH, SIGNUP_WRITE).hasAuthority(SIGNUP);
+              registry.requestMatchers(HttpMethod.DELETE, SIGNUP_WRITE).hasAuthority(SIGNUP);
+
+              registry.requestMatchers(ADMIN_ALL).hasAuthority(ADMIN);
+              registry.anyRequest().authenticated();
+            })
         .exceptionHandling(
             handling ->
                 handling

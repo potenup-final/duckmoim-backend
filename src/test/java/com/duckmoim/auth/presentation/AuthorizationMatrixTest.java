@@ -67,6 +67,28 @@ class AuthorizationMatrixTest {
   }
 
   @Test
+  @DisplayName("가입 미완료 상태로 회원 탈퇴를 부르면 403 이다.")
+  void withdrawWithSignupIncomplete() throws Exception {
+    mockMvc
+        .perform(delete("/api/v1/users/me").headers(bearer(SIGNUP_INCOMPLETE)))
+        .andExpect(status().isForbidden());
+  }
+
+  @Test
+  @DisplayName("댓글 열람은 토큰이 없어도 인가를 통과한다.")
+  void readCommentsWithoutToken() throws Exception {
+    assertPasses(get("/api/v1/posts/1/comments"));
+  }
+
+  @Test
+  @DisplayName("가입 미완료 상태로 댓글을 쓰면 403 이다.")
+  void writeCommentWithSignupIncomplete() throws Exception {
+    mockMvc
+        .perform(post("/api/v1/posts/1/comments").headers(bearer(SIGNUP_INCOMPLETE)))
+        .andExpect(status().isForbidden());
+  }
+
+  @Test
   @DisplayName("일반 계정으로 관리자 경로를 부르면 403 이다.")
   void adminPathWithNormalAccount() throws Exception {
     mockMvc
