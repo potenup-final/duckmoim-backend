@@ -25,6 +25,13 @@ class ArchitectureTest {
   static final ArchRule 저장소_인터페이스는_infra_에_있다 =
       ArchitectureRules.REPOSITORY_INTERFACE_LIVES_IN_INFRA;
 
+  @ArchTest
+  static final ArchRule 트랜잭션은_service_에만_있다 = ArchitectureRules.TRANSACTIONAL_LIVES_IN_SERVICE;
+
+  @ArchTest
+  static final ArchRule service_가_SpringData_타입을_노출하지_않는다 =
+      ArchitectureRules.SERVICE_DOES_NOT_EXPOSE_SPRING_DATA_TYPES;
+
   /**
    * @DisplayName 규칙만 테스트 코드를 대상으로 하므로 @ArchTest 로 쓸 수 없다. 위 @AnalyzeClasses 가 DoNotIncludeTests 로
    * 테스트 클래스를 아예 제외하기 때문이다.

@@ -94,6 +94,26 @@ tasks.named('checkstyleTest') {
 	configFile = file("${rootDir}/config/checkstyle/checkstyle-test.xml")
 }
 
+tasks.register('dbDown', Exec) {
+	description = '로컬 MySQL 볼륨을 버린다'
+	group = 'build setup'
+	commandLine 'docker', 'compose', 'down', '-v'
+}
+
+// 마이그레이션 번호가 영역별 대역으로 갈려 있어 낮은 번호가 나중에 머지된다.
+// 빈 DB 에서 시작하면 항상 번호순으로 적용되므로, 로컬 DB 는 이어 붙이지 않고
+// 버리고 다시 만드는 것을 기본으로 둔다. 적용된 파일을 고쳐 체크섬이 깨진 경우도
+// 같은 명령으로 풀린다.
+//
+// --wait 는 docker-compose.yml 의 healthcheck 가 통과할 때까지 잡아둔다.
+// 태스크가 끝나면 바로 bootRun 해도 된다.
+tasks.register('dbReset', Exec) {
+	description = '로컬 MySQL 을 비우고 마이그레이션을 처음부터 다시 적용한다'
+	group = 'build setup'
+	dependsOn 'dbDown'
+	commandLine 'docker', 'compose', 'up', '-d', '--wait'
+}
+
 tasks.register('installGitHooks', Exec) {
 	description = '커밋 제목에 Jira 키를 자동으로 붙이는 .githooks 를 활성화한다'
 	group = 'build setup'
@@ -158,7 +178,7 @@ tasks.register('syncWiki', Exec) {
 
 	doLast {
 		if (executionResult.get().exitValue != 0) {
-			logger.warn('''
+			logger.lifecycle('''
 ========================================================================
  위키 서브모듈(docs/wiki) 을 최신으로 맞추지 못했습니다.
 
@@ -171,8 +191,83 @@ tasks.register('syncWiki', Exec) {
 
    git submodule update --init --remote docs/wiki
 ========================================================================'''.stripIndent())
+			return
 		}
+		reportWikiMoved(logger, rootDir)
 	}
+}
+
+// [1] 이 읽은 위키와 지금 디스크의 위키가 같은지 본다.
+//
+// syncWiki 는 매 빌드마다 --remote 로 당긴다. 그래서 [3] 구현과 [4] check 를
+// 오가는 사이에 누가 위키를 고치면 **디스크만 조용히 바뀐다.** 에이전트 컨텍스트는
+// [1] 에서 읽은 옛 판본 그대로라, 그 상태로 커밋 메시지와 PR 에 옛 내용을 인용한다.
+// 낡은 것이 아니라 갈라진 것이고, 성공 경로가 아무 말도 안 해서 갈라진 줄을 모른다.
+//
+// 핀을 고정하는 것은 답이 아니다 — 그러면 아무도 안 올리는 옛 핀을 최신이라 믿고
+// 읽는 상태로 돌아간다 (STAR-36 이 고친 문제). 최신은 계속 당기되 **움직인 사실을
+// 보이게** 만든다.
+//
+// 기준선은 ticket-context 0절이 .git/wiki-seen-sha 에 적는다. .git 아래라 커밋될
+// 수 없고 clean 에도 안 지워진다. 여기서는 읽기만 하고 덮어쓰지 않는다 — 사람이
+// 다시 읽고 기준선을 갱신할 때까지 계속 보여야 하기 때문이다. 한 번만 알리면
+// 출력이 밀려 올라간 사이에 놓친다.
+static def gitOut(File dir, List args) {
+	try {
+		def proc = new ProcessBuilder(args).directory(dir).start()
+		def out = proc.inputStream.text
+		proc.waitFor()
+		return proc.exitValue() == 0 ? out.trim() : null
+	} catch (Exception ignored) {
+		return null
+	}
+}
+
+static void reportWikiMoved(logger, File rootDir) {
+	def wiki = new File(rootDir, 'docs/wiki')
+	if (!new File(wiki, 'README.md').exists()) {
+		return
+	}
+	def now = gitOut(wiki, ['git', 'rev-parse', 'HEAD'])
+	if (now == null) {
+		return
+	}
+
+	// 기준선이 없으면 이 저장소에서 아직 [1] 을 돈 적이 없다. 알릴 것이 없다.
+	def seenFile = new File(rootDir, '.git/wiki-seen-sha')
+	if (!seenFile.exists()) {
+		return
+	}
+	def seen = seenFile.text.trim()
+	if (seen.isEmpty() || seen == now) {
+		return
+	}
+
+	// 기준선 커밋이 사라졌으면(히스토리 재작성) 무엇이 바뀌었는지 셀 수 없다.
+	def changed = gitOut(wiki, ['git', 'diff', '--name-only', seen, now])
+	def count = gitOut(wiki, ['git', 'rev-list', '--count', seen + '..' + now])
+	def body = changed == null
+			? '   (기준선 커밋이 위키에 없어 목록을 낼 수 없습니다)'
+			: changed.readLines().collect { '   ' + it }.join('\n')
+	def moved = count ? '   (커밋 ' + count + '개)' : ''
+
+	logger.lifecycle('''
+========================================================================
+ 위키가 [1] 에서 읽은 판본과 다릅니다.
+
+   [1] 이 읽은 것   ''' + seen.take(7) + '''
+   지금 디스크      ''' + now.take(7) + moved + '''
+
+ 바뀐 문서
+''' + body + '''
+
+ 인용하기 전에 위 문서의 해당 절을 다시 읽으세요. [2] 에 올린 계획이
+ 이 변경에 걸리면 계획부터 고칩니다.
+
+ 다시 읽었으면 기준선을 갱신하세요.
+
+   git -C docs/wiki rev-parse HEAD > .git/wiki-seen-sha
+========================================================================''')
 }
 
 tasks.named('compileJava') {

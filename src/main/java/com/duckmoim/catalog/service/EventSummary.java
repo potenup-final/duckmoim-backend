@@ -15,12 +15,12 @@ import java.time.LocalTime;
  * <p>엔티티를 presentation 까지 올리지 않기 위한 결과 객체다 (API 컨벤션 · 리뷰 체크리스트). 트랜잭션 안에서 값을 다 뽑아두므로 {@code
  * open-in-view: false} 아래에서 지연 로딩이 새지 않는다.
  *
- * <p><b>상세에만 쓰이는 값도 목록에 싣는다.</b> 프론트에 상세 조회 호출이 따로 없어서 상세 207장을 목록 배열로 정적 생성한다 (화면-계약/행사.md 5장).
- * {@code perks} · {@code conditions} · {@code reservationUrl} 이 그렇고, 셋 다 {@code event} 컬럼이라 이미 읽어온
- * 행에서 값을 싣기만 하면 된다.
+ * <p><b>상세에만 쓰이는 값도 목록에 싣는다.</b> 프론트에 상세 조회 호출이 따로 없어서 상세 페이지를 목록 배열로 빌드 때 정적 생성한다 (화면-계약.md 「왜 목록에
+ * 거의 다 실어야 하는가」). {@code perks} · {@code conditions} · {@code reservationUrl} 이 그렇고, 셋 다 {@code
+ * event} 컬럼이라 이미 읽어온 행에서 값을 싣기만 하면 된다.
  *
- * <p>{@code goods} 만 뺀다. 지연 컬렉션이라 목록에서 건드리면 N+1 이고, 수집한 207건이 전부 빈 배열이라 화면에 나오는 것이 없다 (화면-계약/행사.md
- * 8장).
+ * <p>{@code goods} 만 뺀다. 지연 컬렉션이라 목록에서 건드리면 N+1 이고, 수집한 것이 전부 빈 배열이라 화면에 나오는 것이 없다 (화면-계약.md 「안 보내도
+ * 되는 것」).
  */
 public record EventSummary(
     Long id,
