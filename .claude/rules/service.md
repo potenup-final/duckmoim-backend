@@ -27,8 +27,9 @@ paths:
 게이트가 검사하는 것 — `LAYER_DEPENDENCY` (presentation 을 참조하면 잡힌다).
 **infra 참조는 허용된 방향이다.**
 
-`@Transactional` 위치와 Spring Data 타입 노출 금지는 **아직 게이트에 없다.**
-클래스패스 문제는 STAR-29 로 풀렸으니 이제 위반 픽스처를 만들 수 있다.
-그때까지는 사람 리뷰가 본다.
+`TRANSACTIONAL_LIVES_IN_SERVICE` 와 `SERVICE_DOES_NOT_EXPOSE_SPRING_DATA_TYPES`
+도 게이트에 있다 (STAR-42). 후자는 **시그니처만** 본다 — 반환 타입과 파라미터 타입.
+메서드 안에서 `Pageable` 을 쓰는 것은 걸리지 않는다. 다만 제네릭 인자는 못 보므로
+`List<Page<Event>>` 같은 모양은 통과한다. 그건 사람 리뷰가 본다.
 
 상세: `docs/wiki/04-협업-규칙/아키텍처-컨벤션.md`

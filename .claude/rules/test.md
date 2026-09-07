@@ -29,6 +29,11 @@ paths:
 
 게이트가 검사하는 것 — Checkstyle 메서드 네이밍 · ArchUnit `TEST_HAS_DISPLAY_NAME`.
 
+**위키를 인용할 때는 장 번호가 아니라 절 제목으로 건다.** `WikiReferenceTest` 가
+경로와 절 제목이 실재하는지 검사한다. 번호는 문서가 개정될 때마다 밀리고, 밀려도
+컴파일·테스트·CI 가 전부 초록불이라 신호가 없다 — 실제로 인용 여덟 곳이 그렇게
+죽어 있었다 (STAR-42).
+
 `src/test/java/com/duckmoim/architecture/` 는 **게이트 규칙 자체**다. 손대기 전에
 물어본다. 규칙을 추가하면 `RulesAreAliveTest` 에 생존 증명도 같이 추가한다.
 

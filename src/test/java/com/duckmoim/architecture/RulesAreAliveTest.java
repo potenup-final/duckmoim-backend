@@ -86,4 +86,34 @@ class RulesAreAliveTest {
   void testHasDisplayName() {
     assertCatches(ArchitectureRules.TEST_HAS_DISPLAY_NAME, "MissingDisplayNameFixture");
   }
+
+  @DisplayName("service 밖에 @Transactional 을 붙이면 트랜잭션 규칙이 잡는다.")
+  @Test
+  void transactionalLivesInService() {
+    assertCatches(ArchitectureRules.TRANSACTIONAL_LIVES_IN_SERVICE, "TransactionalRepository");
+  }
+
+  @DisplayName("service 의 public 시그니처에 Spring Data 타입이 나오면 노출 규칙이 잡는다.")
+  @Test
+  void serviceDoesNotExposeSpringDataTypes() {
+    assertCatches(
+        ArchitectureRules.SERVICE_DOES_NOT_EXPOSE_SPRING_DATA_TYPES, "LeakingPageService");
+  }
+
+  /**
+   * 규칙이 <b>과하게 잡지 않는지</b>도 본다. 메서드 안에서 Spring Data 타입을 쓰는 것은 허용이다 — 저장소가 Spring Data 를 상속하므로 이것까지
+   * 막으면 DB 를 읽는 service 를 쓸 수 없다.
+   *
+   * <p>의존성 전체를 검사하는 규칙으로 잘못 적으면 위반 픽스처는 여전히 잡히므로 위의 검사만으로는 초록불이 된다.
+   */
+  @DisplayName("service 가 메서드 안에서 Spring Data 타입을 쓰는 것은 노출 규칙이 잡지 않는다.")
+  @Test
+  void serviceMayUseSpringDataInternally() {
+    EvaluationResult result =
+        evaluateOnFixtures(ArchitectureRules.SERVICE_DOES_NOT_EXPOSE_SPRING_DATA_TYPES);
+
+    assertThat(result.getFailureReport().getDetails())
+        .as("메서드 안에서 쓰는 것은 허용이다 (아키텍처 컨벤션 · service 금지)")
+        .noneMatch(detail -> detail.contains("countInternally"));
+  }
 }
