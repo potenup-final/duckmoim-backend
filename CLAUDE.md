@@ -7,6 +7,10 @@
 
 하네스 전체 설명은 [docs/harness/backend.md](docs/harness/backend.md).
 
+**컨텍스트별 구현 계획서는 [docs/plans/](docs/plans/) 에 있다.** 위키가 *무엇을 왜*
+라면 여기는 *어떤 순서로* 다 — 티켓 경계, 순서의 근거, 남과 물린 지점. 담당 컨텍스트의
+계획서가 있으면 [1] 에서 위키와 함께 읽는다.
+
 ## 명령
 
 ```bash
