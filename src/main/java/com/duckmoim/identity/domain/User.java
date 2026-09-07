@@ -56,4 +56,44 @@ public class User extends BaseEntity {
 
   @Column(name = "withdrawn_at")
   private LocalDateTime withdrawnAt;
+
+  /**
+   * 이 시각 이전에 발급된 토큰을 전부 죽인다 (AU-04 「Access 잔여 TTL 차단」).
+   *
+   * <p><b>{@code refresh_token} 행을 지우는 것만으로는 부족하다.</b> 이미 발급된 Access 는 서명만으로 검증되므로 최대 30분 더 산다. 그
+   * 구멍을 여기서 막는다. 이 컬럼을 {@code refresh_token} 에 둘 수 없는 이유도 같다 — 그 행을 전부 지운 뒤에는 비교할 행이 남지 않는다.
+   */
+  @Column(name = "tokens_invalidated_at")
+  private LocalDateTime tokensInvalidatedAt;
+
+  /** AU-03 재사용 탐지의 「해당 유저 전체 폐기」와 AU-04 로그아웃이 함께 부른다. */
+  public void invalidateAllTokens(LocalDateTime now) {
+    this.tokensInvalidatedAt = now;
+  }
+
+  /** AU-03 「재발급 성공 시 lastSeenAt 갱신」. */
+  public void updateLastSeenAt(LocalDateTime now) {
+    this.lastSeenAt = now;
+  }
+
+  /**
+   * 이 발급 시각의 토큰이 무효화됐는지 본다. 인증 필터가 매 요청에서 부른다.
+   *
+   * <p><b>더 이른 발급만 죽인다({@code isBefore}).</b> JWT 의 {@code iat} 은 초 단위로 내려가고 무효화 시각은 마이크로초까지 남으므로,
+   * 같은 초에 로그아웃하면 그 초에 발급된 토큰도 걸린다. 대가는 로그아웃한 뒤 <b>1초 안에</b> 다시 로그인하면 새 토큰이 한 번 거절되는 것이다 — 사람이 그 속도로
+   * 다시 로그인하지 않고, 걸려도 다음 초에 풀린다. 반대로 여는 쪽에 두면 로그아웃 직전에 발급된 토큰이 30분을 더 살아서, 그쪽이 훨씬 나쁘다.
+   */
+  public boolean isTokenInvalidated(LocalDateTime issuedAt) {
+    return tokensInvalidatedAt != null && issuedAt.isBefore(tokensInvalidatedAt);
+  }
+
+  /**
+   * 가입 정보를 마쳤는지 (AU-05).
+   *
+   * <p>재발급이 새 Access 토큰에 이 값을 다시 찍는다. Refresh 토큰에 담아 두면 가입을 마친 사용자가 14일 동안 낡은 {@code false} 를
+   * 물려받는다.
+   */
+  public boolean isSignupCompleted() {
+    return status == SignupStatus.ACTIVE;
+  }
 }
