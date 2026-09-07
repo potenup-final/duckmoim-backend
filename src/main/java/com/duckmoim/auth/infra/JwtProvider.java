@@ -20,7 +20,6 @@ import org.springframework.stereotype.Component;
 @Component
 public class JwtProvider implements TokenProvider {
 
-
   private static final String CLAIM_TOKEN_TYPE = "tokenType";
 
   private static final String ACCESS = "access";
