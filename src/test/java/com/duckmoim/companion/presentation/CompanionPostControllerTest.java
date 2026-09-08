@@ -14,6 +14,7 @@ import com.duckmoim.auth.presentation.ImportSecurity;
 import com.duckmoim.companion.domain.MeetPoint;
 import com.duckmoim.companion.domain.PostStatus;
 import com.duckmoim.companion.service.CompanionPostCommandService;
+import com.duckmoim.companion.service.CompanionPostQueryService;
 import com.duckmoim.companion.service.CompanionPostWriteCommand;
 import com.duckmoim.companion.service.WrittenCompanionPost;
 import java.math.BigDecimal;
@@ -54,6 +55,9 @@ class CompanionPostControllerTest {
   @Autowired private TokenProvider tokenProvider;
 
   @MockitoBean private CompanionPostCommandService companionPostCommandService;
+
+  /** 목록·상세가 같은 컨트롤러에 있어 슬라이스가 함께 세운다. 이 테스트는 쓰지 않는다 — 조회 계약은 별도 테스트가 본다. */
+  @MockitoBean private CompanionPostQueryService companionPostQueryService;
 
   @Captor private ArgumentCaptor<CompanionPostWriteCommand> command;
 

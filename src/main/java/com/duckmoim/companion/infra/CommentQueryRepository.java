@@ -2,6 +2,7 @@ package com.duckmoim.companion.infra;
 
 import com.duckmoim.companion.domain.CommentListQuery;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 댓글 목록의 조회 (CM-06 · CM-07).
@@ -29,4 +30,19 @@ public interface CommentQueryRepository {
    * 탐색과 정렬이 한 번에 끝난다. 대댓글은 부모와 같은 모집글에 속하므로 조건이 늘어도 결과가 달라지지 않는다.
    */
   List<AuthoredComment> findRepliesOf(Long postId, List<Long> parentIds);
+
+  /**
+   * 모집글별 댓글 수를 센다 (CM-12 · I-11).
+   *
+   * <p><b>저장하지 않고 조회 때 센다.</b> I-11 의 검증 위치가 「조회 시 집계」이고 이중 방어가 없다 — 저장하지 않으므로 어긋날 저장값이 없다.
+   *
+   * <p>세는 범위는 <b>비밀 포함 · 삭제·블라인드 제외 · 대댓글 포함</b>이다 (CM-12). 비밀 댓글이 세어지는 것은 존재 자체는 가리지 않기 때문이고
+   * (도메인-모델링.md 「7.1 가시성과 권한」이 가리는 것을 본문으로 한정했다), 자리표시자가 빠지는 것은 CM-12 가 그렇게 정했다.
+   *
+   * <p><b>목록 한 페이지를 한 쿼리로 센다.</b> 모집글마다 부르면 20건이면 쿼리가 20개다. 값이 없는 모집글은 결과에 아예 없으므로 호출부가 0 으로 읽는다 —
+   * {@code GROUP BY} 는 행이 없는 그룹을 만들지 않는다.
+   *
+   * @return 모집글 id → 댓글 수. 댓글이 없는 모집글은 키가 없다
+   */
+  Map<Long, Long> countActiveByPostIds(List<Long> postIds);
 }
