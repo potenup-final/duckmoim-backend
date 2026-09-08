@@ -4,8 +4,12 @@
 -- 「내가 쓴 댓글 전부」에 쓸 수 없다. 모집글을 가로질러 읽는 첫 경로다.
 --
 --   WHERE author_id = ? AND status = 'ACTIVE'
---         AND (created_at, id) < (?, ?)
+--         AND (created_at < ? OR (created_at = ? AND id < ?))
 --   ORDER BY created_at DESC, id DESC
+--
+-- 커서를 행 값 비교 (created_at, id) < (?, ?) 로 적지 않은 것은 JPQL 에 행 값 생성자가
+-- 없어서다. 두 형태는 실행 계획이 갈리므로, 인덱스 모양을 판단할 때는 위의 OR 형태를 봐야
+-- 한다.
 --
 -- status 를 선두 쪽에 함께 넣은 이유 — 등호 조건이라 인덱스 앞자리에 두면 뒤의
 -- created_at 이 그대로 정렬에 쓰인다. 뒤로 밀면 author_id 로 훑은 뒤 걸러야 해서
