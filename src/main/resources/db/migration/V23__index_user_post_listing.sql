@@ -1,0 +1,32 @@
+-- 유저가 쓴 모집글 조회(AU-09 · AU-10)가 쓰는 인덱스.
+--
+-- V22 가 붙인 (status, meet_at, id) 와 (meet_at, id) 는 둘 다 선두 컬럼이 소유자가 아니라
+-- 「그 유저가 쓴 글 전부」에 쓸 수 없다. 소유자로 거르는 첫 경로다.
+--
+--   WHERE host_id = ?
+--         AND (created_at < ? OR (created_at = ? AND id < ?))
+--   ORDER BY created_at DESC, id DESC
+--
+-- 커서를 행 값 비교 (created_at, id) < (?, ?) 로 적지 않은 것은 JPQL 에 행 값 생성자가
+-- 없어서다. 두 형태는 실행 계획이 갈리므로, 인덱스 모양을 판단할 때는 위의 OR 형태를 봐야
+-- 한다 (V35 와 같은 이유).
+--
+-- status 를 넣지 않은 이유 — V35 의 comment 와 다르다. 그쪽은 지운 댓글을 목록에서 빼야 해서
+-- status 가 등호 조건으로 들어가는데, 모집글은 마감된 글도 내역에 남아야 한다 (상태가
+-- OPEN·CLOSED 둘이고 삭제가 없다 · 결정 D-3). 거르지 않는 컬럼을 인덱스에 넣으면 쓰기마다
+-- 갱신 비용만 든다.
+--
+-- 정렬 키가 meet_at 이 아니라 created_at 인 것은 API-설계.md 「3. 커서 정의」가 정했다 —
+-- 목록(PO-08)은 만남시각 임박순이고 유저가 쓴 모집글은 작성 최신순이다. 같은 표를 읽는데
+-- 정렬이 달라서 인덱스도 따로 필요하다.
+--
+-- id 를 뒤에 붙인 이유는 V35 · V33 · V4 와 같다. created_at 은 중복이 생기고, 같은 시각의
+-- 글이 페이지 경계에 걸리면 정렬이 불안정해져 누락·중복이 난다.
+--
+-- 정렬이 DESC 인데 인덱스를 ASC 로 두는 것은 MySQL 이 역방향 스캔을 하기 때문이다.
+-- 두 컬럼이 같은 방향으로 함께 뒤집히므로 DESC 인덱스가 필요하지 않다.
+--
+-- 대역이 Companion(V20~V29)인 이유는 담당자가 아니라 표다. Identity 대역(V14)에 두면 이 파일이
+-- companion_post 를 만드는 V20 보다 먼저 돌아 없는 표에 인덱스를 걸게 된다.
+CREATE INDEX ix_companion_post_host_created_id
+    ON companion_post (host_id, created_at, id);
