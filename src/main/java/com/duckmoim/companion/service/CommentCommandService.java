@@ -28,6 +28,46 @@ public class CommentCommandService {
   private final CommentRepository commentRepository;
   private final CompanionPostRepository companionPostRepository;
 
+  /**
+   * 댓글 본문을 고친다 (CM-09).
+   *
+   * <p>판정은 도메인이 한다 — 작성자 본인인지, 비밀 여부를 바꾸려는지. 여기서는 댓글을 찾아 넘기는 일만 한다.
+   *
+   * <p><b>모집글을 읽지 않는다.</b> 수정은 방장 권한이 아니라서 hostId 가 판정에 안 들어간다.
+   */
+  @Transactional
+  public WrittenComment edit(CommentEditCommand command) {
+    Comment comment = requireComment(command.commentId());
+
+    comment.edit(command.requesterId(), command.content(), command.secret());
+
+    return WrittenComment.from(comment);
+  }
+
+  /**
+   * 댓글을 소프트 삭제한다 (CM-10 · CM-11).
+   *
+   * <p><b>모집글을 읽는 이유는 방장이 누구인지다.</b> 삭제는 작성자 또는 방장이 하고 (API-설계.md 「2-5. 댓글 (Companion)」), 방장은 남의
+   * 애그리게이트에 있다.
+   *
+   * <p>하위 대댓글을 건드리지 않는다. 지운 댓글이 목록에 자리표시자로 남을지는 <b>조회 시점에 판정된다</b> (CM-11) — 하위가 있으면 남고 없으면 빠진다.
+   * 여기서 대댓글까지 지우면 그 규칙이 무의미해지고 대댓글이 고아가 된다.
+   */
+  @Transactional
+  public void delete(Long commentId, Long requesterId) {
+    Comment comment = requireComment(commentId);
+    CompanionPost post = requirePost(comment.getPostId());
+
+    comment.deleteBy(requesterId, post.getHostId());
+  }
+
+  /** 소프트 삭제된 댓글도 여기서는 찾힌다. 조작을 막는 것은 도메인의 상태 가드다. */
+  private Comment requireComment(Long commentId) {
+    return commentRepository
+        .findById(commentId)
+        .orElseThrow(() -> new BusinessException(CommentErrorCode.COMMENT_NOT_FOUND));
+  }
+
   /** 모집글에 댓글이나 대댓글을 쓴다. */
   @Transactional
   public WrittenComment write(CommentWriteCommand command) {
@@ -48,10 +88,7 @@ public class CommentCommandService {
    * <p>모집글 행을 읽기만 한다. 댓글 수를 저장하지 않아 갱신할 것이 없고 (I-11), 그래서 동시 작성이 서로 기다리지 않는다.
    */
   private void requireOpenPost(Long postId) {
-    CompanionPost post =
-        companionPostRepository
-            .findById(postId)
-            .orElseThrow(() -> new BusinessException(PostErrorCode.POST_NOT_FOUND));
+    CompanionPost post = requirePost(postId);
 
     if (post.getStatus() != PostStatus.OPEN) {
       throw new BusinessException(PostErrorCode.POST_ALREADY_CLOSED);
@@ -78,6 +115,12 @@ public class CommentCommandService {
     }
 
     return parent.reply(command.authorId(), command.content(), command.secret());
+  }
+
+  private CompanionPost requirePost(Long postId) {
+    return companionPostRepository
+        .findById(postId)
+        .orElseThrow(() -> new BusinessException(PostErrorCode.POST_NOT_FOUND));
   }
 
   private Comment rootOf(CommentWriteCommand command) {

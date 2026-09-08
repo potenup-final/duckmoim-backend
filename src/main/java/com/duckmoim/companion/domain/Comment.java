@@ -85,6 +85,72 @@ public class Comment extends BaseEntity {
     return new Comment(postId, authorId, id, content, secret);
   }
 
+  /**
+   * 본문을 고친다 (CM-09).
+   *
+   * <p><b>비밀 여부는 바꿀 수 없다.</b> 화면-계약.md 가 <i>"secret 은 작성할 때만 정하고 수정으로 못 바꾼다"</i> 고 정했다. 공개였던 것을 비밀로
+   * 돌려도 이미 읽은 사람을 되돌릴 수 없고, 반대로 비밀을 공개로 열면 권한자에게만 보이던 연락처가 전체에 열린다.
+   *
+   * <p>수정은 <b>작성자 본인만</b> 한다. 방장은 삭제만 할 수 있다 (API-설계.md 「2-5. 댓글 (Companion)」) — 남의 말을 고치는 것과 지우는
+   * 것은 다른 권한이다.
+   *
+   * <p>본문 길이를 여기서 보지 않는다. 작성과 같은 이유다 — Bean Validation 과 VARCHAR(500) 을 지나지 않는 경로가 없다.
+   *
+   * @param secret 안 보내면 null 이고 그때는 판정하지 않는다. 저장값과 같은 값을 보내는 것도 통과다 — 프론트가 폼 전체를 되보내는 것을 막지 않으면서
+   *     「비밀 변경 400」 이 성립한다
+   */
+  public void edit(Long requesterId, String content, Boolean secret) {
+    requireActive();
+
+    if (!authorId.equals(requesterId)) {
+      throw new BusinessException(CommentErrorCode.COMMENT_NOT_AUTHOR);
+    }
+    if (secret != null && secret != this.secret) {
+      throw new BusinessException(CommentErrorCode.COMMENT_SECRET_NOT_CHANGEABLE);
+    }
+
+    this.content = content;
+  }
+
+  /**
+   * 소프트 삭제한다 (CM-10).
+   *
+   * <p><b>작성자 또는 방장이다.</b> 방장이 지울 수 있는 이유는 자기 모집글에 달린 글을 관리해야 하기 때문이고, 그래서 이 판정에 남의 애그리게이트의
+   * 값({@code hostId})이 들어온다 — service 가 모집글을 읽어 넘긴다.
+   *
+   * <p>본문을 지우지 않는다. 도메인-모델링.md 「4. 엔티티 · 값 객체 · 식별자」가 Comment 를 소프트 삭제 대상으로 정했다. 조회에서 사라지는 것은
+   * {@code CommentVisibilityPolicy} 가 {@code status != ACTIVE} 를 막기 때문이고, 그것으로 CM-10 의 「삭제 후 본문
+   * 미노출」이 성립한다.
+   *
+   * <p>지운 뒤에도 하위 대댓글이 있으면 목록에 자리표시자로 남는다 (CM-11). 그 판정은 조회 쪽에 있다.
+   */
+  public void deleteBy(Long requesterId, Long hostId) {
+    requireActive();
+
+    boolean isAuthor = authorId.equals(requesterId);
+    boolean isHost = hostId != null && hostId.equals(requesterId);
+
+    if (!isAuthor && !isHost) {
+      throw new BusinessException(CommentErrorCode.COMMENT_NOT_AUTHOR_OR_HOST);
+    }
+
+    this.status = CommentStatus.DELETED;
+  }
+
+  /**
+   * 살아 있는 댓글만 고치거나 지울 수 있다.
+   *
+   * <p><b>404 인 이유</b> — API-컨벤션.md 「Status Code 규칙」이 <i>"소프트 삭제된 리소스는 404로 취급한다"</i> 고 정했다.
+   * STAR-54 가 부모 댓글에 대해 이미 같은 판단을 했다. {@code BLINDED} 도 같게 본다 — 자리표시자는 존재만 남은 것이지 조작 대상이 아니다.
+   *
+   * <p>도메인-모델링.md 「6. 라이프사이클」에서 DELETED · BLINDED 가 종착이고 되돌아오는 전이가 없다.
+   */
+  private void requireActive() {
+    if (status != CommentStatus.ACTIVE) {
+      throw new BusinessException(CommentErrorCode.COMMENT_NOT_FOUND);
+    }
+  }
+
   public boolean isReply() {
     return parentId != null;
   }
