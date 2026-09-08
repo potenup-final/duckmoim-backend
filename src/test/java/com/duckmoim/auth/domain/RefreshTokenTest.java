@@ -14,7 +14,7 @@ class RefreshTokenTest {
   @Test
   @DisplayName("발급하면 원문이 아니라 해시가 담긴다.")
   void issue_storesHashNotRaw() {
-    RefreshToken refreshToken = RefreshToken.issue(1L, RAW, NOW.plusDays(14));
+    RefreshToken refreshToken = RefreshToken.create(1L, RAW, NOW.plusDays(14));
 
     assertThat(refreshToken.getTokenHash()).isNotEqualTo(RAW).hasSize(64).isHexadecimal();
   }
@@ -25,7 +25,7 @@ class RefreshTokenTest {
   void hash_isDeterministic() {
     String hashed = RefreshToken.hash(RAW);
 
-    assertThat(hashed).isEqualTo(RefreshToken.issue(1L, RAW, NOW.plusDays(14)).getTokenHash());
+    assertThat(hashed).isEqualTo(RefreshToken.create(1L, RAW, NOW.plusDays(14)).getTokenHash());
   }
 
   @Test
@@ -39,7 +39,7 @@ class RefreshTokenTest {
   @Test
   @DisplayName("만료 시각이 지나면 만료된 것으로 본다.")
   void isExpired_afterExpiresAt() {
-    RefreshToken refreshToken = RefreshToken.issue(1L, RAW, NOW);
+    RefreshToken refreshToken = RefreshToken.create(1L, RAW, NOW);
 
     assertThat(refreshToken.isExpired(NOW.plusSeconds(1))).isTrue();
   }
@@ -48,7 +48,7 @@ class RefreshTokenTest {
   @Test
   @DisplayName("만료 시각과 같은 순간은 이미 만료된 것으로 본다.")
   void isExpired_atExpiresAt() {
-    RefreshToken refreshToken = RefreshToken.issue(1L, RAW, NOW);
+    RefreshToken refreshToken = RefreshToken.create(1L, RAW, NOW);
 
     assertThat(refreshToken.isExpired(NOW)).isTrue();
   }
@@ -56,7 +56,7 @@ class RefreshTokenTest {
   @Test
   @DisplayName("만료 시각 전에는 만료되지 않았다.")
   void isExpired_beforeExpiresAt() {
-    RefreshToken refreshToken = RefreshToken.issue(1L, RAW, NOW.plusDays(14));
+    RefreshToken refreshToken = RefreshToken.create(1L, RAW, NOW.plusDays(14));
 
     assertThat(refreshToken.isExpired(NOW)).isFalse();
   }
@@ -65,7 +65,7 @@ class RefreshTokenTest {
   @Test
   @DisplayName("발급받은 회원의 것인지 판정한다.")
   void belongsTo() {
-    RefreshToken refreshToken = RefreshToken.issue(1L, RAW, NOW.plusDays(14));
+    RefreshToken refreshToken = RefreshToken.create(1L, RAW, NOW.plusDays(14));
 
     assertThat(refreshToken.belongsTo(1L)).isTrue();
     assertThat(refreshToken.belongsTo(2L)).isFalse();

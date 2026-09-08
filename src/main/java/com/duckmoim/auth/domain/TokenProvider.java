@@ -2,7 +2,7 @@ package com.duckmoim.auth.domain;
 
 public interface TokenProvider {
 
-  String issueAccessToken(AuthUser authUser);
+  String createAccessToken(AuthUser authUser);
 
   AuthUser readAccessToken(String accessToken);
 
@@ -12,7 +12,7 @@ public interface TokenProvider {
    * <p><b>회원번호만 담는다.</b> {@code signupCompleted} 와 {@code admin} 은 14일 안에 바뀌므로(AU-05 가입 완료, 관리자 지정)
    * 재발급 때 DB 에서 다시 읽는다. 토큰에 박아 두면 가입을 마친 사용자가 2주 동안 가입 미완료로 취급된다.
    */
-  String issueRefreshToken(Long userId);
+  String createRefreshToken(Long userId);
 
   /**
    * Refresh 토큰에서 회원번호를 읽는다.

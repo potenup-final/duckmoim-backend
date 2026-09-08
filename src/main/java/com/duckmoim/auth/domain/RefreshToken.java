@@ -23,8 +23,8 @@ import lombok.NoArgsConstructor;
  * refresh_token} 이다 — 실제로 담기는 것은 Refresh 해시 한 줄이고 Access 는 저장하지 않으므로, {@code auth_session} 은 담기지 않은
  * 것까지 있는 것처럼 들린다.
  *
- * <p><b>원문을 절대 갖지 않는다.</b> 생성자가 비공개이고 {@link #issue} 만 열려 있어서, 원문을 넣으려면 반드시 {@link #hash} 를 지난다. DB
- * 가 유출되면 그 자체로 14일짜리 세션 전부를 넘겨주는 셈이라, 이 불변식을 service 가 아니라 여기서 강제한다.
+ * <p><b>원문을 절대 갖지 않는다.</b> 생성자가 비공개이고 {@link #create} 만 열려 있어서, 원문을 넣으려면 반드시 {@link #hash} 를 지난다.
+ * DB 가 유출되면 그 자체로 14일짜리 세션 전부를 넘겨주는 셈이라, 이 불변식을 service 가 아니라 여기서 강제한다.
  *
  * <p>회원을 {@code userId} 로만 참조한다 (도메인-모델링.md 「3.2 애그리게이트 간 참조 규칙」). 한 회원이 여러 기기에서 로그인하므로 행이 여러 개 있을
  * 수 있고, AU-03 의 「해당 유저 전체 폐기」가 그 전부를 지운다.
@@ -58,7 +58,7 @@ public class RefreshToken extends BaseEntity {
   }
 
   /** 원문을 받아 해시만 담는다. 원문은 이 메서드 밖으로 나가지 않는다. */
-  public static RefreshToken issue(Long userId, String rawToken, LocalDateTime expiresAt) {
+  public static RefreshToken create(Long userId, String rawToken, LocalDateTime expiresAt) {
     return new RefreshToken(userId, hash(rawToken), expiresAt);
   }
 

@@ -28,7 +28,7 @@ class RefreshTokenRepositoryTest {
 
   private RefreshToken saved(long userId, String rawToken) {
     return refreshTokenRepository.save(
-        RefreshToken.issue(userId, rawToken, LocalDateTime.now(ZoneOffset.UTC).plusDays(14)));
+        RefreshToken.create(userId, rawToken, LocalDateTime.now(ZoneOffset.UTC).plusDays(14)));
   }
 
   @Test

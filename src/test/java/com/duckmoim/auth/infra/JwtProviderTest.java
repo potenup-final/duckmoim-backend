@@ -30,8 +30,8 @@ class JwtProviderTest {
 
   @Test
   @DisplayName("발급한 토큰을 읽으면 발급할 때의 인증 주체가 그대로 나온다.")
-  void issueAndReadAccessToken() {
-    String accessToken = jwtProvider.issueAccessToken(AUTH_USER);
+  void createAndReadAccessToken() {
+    String accessToken = jwtProvider.createAccessToken(AUTH_USER);
 
     AuthUser read = jwtProvider.readAccessToken(accessToken);
 
@@ -42,7 +42,7 @@ class JwtProviderTest {
   @DisplayName("만료된 토큰은 재발급이 필요하다는 뜻으로 거절한다.")
   void readAccessToken_expired() {
     JwtProvider alreadyExpired = new JwtProvider(SECRET, ALREADY_EXPIRED, REFRESH_TTL);
-    String accessToken = alreadyExpired.issueAccessToken(AUTH_USER);
+    String accessToken = alreadyExpired.createAccessToken(AUTH_USER);
 
     assertThatThrownBy(() -> alreadyExpired.readAccessToken(accessToken))
         .isInstanceOf(BusinessException.class)
@@ -53,7 +53,7 @@ class JwtProviderTest {
   @DisplayName("다른 열쇠로 서명된 토큰은 다시 로그인하라는 뜻으로 거절한다.")
   void readAccessToken_signedByAnotherKey() {
     JwtProvider forger = new JwtProvider(OTHER_SECRET, ACCESS_TTL, REFRESH_TTL);
-    String forgedToken = forger.issueAccessToken(AUTH_USER);
+    String forgedToken = forger.createAccessToken(AUTH_USER);
 
     assertThatThrownBy(() -> jwtProvider.readAccessToken(forgedToken))
         .isInstanceOf(BusinessException.class)
@@ -62,8 +62,8 @@ class JwtProviderTest {
 
   @Test
   @DisplayName("발급한 토큰에는 용도가 액세스로 적힌다.")
-  void issueAccessToken_stampsTokenType() {
-    String accessToken = jwtProvider.issueAccessToken(AUTH_USER);
+  void createAccessToken_stampsTokenType() {
+    String accessToken = jwtProvider.createAccessToken(AUTH_USER);
 
     assertThat(payloadOf(accessToken)).contains("\"tokenType\":\"access\"");
   }
@@ -102,16 +102,16 @@ class JwtProviderTest {
 
   @Test
   @DisplayName("발급한 리프레시 토큰을 읽으면 발급할 때의 회원번호가 나온다.")
-  void issueAndReadRefreshToken() {
-    String refreshToken = jwtProvider.issueRefreshToken(7L);
+  void createAndReadRefreshToken() {
+    String refreshToken = jwtProvider.createRefreshToken(7L);
 
     assertThat(jwtProvider.readRefreshToken(refreshToken)).isEqualTo(7L);
   }
 
   @Test
   @DisplayName("발급한 리프레시 토큰에는 용도가 리프레시로 적힌다.")
-  void issueRefreshToken_stampsTokenType() {
-    String refreshToken = jwtProvider.issueRefreshToken(7L);
+  void createRefreshToken_stampsTokenType() {
+    String refreshToken = jwtProvider.createRefreshToken(7L);
 
     assertThat(payloadOf(refreshToken)).contains("\"tokenType\":\"refresh\"");
   }
@@ -122,8 +122,8 @@ class JwtProviderTest {
    */
   @Test
   @DisplayName("리프레시 토큰에는 가입 여부와 관리자 여부를 담지 않는다.")
-  void issueRefreshToken_carriesNothingButUserId() {
-    String refreshToken = jwtProvider.issueRefreshToken(7L);
+  void createRefreshToken_carriesNothingButUserId() {
+    String refreshToken = jwtProvider.createRefreshToken(7L);
 
     assertThat(payloadOf(refreshToken)).doesNotContain("signupCompleted", "admin");
   }
@@ -132,7 +132,7 @@ class JwtProviderTest {
   @Test
   @DisplayName("액세스 토큰을 리프레시 토큰으로 읽으면 다시 로그인하라는 뜻으로 거절한다.")
   void readRefreshToken_tokenTypeIsAccess() {
-    String accessToken = jwtProvider.issueAccessToken(AUTH_USER);
+    String accessToken = jwtProvider.createAccessToken(AUTH_USER);
 
     assertThatThrownBy(() -> jwtProvider.readRefreshToken(accessToken))
         .isInstanceOf(BusinessException.class)
@@ -144,7 +144,7 @@ class JwtProviderTest {
   @DisplayName("만료된 리프레시 토큰은 다시 로그인하라는 뜻으로 거절한다.")
   void readRefreshToken_expired() {
     JwtProvider alreadyExpired = new JwtProvider(SECRET, ACCESS_TTL, ALREADY_EXPIRED);
-    String refreshToken = alreadyExpired.issueRefreshToken(7L);
+    String refreshToken = alreadyExpired.createRefreshToken(7L);
 
     assertThatThrownBy(() -> alreadyExpired.readRefreshToken(refreshToken))
         .isInstanceOf(BusinessException.class)
@@ -155,7 +155,7 @@ class JwtProviderTest {
   @DisplayName("다른 열쇠로 서명된 리프레시 토큰은 다시 로그인하라는 뜻으로 거절한다.")
   void readRefreshToken_signedByAnotherKey() {
     JwtProvider forger = new JwtProvider(OTHER_SECRET, ACCESS_TTL, REFRESH_TTL);
-    String forgedToken = forger.issueRefreshToken(7L);
+    String forgedToken = forger.createRefreshToken(7L);
 
     assertThatThrownBy(() -> jwtProvider.readRefreshToken(forgedToken))
         .isInstanceOf(BusinessException.class)

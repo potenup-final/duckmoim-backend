@@ -70,7 +70,7 @@ class UnknownPathResponseTest {
 
   private ResponseEntity<ErrorResponse> getAuthenticated(String path) {
     HttpHeaders headers = new HttpHeaders();
-    headers.setBearerAuth(tokenProvider.issueAccessToken(new AuthUser(1L, true, false)));
+    headers.setBearerAuth(tokenProvider.createAccessToken(new AuthUser(1L, true, false)));
 
     return restTemplate.exchange(
         path, HttpMethod.GET, new HttpEntity<>(headers), ErrorResponse.class);

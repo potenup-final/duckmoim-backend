@@ -44,7 +44,7 @@ class AuthenticationFilterTest {
   @DisplayName("유효한 토큰을 보내면 인증 주체가 토큰의 회원으로 채워진다.")
   void doFilter_withValidToken() throws Exception {
     AuthUser authUser = new AuthUser(7L, true, false);
-    MockHttpServletRequest request = requestWith(jwtProvider.issueAccessToken(authUser));
+    MockHttpServletRequest request = requestWith(jwtProvider.createAccessToken(authUser));
 
     filter.doFilter(request, new MockHttpServletResponse(), new MockFilterChain());
 
@@ -56,7 +56,7 @@ class AuthenticationFilterTest {
   @DisplayName("가입을 마친 회원에게는 SIGNUP 권한이 주어진다.")
   void doFilter_signupCompleted() throws Exception {
     MockHttpServletRequest request =
-        requestWith(jwtProvider.issueAccessToken(new AuthUser(7L, true, false)));
+        requestWith(jwtProvider.createAccessToken(new AuthUser(7L, true, false)));
 
     filter.doFilter(request, new MockHttpServletResponse(), new MockFilterChain());
 
@@ -69,7 +69,7 @@ class AuthenticationFilterTest {
   @DisplayName("가입 미완료 회원에게는 아무 권한도 주어지지 않는다.")
   void doFilter_signupIncomplete() throws Exception {
     MockHttpServletRequest request =
-        requestWith(jwtProvider.issueAccessToken(new AuthUser(7L, false, false)));
+        requestWith(jwtProvider.createAccessToken(new AuthUser(7L, false, false)));
 
     filter.doFilter(request, new MockHttpServletResponse(), new MockFilterChain());
 
@@ -80,7 +80,7 @@ class AuthenticationFilterTest {
   @DisplayName("관리자에게는 SIGNUP 과 ADMIN 권한이 함께 주어진다.")
   void doFilter_admin() throws Exception {
     MockHttpServletRequest request =
-        requestWith(jwtProvider.issueAccessToken(new AuthUser(7L, true, true)));
+        requestWith(jwtProvider.createAccessToken(new AuthUser(7L, true, true)));
 
     filter.doFilter(request, new MockHttpServletResponse(), new MockFilterChain());
 
@@ -94,7 +94,7 @@ class AuthenticationFilterTest {
   void doFilter_expiredToken() throws Exception {
     JwtProvider alreadyExpired = new JwtProvider(SECRET, Duration.ofMinutes(-1), REFRESH_TTL);
     MockHttpServletRequest request =
-        requestWith(alreadyExpired.issueAccessToken(new AuthUser(7L, true, false)));
+        requestWith(alreadyExpired.createAccessToken(new AuthUser(7L, true, false)));
 
     filter.doFilter(request, new MockHttpServletResponse(), new MockFilterChain());
 
@@ -112,7 +112,7 @@ class AuthenticationFilterTest {
             Duration.ofMinutes(30),
             REFRESH_TTL);
     MockHttpServletRequest request =
-        requestWith(forger.issueAccessToken(new AuthUser(7L, true, true)));
+        requestWith(forger.createAccessToken(new AuthUser(7L, true, true)));
 
     filter.doFilter(request, new MockHttpServletResponse(), new MockFilterChain());
 
@@ -125,7 +125,8 @@ class AuthenticationFilterTest {
   @DisplayName("Bearer 접두어가 없는 헤더는 토큰으로 보지 않는다.")
   void doFilter_headerWithoutBearerPrefix() throws Exception {
     MockHttpServletRequest request = new MockHttpServletRequest();
-    request.addHeader("Authorization", jwtProvider.issueAccessToken(new AuthUser(7L, true, false)));
+    request.addHeader(
+        "Authorization", jwtProvider.createAccessToken(new AuthUser(7L, true, false)));
 
     filter.doFilter(request, new MockHttpServletResponse(), new MockFilterChain());
 

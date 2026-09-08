@@ -42,7 +42,7 @@ public class JwtProvider implements TokenProvider {
   }
 
   @Override
-  public String issueAccessToken(AuthUser authUser) {
+  public String createAccessToken(AuthUser authUser) {
     Instant now = Instant.now();
 
     return Jwts.builder()
@@ -78,7 +78,7 @@ public class JwtProvider implements TokenProvider {
   }
 
   @Override
-  public String issueRefreshToken(Long userId) {
+  public String createRefreshToken(Long userId) {
     Instant now = Instant.now();
 
     return Jwts.builder()

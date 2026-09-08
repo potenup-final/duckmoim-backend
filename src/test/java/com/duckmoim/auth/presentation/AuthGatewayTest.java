@@ -57,7 +57,7 @@ class AuthGatewayTest {
   void expiredToken() throws Exception {
     String expired =
         new JwtProvider(LOCAL_SECRET, Duration.ofMinutes(-1), REFRESH_TTL)
-            .issueAccessToken(SIGNUP_COMPLETED);
+            .createAccessToken(SIGNUP_COMPLETED);
 
     mockMvc
         .perform(get("/api/v1/users/me").header(HttpHeaders.AUTHORIZATION, "Bearer " + expired))
@@ -69,7 +69,7 @@ class AuthGatewayTest {
   void forgedToken() throws Exception {
     String forged =
         new JwtProvider(OTHER_SECRET, Duration.ofMinutes(30), REFRESH_TTL)
-            .issueAccessToken(SIGNUP_COMPLETED);
+            .createAccessToken(SIGNUP_COMPLETED);
 
     mockMvc
         .perform(get("/api/v1/users/me").header(HttpHeaders.AUTHORIZATION, "Bearer " + forged))
@@ -92,7 +92,7 @@ class AuthGatewayTest {
   void expiredTokenTellsClientToRefresh() throws Exception {
     String expired =
         new JwtProvider(LOCAL_SECRET, Duration.ofMinutes(-1), REFRESH_TTL)
-            .issueAccessToken(SIGNUP_COMPLETED);
+            .createAccessToken(SIGNUP_COMPLETED);
 
     mockMvc
         .perform(get("/api/v1/users/me").header(HttpHeaders.AUTHORIZATION, "Bearer " + expired))
@@ -143,7 +143,7 @@ class AuthGatewayTest {
 
   private HttpHeaders bearer(AuthUser authUser) {
     HttpHeaders headers = new HttpHeaders();
-    headers.setBearerAuth(tokenProvider.issueAccessToken(authUser));
+    headers.setBearerAuth(tokenProvider.createAccessToken(authUser));
     return headers;
   }
 }

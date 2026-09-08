@@ -213,7 +213,7 @@ class EndpointGradeTest {
     HttpHeaders headers = new HttpHeaders();
 
     if (authUser != null) {
-      headers.setBearerAuth(tokenProvider.issueAccessToken(authUser));
+      headers.setBearerAuth(tokenProvider.createAccessToken(authUser));
     }
     return mockMvc
         .perform(request(endpoint.method(), endpoint.path()).headers(headers))
