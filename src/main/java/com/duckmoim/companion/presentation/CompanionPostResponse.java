@@ -1,9 +1,7 @@
 package com.duckmoim.companion.presentation;
 
-import com.duckmoim.companion.domain.MeetPoint;
 import com.duckmoim.companion.domain.PostStatus;
 import com.duckmoim.companion.service.WrittenCompanionPost;
-import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
@@ -57,13 +55,5 @@ public record CompanionPostResponse(
 
   private static OffsetDateTime toKst(LocalDateTime storedInUtc) {
     return storedInUtc.atOffset(ZoneOffset.UTC).atZoneSameInstant(KST).toOffsetDateTime();
-  }
-
-  /** 좌표 이름이 행사 {@code Place} 와 같다. 지도가 한 모양만 알면 된다 (API-설계.md 「5. 결정 사항」). */
-  public record MeetPointResponse(String place, BigDecimal lat, BigDecimal lng) {
-
-    static MeetPointResponse from(MeetPoint meetPoint) {
-      return new MeetPointResponse(meetPoint.getPlace(), meetPoint.getLat(), meetPoint.getLng());
-    }
   }
 }
