@@ -89,7 +89,7 @@ public class User extends BaseEntity {
    *     USER_SIGNUP_INFO_ALREADY_SET}
    */
   public void completeSignup(SignupInfo signupInfo) {
-    if (status != SignupStatus.PENDING_SIGNUP_INFO) {
+    if (!isSignupPending()) {
       throw new BusinessException(UserErrorCode.USER_SIGNUP_INFO_ALREADY_SET);
     }
 
@@ -161,5 +161,18 @@ public class User extends BaseEntity {
    */
   public boolean isSignupCompleted() {
     return status == SignupStatus.ACTIVE;
+  }
+
+  /**
+   * 가입 정보를 아직 안 낸 계정인지.
+   *
+   * <p><b>{@link #completeSignup} 의 통과 조건 그 자체다.</b> service 가 그 호출에 <b>앞서</b> 같은 판정을 해야 해서 꺼냈다 —
+   * 닉네임 사전 조회보다 이 검사가 먼저여야 하고(둘 다 걸리면 상태 쪽이 이긴다), 사전 조회는 엔티티를 바꾸기 전에 끝나야 한다.
+   *
+   * <p><b>{@code isSignupCompleted} 의 반대가 아니다.</b> 탈퇴한 계정은 둘 다 {@code false} 다. 그래서 이 판정을 부정으로 대신
+   * 쓰면 상태가 하나 늘어나는 날 조용히 갈라진다.
+   */
+  public boolean isSignupPending() {
+    return status == SignupStatus.PENDING_SIGNUP_INFO;
   }
 }

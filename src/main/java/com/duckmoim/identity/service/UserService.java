@@ -42,6 +42,10 @@ public class UserService {
    * 조용히 무력해진다. B 티켓의 토큰 경로와 같은 락 순서라 데드락도 생기지 않는다.
    *
    * <p><b>탈퇴 계정은 없는 계정으로 본다</b> — 탈퇴가 소프트 삭제라 행이 남아서 존재 여부만으로는 걸러지지 않는다.
+   *
+   * <p><b>세 검사의 순서가 곧 에러 코드다.</b> 이중 제출의 두 번째 요청은 <b>같은 닉네임</b>을 다시 내므로 두 조건이 동시에 걸린다 — 이미 가입했고, 그
+   * 닉네임은 (자기 것이라) 이미 쓰이고 있다. 상태 검사가 나중이면 「이미 사용 중인 닉네임입니다」가 나가는데, 그 이름을 쓰는 사람이 <b>본인</b>이라 사용자는 고칠
+   * 수 없는 안내를 받는다. 요청 자체가 허용되지 않는다는 사실이 입력값의 흠보다 앞선다.
    */
   @Transactional
   public void completeSignup(SignupCommand command) {
@@ -51,6 +55,7 @@ public class UserService {
             .filter(found -> !found.isWithdrawn())
             .orElseThrow(() -> new BusinessException(UserErrorCode.USER_NOT_FOUND));
 
+    requireSignupPending(user);
     requireNicknameAvailable(command.nickname());
 
     user.completeSignup(SignupInfo.of(command.nickname(), command.birthYear(), currentYear()));
@@ -59,6 +64,19 @@ public class UserService {
       userRepository.flush();
     } catch (DataIntegrityViolationException e) {
       throw new BusinessException(UserErrorCode.USER_NICKNAME_DUPLICATED);
+    }
+  }
+
+  /**
+   * <b>{@code completeSignup} 이 같은 검사를 한 번 더 한다</b> — 도메인이 불변식의 검증 위치이고 여기는 <b>순서</b>를 정하는 자리다
+   * (I-01 의 이중 방어와 같은 모양).
+   *
+   * <p><b>검사를 도메인 호출 뒤로 미룰 수는 없다.</b> {@code completeSignup} 이 영속 엔티티의 닉네임을 바꾸므로, 그 뒤에 오는 {@code
+   * existsByNickname} 이 flush 를 유발해 <b>방금 쓴 자기 행</b>을 중복으로 읽는다 — 모든 정상 가입이 409 가 된다. 실측했다.
+   */
+  private void requireSignupPending(User user) {
+    if (!user.isSignupPending()) {
+      throw new BusinessException(UserErrorCode.USER_SIGNUP_INFO_ALREADY_SET);
     }
   }
 

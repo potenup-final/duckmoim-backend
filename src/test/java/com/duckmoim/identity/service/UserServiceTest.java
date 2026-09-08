@@ -89,6 +89,37 @@ class UserServiceTest {
     cleanUp(userId);
   }
 
+  /**
+   * <b>이중 제출의 두 번째 요청이다.</b> 버튼을 두 번 누르면 두 요청의 닉네임이 <b>같다</b> — 두 번째는 방금 자기가 등록한 이름을 다시 낸다.
+   *
+   * <p>위 테스트가 다른 닉네임을 내므로 이 경우를 덮지 못한다.
+   */
+  @Test
+  @DisplayName("가입을 마친 계정이 자기 닉네임을 다시 내도 가입 완료로 거부된다.")
+  void completeSignup_alreadySetWithOwnNickname() {
+    long userId = pendingUser();
+    userService.completeSignup(new SignupCommand(userId, "두번누른덕후", 2000));
+
+    assertThatThrownBy(() -> userService.completeSignup(new SignupCommand(userId, "두번누른덕후", 2000)))
+        .isInstanceOf(BusinessException.class)
+        .hasFieldOrPropertyWithValue("errorCode", UserErrorCode.USER_SIGNUP_INFO_ALREADY_SET);
+    cleanUp(userId);
+  }
+
+  /** 조건 둘이 동시에 걸릴 때 <b>상태가 입력값을 이긴다</b> — 요청 자체가 허용되지 않으므로 출생연도를 볼 이유가 없다. */
+  @Test
+  @DisplayName("가입을 마친 계정이 연령 미달 연도를 내면 연령이 아니라 가입 완료로 거부된다.")
+  void completeSignup_alreadySetBeatsAge() {
+    long userId = aUser().nickname("연도까지틀린덕후").insert(jdbcTemplate);
+    int tooYoung = java.time.LocalDate.now().getYear() - 14;
+
+    assertThatThrownBy(
+            () -> userService.completeSignup(new SignupCommand(userId, "새이름덕후", tooYoung)))
+        .isInstanceOf(BusinessException.class)
+        .hasFieldOrPropertyWithValue("errorCode", UserErrorCode.USER_SIGNUP_INFO_ALREADY_SET);
+    cleanUp(userId);
+  }
+
   @Test
   @DisplayName("탈퇴한 계정으로 가입 정보를 입력하면 회원을 찾을 수 없다.")
   void completeSignup_withdrawn() {
