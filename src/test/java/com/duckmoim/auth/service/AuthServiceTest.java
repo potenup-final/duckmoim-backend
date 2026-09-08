@@ -20,6 +20,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -55,17 +56,20 @@ class AuthServiceTest {
     cleanUp(userId);
   }
 
-  /** 회전이다 — 새 것을 주면서 헌 것을 지운다. 이것이 재사용 탐지의 전부다. */
+  /**
+   * 회전이다 — 새 것을 주면서 헌 것에 표시를 찍는다.
+   *
+   * <p><b>지우지 않는다.</b> 지우면 「방금 회전됐다」와 「오래 전에 죽었다」를 구분할 수 없어 이중 제출이 재사용으로 오인된다 (V13).
+   */
   @Test
-  @DisplayName("재발급하면 쓰인 리프레시 토큰은 저장소에서 사라진다.")
-  void refresh_removesUsedToken() {
+  @DisplayName("재발급하면 쓰인 리프레시 토큰에 회전 표시가 찍힌다.")
+  void refresh_marksUsedToken() {
     long userId = aUser().insert(jdbcTemplate);
     AuthToken authToken = firstLogin(userId);
 
     authService.refresh(authToken.refreshToken());
 
-    assertThat(refreshTokenRepository.findByTokenHash(RefreshToken.hash(authToken.refreshToken())))
-        .isEmpty();
+    assertThat(rotatedAtOf(authToken.refreshToken())).isNotNull();
     cleanUp(userId);
   }
 
@@ -76,6 +80,7 @@ class AuthServiceTest {
     long userId = aUser().insert(jdbcTemplate);
     AuthToken authToken = firstLogin(userId);
     authService.refresh(authToken.refreshToken());
+    agePastGrace(userId);
 
     assertThatThrownBy(() -> authService.refresh(authToken.refreshToken()))
         .isInstanceOf(BusinessException.class)
@@ -95,6 +100,7 @@ class AuthServiceTest {
     long userId = aUser().insert(jdbcTemplate);
     AuthToken authToken = firstLogin(userId);
     AuthToken rotated = authService.refresh(authToken.refreshToken());
+    agePastGrace(userId);
 
     assertThatThrownBy(() -> authService.refresh(authToken.refreshToken()))
         .isInstanceOf(BusinessException.class);
@@ -111,6 +117,7 @@ class AuthServiceTest {
     long userId = aUser().insert(jdbcTemplate);
     AuthToken authToken = firstLogin(userId);
     authService.refresh(authToken.refreshToken());
+    agePastGrace(userId);
 
     assertThatThrownBy(() -> authService.refresh(authToken.refreshToken()))
         .isInstanceOf(BusinessException.class);
@@ -247,6 +254,7 @@ class AuthServiceTest {
 
     AuthToken fresh = authService.createTokens(userId);
     AuthToken rotated = authService.refresh(fresh.refreshToken());
+    agePastGrace(userId);
 
     assertThatThrownBy(() -> authService.refresh(fresh.refreshToken()))
         .isInstanceOf(BusinessException.class);
@@ -315,6 +323,117 @@ class AuthServiceTest {
   }
 
   /**
+   * <b>리뷰 1 — 이중 제출이 정상 사용자를 로그아웃시키지 않는다.</b>
+   *
+   * <p>앱 복귀 시 대기 중이던 요청 둘이 같이 401 을 받으면 클라이언트는 <b>같은 Refresh 원문</b>으로 재발급을 두 번 부른다. 회전을 「지우기」로 짜면 진
+   * 쪽이 재사용으로 판정해 <b>이긴 쪽이 방금 받은 세션까지 폐기한다</b> — 훔친 토큰이 없어도 재현된다. 실측했다.
+   */
+  @Test
+  @DisplayName("같은 리프레시 토큰을 동시에 두 번 써도 이긴 쪽의 세션은 살아 있다.")
+  void refresh_doubleSubmitKeepsWinner() throws Exception {
+    long userId = aUser().insert(jdbcTemplate);
+    String shared = authService.createTokens(userId).refreshToken();
+
+    CountDownLatch start = new CountDownLatch(1);
+    AtomicReference<AuthToken> winner = new AtomicReference<>();
+    ExecutorService pool = Executors.newFixedThreadPool(2);
+
+    for (int i = 0; i < 2; i++) {
+      pool.execute(
+          () -> {
+            try {
+              start.await();
+              winner.set(authService.refresh(shared));
+            } catch (Exception e) {
+              // 진 쪽은 401 을 받는다
+            }
+          });
+    }
+    start.countDown();
+    pool.shutdown();
+    assertThat(pool.awaitTermination(30, TimeUnit.SECONDS)).isTrue();
+
+    assertThat(winner.get()).isNotNull();
+    assertThat(invalidatedAt(userId)).isNull();
+    assertThat(authService.refresh(winner.get().refreshToken()).accessToken()).isNotBlank();
+    cleanUp(userId);
+  }
+
+  /** 유예를 넘긴 재사용은 그대로 탐지해야 한다 — 유예가 재사용 탐지를 끄는 장치가 되면 안 된다. */
+  @Test
+  @DisplayName("유예를 넘겨 회전된 리프레시 토큰을 다시 쓰면 세션이 폐기된다.")
+  void refresh_reusedAfterGrace() {
+    long userId = aUser().insert(jdbcTemplate);
+    AuthToken stolen = firstLogin(userId);
+    AuthToken rotated = authService.refresh(stolen.refreshToken());
+
+    jdbcTemplate.update(
+        "UPDATE refresh_token SET rotated_at = DATE_SUB(UTC_TIMESTAMP(6), INTERVAL 1 HOUR)"
+            + " WHERE user_id = ? AND rotated_at IS NOT NULL",
+        userId);
+
+    assertThatThrownBy(() -> authService.refresh(stolen.refreshToken()))
+        .isInstanceOf(BusinessException.class)
+        .hasFieldOrPropertyWithValue("errorCode", AuthErrorCode.AUTH_REFRESH_TOKEN_INVALID);
+
+    assertThat(invalidatedAt(userId)).isNotNull();
+    assertThatThrownBy(() -> authService.refresh(rotated.refreshToken()))
+        .isInstanceOf(BusinessException.class);
+    cleanUp(userId);
+  }
+
+  /** 회전이 행을 남기게 됐으므로 다음 회전이 치운다 — 별도 배치가 없다. */
+  @Test
+  @DisplayName("회전을 거듭해도 살아 있는 행과 유예 안의 행만 남는다.")
+  void refresh_cleansStaleRows() {
+    long userId = aUser().insert(jdbcTemplate);
+    AuthToken token = firstLogin(userId);
+
+    jdbcTemplate.update(
+        "UPDATE refresh_token SET rotated_at = DATE_SUB(UTC_TIMESTAMP(6), INTERVAL 1 HOUR)"
+            + " WHERE user_id = ?",
+        userId);
+    authService.createTokens(userId);
+    AuthToken fresh = authService.createTokens(userId);
+    authService.refresh(fresh.refreshToken());
+
+    assertThat(rows(userId)).isLessThanOrEqualTo(3);
+    cleanUp(userId);
+  }
+
+  /**
+   * <b>리뷰 3 — 탈퇴 회원은 재발급받지 못한다.</b>
+   *
+   * <p>탈퇴는 {@code withdrawn_at} 을 찍는 소프트 삭제라 <b>행이 그대로 남는다.</b> 존재 여부만 보면 3개월 전에 탈퇴한 계정이 14일짜리 새 쌍을
+   * 계속 받는다 — 실측했다.
+   */
+  @Test
+  @DisplayName("탈퇴한 회원의 리프레시 토큰으로는 재발급되지 않는다.")
+  void refresh_withdrawnUser() {
+    long userId = aUser().insert(jdbcTemplate);
+    AuthToken token = firstLogin(userId);
+    jdbcTemplate.update(
+        "UPDATE user SET status = 'WITHDRAWN', withdrawn_at = UTC_TIMESTAMP(6) WHERE id = ?",
+        userId);
+
+    assertThatThrownBy(() -> authService.refresh(token.refreshToken()))
+        .isInstanceOf(BusinessException.class)
+        .hasFieldOrPropertyWithValue("errorCode", AuthErrorCode.AUTH_REFRESH_TOKEN_INVALID);
+    cleanUp(userId);
+  }
+
+  @Test
+  @DisplayName("탈퇴한 회원에게는 토큰을 발급하지 않는다.")
+  void createTokens_withdrawnUser() {
+    long userId = aUser().status(SignupStatus.WITHDRAWN).insert(jdbcTemplate);
+
+    assertThatThrownBy(() -> authService.createTokens(userId))
+        .isInstanceOf(BusinessException.class)
+        .hasFieldOrPropertyWithValue("errorCode", UserErrorCode.USER_NOT_FOUND);
+    cleanUp(userId);
+  }
+
+  /**
    * 최초 로그인이 하는 일이다.
    *
    * <p>실제 진입점은 카카오 로그인(AU-01)이고 E 티켓의 몫이지만, 발급 자체는 이 티켓의 AU-02 라 서비스의 공개 메서드를 그대로 부른다. 여기서 베껴 쓰면
@@ -322,6 +441,31 @@ class AuthServiceTest {
    */
   private AuthToken firstLogin(long userId) {
     return authService.createTokens(userId);
+  }
+
+  /**
+   * 회전 시각을 유예 밖으로 늙힌다.
+   *
+   * <p><b>즉시 재사용은 이제 이중 제출로 취급된다</b> (V13). 탈취를 모델링하는 테스트는 「회전과 재사용 사이에 시간이 흘렀다」는 조건을 만들어야 한다 — 실제
+   * 탈취가 늘 그렇다. 그러지 않으면 폐기가 일어나지 않아 검증이 통과할 수 없다.
+   */
+  private void agePastGrace(long userId) {
+    jdbcTemplate.update(
+        "UPDATE refresh_token SET rotated_at = DATE_SUB(UTC_TIMESTAMP(6), INTERVAL 1 HOUR)"
+            + " WHERE user_id = ? AND rotated_at IS NOT NULL",
+        userId);
+  }
+
+  private LocalDateTime rotatedAtOf(String rawRefreshToken) {
+    return jdbcTemplate.queryForObject(
+        "SELECT rotated_at FROM refresh_token WHERE token_hash = ?",
+        LocalDateTime.class,
+        RefreshToken.hash(rawRefreshToken));
+  }
+
+  private int rows(long userId) {
+    return jdbcTemplate.queryForObject(
+        "SELECT COUNT(*) FROM refresh_token WHERE user_id = ?", Integer.class, userId);
   }
 
   private LocalDateTime invalidatedAt(long userId) {

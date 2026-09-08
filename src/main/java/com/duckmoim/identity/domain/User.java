@@ -110,6 +110,19 @@ public class User extends BaseEntity {
   }
 
   /**
+   * 탈퇴한 계정인지.
+   *
+   * <p><b>탈퇴는 소프트 삭제다</b> — {@code withdrawn_at} 을 찍고 행은 남긴다 (V10). 탈퇴한 사람이 쓴 댓글·모집글이 「탈퇴한 회원」으로
+   * 표시돼야 하므로 행을 지울 수 없다. 그래서 <b>행이 있는지로는 탈퇴를 판별할 수 없다.</b>
+   *
+   * <p>판정을 {@code status} 로 한다. {@code withdrawn_at} 은 시각의 기록이고, 「가입 축의 상태」는 이 값이 정본이다 (도메인 6장).
+   * {@link #isSignupCompleted} 도 같은 필드를 본다 — 둘이 다른 필드를 보면 한쪽만 갱신됐을 때 갈라진다.
+   */
+  public boolean isWithdrawn() {
+    return status == SignupStatus.WITHDRAWN;
+  }
+
+  /**
    * 가입 정보를 마쳤는지 (AU-05).
    *
    * <p>재발급이 새 Access 토큰에 이 값을 다시 찍는다. Refresh 토큰에 담아 두면 가입을 마친 사용자가 14일 동안 낡은 {@code false} 를

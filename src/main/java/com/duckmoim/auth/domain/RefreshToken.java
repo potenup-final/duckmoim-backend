@@ -10,6 +10,7 @@ import jakarta.persistence.Table;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.HexFormat;
 import lombok.AccessLevel;
@@ -37,6 +38,16 @@ public class RefreshToken extends BaseEntity {
 
   private static final String ALGORITHM = "SHA-256";
 
+  /**
+   * 회전된 토큰을 <b>이중 제출로 봐주는 폭</b> (AU-03).
+   *
+   * <p>같은 Refresh 가 이 안에 다시 오면 재사용이 아니라 「내 다른 탭이 방금 돌렸다」로 본다. 서버가 둘을 구분할 수 있는 신호는 <b>시간 근접성</b>뿐이다
+   * — 이중 제출은 밀리초 간격이고 탈취는 분·시간 뒤다.
+   *
+   * <p>대가는 이 폭 안에서 벌어진 진짜 탈취의 재사용을 놓치는 것이다. 폭을 넓히면 그 창이 커지고, 좁히면 느린 네트워크의 이중 제출이 전체 로그아웃이 된다.
+   */
+  public static final Duration ROTATION_GRACE = Duration.ofSeconds(5);
+
   @Id
   @GeneratedValue(strategy = GenerationType.IDENTITY)
   private Long id;
@@ -55,6 +66,15 @@ public class RefreshToken extends BaseEntity {
    */
   @Column(name = "expires_at", nullable = false)
   private LocalDateTime expiresAt;
+
+  /**
+   * 회전된 시각. {@code null} 이면 아직 살아 있는 토큰이다 (V13).
+   *
+   * <p><b>회전은 행을 지우지 않고 이 값을 찍는다.</b> 지우면 「방금 회전됐다」와 「오래 전에 죽었다」를 구분할 수 없고, 그 구분이 없으면 이중 제출이 재사용으로
+   * 오인된다. 유예를 넘긴 행은 다음 회전이 함께 지운다 — 별도 정리 배치가 없다.
+   */
+  @Column(name = "rotated_at")
+  private LocalDateTime rotatedAt;
 
   private RefreshToken(Long userId, String tokenHash, LocalDateTime expiresAt) {
     this.userId = userId;

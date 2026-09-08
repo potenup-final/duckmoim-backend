@@ -71,12 +71,11 @@ public class AuthService {
   /**
    * Refresh 토큰을 회전해 새 토큰 쌍을 준다 (AU-03).
    *
-   * <p><b>회전과 재사용 판정을 {@code DELETE} 한 번이 가른다.</b> 「읽어서 있으면 지운다」로 짜면 같은 토큰으로 동시에 두 요청이 들어올 때 둘 다 존재
-   * 검사를 지나고 진 쪽이 {@code StaleStateException} → 500 이 된다 — 탭 둘이 동시에 재발급하는 흔한 상황이다. 영향 행 수가 1인 요청만
-   * 회전을 진행하고 0을 받은 쪽은 재사용으로 판정한다.
-   *
    * <p><b>회원 행을 가장 먼저 잠근다.</b> 회전과 폐기가 모두 {@code refresh_token} 과 {@code user} 를 건드려서, 락 순서가 경로마다
    * 다르면 같은 토큰으로 동시에 재발급할 때 데드락이 난다 — CI 에서 {@code CannotAcquireLockException} 을 실측했다.
+   *
+   * <p><b>회전은 지우기가 아니라 표시하기다.</b> {@code markRotated} 의 영향 행 수가 1인 요청만 승자다. 0을 받은 쪽은 곧바로 재사용이 아니다 —
+   * <b>유예 안에 회전된 것이면 「내 다른 탭이 방금 돌렸다」</b>로 보고 폐기 없이 401 만 낸다. 클라이언트는 저장소에서 갱신된 토큰을 읽어 재시도한다.
    *
    * <p><b>{@code noRollbackFor} 가 없으면 반대로 돈다.</b> 재사용을 탐지하면 「해당 유저 전체 폐기」를 하고 401 을 던지는데, 기본 설정이면
    * {@code RuntimeException} 에 트랜잭션이 되돌아가 <b>폐기가 취소된다.</b> 응답은 양쪽 다 401 이라 겉으로 구분되지 않는데, 실제로는 훔친 쪽만
@@ -85,22 +84,45 @@ public class AuthService {
   @Transactional(noRollbackFor = BusinessException.class)
   public AuthToken refresh(String rawRefreshToken) {
     LocalDateTime now = now();
+    LocalDateTime graceFrom = now.minus(RefreshToken.ROTATION_GRACE);
     RefreshTokenClaims claims = tokenProvider.readRefreshToken(rawRefreshToken);
+    String tokenHash = RefreshToken.hash(rawRefreshToken);
 
     User user = lockUser(claims.userId(), AuthErrorCode.AUTH_REFRESH_TOKEN_INVALID);
 
-    int rotated =
-        refreshTokenRepository.deleteByTokenHashAndUserId(
-            RefreshToken.hash(rawRefreshToken), user.getId());
-
-    if (rotated == 0) {
-      invalidateAllTokensOnce(user, claims.issuedAt(), now);
-      throw new BusinessException(AuthErrorCode.AUTH_REFRESH_TOKEN_INVALID);
+    if (refreshTokenRepository.markRotated(tokenHash, user.getId(), now) == 0) {
+      rejectRotated(user, tokenHash, claims.issuedAt(), graceFrom, now);
     }
 
+    refreshTokenRepository.deleteStale(user.getId(), graceFrom, now);
     user.updateLastSeenAt(now);
 
     return createTokens(user, now);
+  }
+
+  /**
+   * 회전에 진 요청을 거절한다. <b>이중 제출과 재사용을 여기서 가른다.</b>
+   *
+   * <p>유예 안에 회전된 토큰이면 정상 사용자의 두 번째 요청이다 — <b>폐기하지 않는다.</b> 폐기하면 이긴 쪽이 방금 받은 세션까지 끊겨, 사용자에게는 「재발급 성공
+   * 직후 원인 없이 튕김」으로 보인다. 훔친 토큰이 없어도 재현되는 일이라 실측으로 확인했다.
+   *
+   * <p>유예를 넘겼거나 행이 이미 사라졌으면 재사용이다. 그때는 그 회원의 로그인 상태를 통째로 끊는다.
+   */
+  private void rejectRotated(
+      User user,
+      String tokenHash,
+      LocalDateTime refreshIssuedAt,
+      LocalDateTime graceFrom,
+      LocalDateTime now) {
+
+    boolean doubleSubmit =
+        refreshTokenRepository.countRotatedSince(tokenHash, user.getId(), graceFrom) > 0;
+
+    if (!doubleSubmit) {
+      invalidateAllTokensOnce(user, refreshIssuedAt, now);
+    }
+
+    throw new BusinessException(AuthErrorCode.AUTH_REFRESH_TOKEN_INVALID);
   }
 
   /**
@@ -168,12 +190,16 @@ public class AuthService {
   /**
    * 회원 행을 <b>잠그고</b> 읽는다. 없을 때의 에러 코드는 부르는 쪽이 정한다.
    *
+   * <p><b>탈퇴한 회원은 없는 회원으로 본다.</b> 탈퇴가 소프트 삭제라 행이 남으므로 존재 여부만 보면 탈퇴 계정이 14일짜리 새 쌍을 계속 받는다 — 실측했다.
+   * 위키도 {@code USER_NOT_FOUND} 를 「탈퇴 포함」으로 정의했다.
+   *
    * <p>재발급 경로에서는 「다시 로그인」({@code AUTH_REFRESH_TOKEN_INVALID}) 이지만, 로그인 경로에는 Refresh 토큰이 애초에 없어서 그
    * 코드가 거짓이 된다. 카카오 로그인(E)이 {@link #createTokens} 를 부르는 자리가 그렇다.
    */
   private User lockUser(Long userId, ErrorCode notFound) {
     return userRepository
         .findByIdForUpdate(userId)
+        .filter(found -> !found.isWithdrawn())
         .orElseThrow(() -> new BusinessException(notFound));
   }
 

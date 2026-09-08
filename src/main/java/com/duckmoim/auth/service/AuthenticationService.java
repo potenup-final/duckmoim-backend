@@ -33,7 +33,11 @@ public class AuthenticationService {
    * <p><b>무효화된 토큰에 {@code AUTH_ACCESS_TOKEN_EXPIRED} 를 쓰지 않는다.</b> 그 코드는 「재발급해 주세요」라는 뜻인데, 무효화된 회원은
    * Refresh 행도 함께 지워져 재발급이 반드시 실패한다. 「로그인이 필요합니다」로 보내야 한 번에 끝난다.
    *
-   * <p><b>탈퇴·삭제된 회원도 여기서 걸린다.</b> 토큰은 살아 있는데 행이 없는 경우다.
+   * <p><b>탈퇴한 회원도 여기서 걸린다 — 행이 없어서가 아니다.</b> 탈퇴는 {@code withdrawn_at} 을 찍는 소프트 삭제라 행이 그대로 남으므로
+   * (V10) 존재 여부만 보면 <b>탈퇴 계정의 토큰이 계속 통과한다</b> — 실측했다. {@code isWithdrawn} 을 함께 본다.
+   *
+   * <p>위키가 {@code USER_NOT_FOUND} 를 「탈퇴 포함」으로 정의해 둔 것과 같은 취급이다 (API-설계.md 「에러 코드」) — <b>탈퇴한 회원은 없는
+   * 회원으로 본다.</b> 다만 관문은 존재 여부를 알려주지 않으므로 401 로 끊는다.
    *
    * <p><b>토큰은 한 번만 파싱한다.</b> 인증 주체와 발급 시각을 따로 읽으면 그 사이에 만료가 걸려, 뒤 파싱만 {@code ExpiredJwtException} 이
    * 나면서 「재발급하라」가 「다시 로그인하라」로 바뀐다.
@@ -45,6 +49,7 @@ public class AuthenticationService {
     User user =
         userRepository
             .findById(claims.authUser().userId())
+            .filter(found -> !found.isWithdrawn())
             .orElseThrow(() -> new BusinessException(AuthErrorCode.AUTH_ACCESS_TOKEN_INVALID));
 
     if (user.isTokenInvalidated(claims.issuedAt())) {
