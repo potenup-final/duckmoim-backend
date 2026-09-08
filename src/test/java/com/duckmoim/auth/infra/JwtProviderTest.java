@@ -128,6 +128,13 @@ class JwtProviderTest {
     assertThat(payloadOf(refreshToken)).doesNotContain("signupCompleted", "admin");
   }
 
+  /** {@code iat}·{@code exp} 가 초 단위라 임의값이 없으면 1초 안의 두 발급이 같은 토큰이 된다. */
+  @Test
+  @DisplayName("같은 회원에게 연달아 발급한 리프레시 토큰은 서로 다르다.")
+  void createRefreshToken_isUniquePerCall() {
+    assertThat(jwtProvider.createRefreshToken(7L)).isNotEqualTo(jwtProvider.createRefreshToken(7L));
+  }
+
   /** 반대 방향의 교차 사용이다. 액세스 토큰이 리프레시로 통하면 30분마다 갱신되는 열쇠가 재발급 창구를 연다. */
   @Test
   @DisplayName("액세스 토큰을 리프레시 토큰으로 읽으면 다시 로그인하라는 뜻으로 거절한다.")

@@ -13,6 +13,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Date;
+import java.util.UUID;
 import javax.crypto.SecretKey;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -77,12 +78,18 @@ public class JwtProvider implements TokenProvider {
     }
   }
 
+  /**
+   * <b>{@code jti} 가 없으면 안 된다.</b> 담기는 것이 {@code sub}·{@code tokenType}·{@code iat}·{@code exp} 뿐이고
+   * 뒤의 둘은 초 단위라, 같은 회원이 1초 안에 두 번 발급받으면 토큰이 바이트까지 같아진다. 그러면 {@code token_hash} 유니크 제약에 걸려 재발급이 500
+   * 이 된다 — 실측했다. 임의값 하나로 매 발급이 갈라진다.
+   */
   @Override
   public String createRefreshToken(Long userId) {
     Instant now = Instant.now();
 
     return Jwts.builder()
         .subject(String.valueOf(userId))
+        .id(UUID.randomUUID().toString())
         .claim(CLAIM_TOKEN_TYPE, REFRESH)
         .issuedAt(Date.from(now))
         .expiration(Date.from(now.plus(refreshTokenTtl)))
