@@ -28,6 +28,7 @@ import org.springframework.transaction.annotation.Transactional;
 class UserQueryServiceTest {
 
   @Autowired private UserQueryService userQueryService;
+  @Autowired private UserService userService;
   @Autowired private JdbcTemplate jdbcTemplate;
 
   @Test
@@ -105,6 +106,79 @@ class UserQueryServiceTest {
     long userId = aUser().status(SignupStatus.WITHDRAWN).insert(jdbcTemplate);
 
     assertThatThrownBy(() -> userQueryService.findMyProfile(userId))
+        .isInstanceOf(BusinessException.class)
+        .hasFieldOrPropertyWithValue("errorCode", UserErrorCode.USER_NOT_FOUND);
+  }
+
+  /** AU-09 의 노출 항목 넷과 {@code id}. 그 밖에는 아무것도 나가지 않는다. */
+  @Test
+  @DisplayName("남의 프로필을 읽으면 노출 항목 넷과 회원번호가 온다.")
+  void findPublicProfile() {
+    long userId =
+        aUser().nickname("공개된덕후").profile("생카 돌기 좋아해요", "/avatar/a1.webp").insert(jdbcTemplate);
+
+    PublicProfile profile = userQueryService.findPublicProfile(userId);
+
+    assertThat(profile.id()).isEqualTo(userId);
+    assertThat(profile.nickname()).isEqualTo("공개된덕후");
+    assertThat(profile.bio()).isEqualTo("생카 돌기 좋아해요");
+    assertThat(profile.profileImageUrl()).isEqualTo("/avatar/a1.webp");
+  }
+
+  /**
+   * <b>AU-08 의 검증 기준 그 자체 — 「수정 후 공개 프로필 반영」이다.</b>
+   *
+   * <p>수정만 만들면 이 앞 절반을 검증할 방법이 없고, 조회만 만들면 값이 바뀌는 경로가 가입 하나뿐이라 조회가 최신을 보는지 드러나지 않는다. 두 요구사항을 한 티켓에
+   * 담은 이유가 이 테스트다.
+   */
+  @Test
+  @DisplayName("프로필을 수정하면 공개 프로필에 반영된다.")
+  void findPublicProfile_reflectsUpdate() {
+    long userId = aUser().nickname("반영전덕후").profile("전 소개", null).insert(jdbcTemplate);
+    userService.updateProfile(new ProfileUpdateCommand(userId, "반영후덕후", "새 소개"));
+
+    PublicProfile profile = userQueryService.findPublicProfile(userId);
+
+    assertThat(profile.nickname()).isEqualTo("반영후덕후");
+    assertThat(profile.bio()).isEqualTo("새 소개");
+  }
+
+  @Test
+  @DisplayName("남의 프로필에도 마지막 접속은 구간 값으로 온다.")
+  void findPublicProfile_lastSeen() {
+    long userId =
+        aUser().lastSeenAt(LocalDateTime.now(ZoneOffset.UTC).minusDays(5)).insert(jdbcTemplate);
+
+    assertThat(userQueryService.findPublicProfile(userId).lastSeen())
+        .isEqualTo(LastSeen.WITHIN_WEEK);
+  }
+
+  /** 탈퇴는 소프트 삭제라 행이 남는다. API 컨벤션이 <i>"소프트 삭제된 리소스는 404로 취급한다"</i> 로 못박았다. */
+  @Test
+  @DisplayName("탈퇴한 회원의 공개 프로필은 읽을 수 없다.")
+  void findPublicProfile_withdrawn() {
+    long userId = aUser().status(SignupStatus.WITHDRAWN).insert(jdbcTemplate);
+
+    assertThatThrownBy(() -> userQueryService.findPublicProfile(userId))
+        .isInstanceOf(BusinessException.class)
+        .hasFieldOrPropertyWithValue("errorCode", UserErrorCode.USER_NOT_FOUND);
+  }
+
+  /** 닉네임이 {@code null} 이라 노출 항목 넷 중 하나가 빈다. <b>H(탈퇴)가 이 판정을 따른다.</b> */
+  @Test
+  @DisplayName("가입을 마치지 않은 회원의 공개 프로필은 읽을 수 없다.")
+  void findPublicProfile_signupIncomplete() {
+    long userId = aUser().status(SignupStatus.PENDING_SIGNUP_INFO).insert(jdbcTemplate);
+
+    assertThatThrownBy(() -> userQueryService.findPublicProfile(userId))
+        .isInstanceOf(BusinessException.class)
+        .hasFieldOrPropertyWithValue("errorCode", UserErrorCode.USER_NOT_FOUND);
+  }
+
+  @Test
+  @DisplayName("없는 회원번호로 공개 프로필을 읽으면 회원을 찾을 수 없다.")
+  void findPublicProfile_notFound() {
+    assertThatThrownBy(() -> userQueryService.findPublicProfile(9_999_999L))
         .isInstanceOf(BusinessException.class)
         .hasFieldOrPropertyWithValue("errorCode", UserErrorCode.USER_NOT_FOUND);
   }
