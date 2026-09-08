@@ -28,7 +28,7 @@ public final class CompanionPostFixture {
               UTC_TIMESTAMP(6), UTC_TIMESTAMP(6))
       """;
 
-  private final String title = "픽스처 모집글 " + SEQUENCE.incrementAndGet();
+  private String title = "픽스처 모집글 " + SEQUENCE.incrementAndGet();
   private long hostId = 1L;
   private Long eventId;
   private String eventTitle;
@@ -43,6 +43,15 @@ public final class CompanionPostFixture {
 
   public static CompanionPostFixture aCompanionPost() {
     return new CompanionPostFixture();
+  }
+
+  /**
+   * 제목을 고정한다. <b>내 댓글 내역이 이 표에서 읽는 유일한 값이라 검증에 필요하다</b> (CM-16). 주지 않으면 순번이 붙은 기본값이고, 어느 쪽이든 행을 되찾는
+   * 조건이 되므로 테스트 안에서 겹치지 않게 준다.
+   */
+  public CompanionPostFixture title(String title) {
+    this.title = title;
+    return this;
   }
 
   public CompanionPostFixture hostId(long hostId) {
