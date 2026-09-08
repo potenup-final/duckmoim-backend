@@ -230,9 +230,22 @@ Jira 정보는 `pr_body.py` 가 마커 사이에 자동으로 붙인다. 요구�
 | `.github/workflows/ci-cd.yml` · `gradlew` · `gradle/wrapper/**` | 물어봄. 배포와 CI 가 걸린다 |
 
 **위키를 고쳐야 하면** 별도 클론에서 한다 (`../duckmoim-wiki`). 여기서 포인터를
-올릴 필요는 없다 — 세션 시작 훅과 빌드가 매번 최신을 가져오고,
-`submodule.docs/wiki.ignore=all` 이 포인터 변화를 git 에서 떼어놨다. **위키 핀은
-관리 대상이 아니다.**
+올릴 필요는 없다 — 세션 시작 훅과 빌드가 매번 최신을 가져온다. **위키 핀은 관리
+대상이 아니다.**
+
+핀이 커밋에 실리지 않게 하는 것은 **`.gitmodules` 의 `ignore = all`** 이다.
+같은 설정이라도 **로컬 config 에 있으면 안 막힌다** — `git status` 만 조용해지고
+`git add -A` 는 그대로 핀을 집어 간다. 작업 트리가 깨끗해 보이는데 커밋에 핀이
+실리는 상태였고, 그렇게 실린 핀이 `develop` 에 다섯 개 있다 (STAR-76).
+
+| 설정 위치 | `git status` | `git add -A` |
+|---|---|---|
+| 없음 | `M docs/wiki` | 핀 실림 |
+| 로컬 config | 깨끗 | **핀 실림** |
+| `.gitmodules` | 깨끗 | 안 실림 |
+
+`SubmodulePinTest` 가 그 한 줄을 지킨다. `configureWikiIgnore` 태스크가 심는
+로컬 config 는 이제 중복이고, git 판본이 다를 때를 위해 남겨 둔 것이다.
 
 ## 데이터베이스
 
@@ -262,18 +275,29 @@ MySQL · JPA · Flyway · Testcontainers. `#12`(STAR-29) 로 들어왔고 `#26` 
 체크섬이 깨진다. 대역은 위키 `docs/wiki/03-운영-인프라/DB-마이그레이션-규칙.md` 가
 정본이다.
 
-| 영역 | 대역 | 쓰고 있는 것 |
-|---|---|---|
-| Catalog | `V1`~`V9` | `V1`~`V4`. 다음은 `V5` |
-| Identity / Auth | `V10`~`V19` | `V10`·`V11` |
-| Companion / Post | `V20`~`V29` | `V20`·`V21` |
-| Comment / Safety | `V30`~`V39` | `V30`·`V31` |
+| 영역 | 대역 |
+|---|---|
+| Catalog | `V1`~`V9` |
+| Identity / Auth | `V10`~`V19` |
+| Companion / Post | `V20`~`V29` |
+| Comment / Safety | `V30`~`V39` |
 
 **대역은 사람이 아니라 영역에 붙는다.** 담당자가 바뀌어도 표는 그대로다. 한 담당이
-대역 둘을 쥘 수 있다 — 행사는 `V5~`, 모집글은 `V20~` 이 그 경우다.
+대역 둘을 쥘 수 있다 — 행사는 `V5~`, 모집글은 `V20~` 이 그 경우다. 백오피스는
+Comment / Safety 대역을 쓴다 — `V30`·`V31` 이 `admin_accounts` 다.
 
-번호를 고르기 전에 위 명령으로 실제 파일을 본다. 이 표보다 디렉터리가 정확하다.
+**대역 안에서 어디까지 썼는지는 여기 적지 않는다.** 매 티켓마다 바뀌는 값이라
+적는 순간 낡고, 위키와 여기 두 벌이 되면 반드시 갈라진다 — 실제로 갈라져 있었다
+(STAR-79 때 이 표는 `V31` 까지인데 디렉터리에는 `V35` 까지 있었다). 다음 번호는
+아래 둘로 정한다.
 
 ```bash
-ls src/main/resources/db/migration/ | sort -V
+ls src/main/resources/db/migration/ | sort -V   # 머지된 것
+gh pr list --json number,files                  # 리뷰 중이라 디렉터리에 없는 것
 ```
+
+**열려 있는 PR 을 반드시 함께 본다.** 리뷰 중인 번호는 `develop` 에도 디렉터리에도
+없어서 어디를 봐도 안 보이고, 그 번호를 다시 고르면 머지에서 부딪힌다.
+
+번호를 새로 쓰면 **위키의 대역 표를 같은 티켓에서 함께 고친다.** 그 문서가 정한
+운용 방식이고, 지금까지 유일하게 작동한 방법이다.

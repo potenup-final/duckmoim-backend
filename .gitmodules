@@ -1,3 +1,4 @@
 [submodule "docs/wiki"]
 	path = docs/wiki
 	url = https://github.com/potenup-final/duckmoim-wiki.git
+	ignore = all
