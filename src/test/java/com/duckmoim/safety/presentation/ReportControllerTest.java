@@ -134,7 +134,7 @@ class ReportControllerTest {
 
   private HttpHeaders bearer() {
     HttpHeaders headers = new HttpHeaders();
-    headers.setBearerAuth(tokenProvider.issueAccessToken(new AuthUser(REPORTER_ID, true, false)));
+    headers.setBearerAuth(tokenProvider.createAccessToken(new AuthUser(REPORTER_ID, true, false)));
     return headers;
   }
 }

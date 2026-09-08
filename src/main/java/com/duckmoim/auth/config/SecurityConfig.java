@@ -3,10 +3,10 @@ package com.duckmoim.auth.config;
 import static com.duckmoim.auth.presentation.AuthAuthority.ADMIN;
 import static com.duckmoim.auth.presentation.AuthAuthority.SIGNUP;
 
-import com.duckmoim.auth.domain.TokenProvider;
 import com.duckmoim.auth.presentation.AuthenticationFilter;
 import com.duckmoim.auth.presentation.RestAccessDeniedHandler;
 import com.duckmoim.auth.presentation.RestAuthenticationEntryPoint;
+import com.duckmoim.auth.service.AuthenticationService;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
@@ -56,7 +56,7 @@ public class SecurityConfig {
   @Bean
   public SecurityFilterChain securityFilterChain(
       HttpSecurity http,
-      TokenProvider tokenProvider,
+      AuthenticationService authenticationService,
       RestAuthenticationEntryPoint authenticationEntryPoint,
       RestAccessDeniedHandler accessDeniedHandler)
       throws Exception {
@@ -94,7 +94,8 @@ public class SecurityConfig {
                     .authenticationEntryPoint(authenticationEntryPoint)
                     .accessDeniedHandler(accessDeniedHandler))
         .addFilterBefore(
-            new AuthenticationFilter(tokenProvider), UsernamePasswordAuthenticationFilter.class)
+            new AuthenticationFilter(authenticationService),
+            UsernamePasswordAuthenticationFilter.class)
         .build();
   }
 }

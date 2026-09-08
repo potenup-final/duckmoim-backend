@@ -139,7 +139,7 @@ class MyCommentControllerTest {
 
   private HttpHeaders bearer(long userId) {
     HttpHeaders headers = new HttpHeaders();
-    headers.setBearerAuth(tokenProvider.issueAccessToken(new AuthUser(userId, true, false)));
+    headers.setBearerAuth(tokenProvider.createAccessToken(new AuthUser(userId, true, false)));
     return headers;
   }
 }

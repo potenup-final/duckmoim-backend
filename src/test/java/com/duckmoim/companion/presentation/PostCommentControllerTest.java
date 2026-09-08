@@ -147,7 +147,7 @@ class PostCommentControllerTest {
   /** 진짜 토큰을 발급해 붙인다. {@link ImportSecurity} 가 JwtProvider 까지 가져오므로 슬라이스에서도 된다. */
   private HttpHeaders bearer() {
     HttpHeaders headers = new HttpHeaders();
-    headers.setBearerAuth(tokenProvider.issueAccessToken(REQUESTER));
+    headers.setBearerAuth(tokenProvider.createAccessToken(REQUESTER));
     return headers;
   }
 }

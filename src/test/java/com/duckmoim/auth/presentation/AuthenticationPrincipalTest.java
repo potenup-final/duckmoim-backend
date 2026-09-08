@@ -92,7 +92,7 @@ class AuthenticationPrincipalTest {
 
   private HttpHeaders bearer(AuthUser authUser) {
     HttpHeaders headers = new HttpHeaders();
-    headers.setBearerAuth(tokenProvider.issueAccessToken(authUser));
+    headers.setBearerAuth(tokenProvider.createAccessToken(authUser));
     return headers;
   }
 }

@@ -144,7 +144,7 @@ class CommentControllerTest {
 
   private HttpHeaders bearer() {
     HttpHeaders headers = new HttpHeaders();
-    headers.setBearerAuth(tokenProvider.issueAccessToken(new AuthUser(REQUESTER_ID, true, false)));
+    headers.setBearerAuth(tokenProvider.createAccessToken(new AuthUser(REQUESTER_ID, true, false)));
     return headers;
   }
 }
