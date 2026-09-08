@@ -66,6 +66,20 @@ tasks.named('test') {
 	exclude '**/architecture/fixture/**'
 	// 산출물 생성이라 요구사항 검증 목록에서 뺀다. 아래 apiSpec 태스크가 따로 돌린다.
 	exclude '**/OpenApiSpecWriter.class'
+
+	// SubmodulePinTest 가 .gitmodules 를 읽는다. Gradle 은 소스와 클래스패스만 입력으로
+	// 보므로, 이 선언이 없으면 .gitmodules 만 고쳤을 때 test 가 UP-TO-DATE 로 건너뛴다.
+	// 그러면 `ignore = all` 한 줄을 지우고 check 를 돌려도 초록불이 나온다 — 실측했다.
+	// 지키라고 만든 검사가 정작 그 줄이 사라진 순간에만 안 도는 셈이라 입력으로 건다.
+	//
+	// file 이 아니라 files 다. inputs.file(...).optional(true) 는 "값이 비어도 된다" 는
+	// 뜻이지 "파일이 없어도 된다" 가 아니라서, .gitmodules 가 없으면 태스크 설정 단계에서
+	// `Input file does not exist` 로 빌드가 통째로 깨진다 — 실측했다. 서브모듈을 선언하지
+	// 않은 트리(하네스 머지 전에 갈라진 브랜치)가 실재하므로 그 트리를 깨면 안 된다.
+	// 파일 컬렉션은 없는 파일을 그냥 빈 것으로 보고, 그때는 검사도 스스로 건너뛴다.
+	inputs.files('.gitmodules')
+			.withPathSensitivity(PathSensitivity.RELATIVE)
+			.withPropertyName('gitmodules')
 }
 
 // API 문서용 스펙 추출. 컨텍스트가 떠야 스펙이 나오고, 그 컨텍스트를 띄우는 수단이
@@ -151,8 +165,13 @@ tasks.register('installGitHooks', Exec) {
 //
 // ① submodule.docs/wiki.ignore=all — 위키는 빌드하는 의존성이 아니라 읽는 문서라
 //    커밋에 고정할 이유가 없고, 최신으로 당겨오면 status 가 `M docs/wiki` 로 계속
-//    더러워진다. 방치하면 팀원이 "이건 커밋해야 하나" 를 매번 판단하게 되고
-//    `git add -A` 에 옛 핀이 섞인다.
+//    더러워진다. 방치하면 팀원이 "이건 커밋해야 하나" 를 매번 판단하게 된다.
+//
+//    **이 태스크가 핀을 커밋에서 막지는 못한다.** 로컬 config 의 ignore 는 status·
+//    diff 표시만 바꾸고 `git add -A` 는 그대로 핀을 집어 간다 — 실측했고, 그렇게
+//    실린 핀이 develop 에 다섯 개 있다 (STAR-76). 막는 것은 .gitmodules 의 같은
+//    설정이고 SubmodulePinTest 가 그 한 줄을 지킨다. 여기 남은 것은 중복이다.
+//    지우지 않은 이유는 대조를 git 2.54.0 한 판본에서만 했기 때문이다.
 tasks.register('configureWikiIgnore', Exec) {
 	description = 'git 이 위키 서브모듈 포인터를 건드리지 않도록 설정한다'
 	group = 'build setup'
@@ -185,8 +204,8 @@ tasks.register('configureWikiGit', Exec) {
 //
 // --remote 를 조건 없이 돌리는 것이 예전에는 위험했다. 포인터를 올리려고 실행한
 // --remote 를 되돌렸기 때문이다. 지금은 방향이 반대다 — 항상 최신을 가져오므로
-// 되돌릴 핀이라는 개념 자체가 없고, configureWikiIgnore 가 그 변화를 커밋에서
-// 떼어낸다.
+// 되돌릴 핀이라는 개념 자체가 없고, .gitmodules 의 ignore=all 이 그 변화를 커밋에서
+// 떼어낸다 (configureWikiIgnore 가 아니다 — ① 참고).
 //
 // 위키는 PRIVATE 이라 접근 권한이 없으면 실패한다. 그때 조용히 넘기지 않는다 —
 // 빌드는 통과하는데 에이전트가 스펙을 못 읽는 상태가 가장 나쁘다.

@@ -230,9 +230,22 @@ Jira 정보는 `pr_body.py` 가 마커 사이에 자동으로 붙인다. 요구�
 | `.github/workflows/ci-cd.yml` · `gradlew` · `gradle/wrapper/**` | 물어봄. 배포와 CI 가 걸린다 |
 
 **위키를 고쳐야 하면** 별도 클론에서 한다 (`../duckmoim-wiki`). 여기서 포인터를
-올릴 필요는 없다 — 세션 시작 훅과 빌드가 매번 최신을 가져오고,
-`submodule.docs/wiki.ignore=all` 이 포인터 변화를 git 에서 떼어놨다. **위키 핀은
-관리 대상이 아니다.**
+올릴 필요는 없다 — 세션 시작 훅과 빌드가 매번 최신을 가져온다. **위키 핀은 관리
+대상이 아니다.**
+
+핀이 커밋에 실리지 않게 하는 것은 **`.gitmodules` 의 `ignore = all`** 이다.
+같은 설정이라도 **로컬 config 에 있으면 안 막힌다** — `git status` 만 조용해지고
+`git add -A` 는 그대로 핀을 집어 간다. 작업 트리가 깨끗해 보이는데 커밋에 핀이
+실리는 상태였고, 그렇게 실린 핀이 `develop` 에 다섯 개 있다 (STAR-76).
+
+| 설정 위치 | `git status` | `git add -A` |
+|---|---|---|
+| 없음 | `M docs/wiki` | 핀 실림 |
+| 로컬 config | 깨끗 | **핀 실림** |
+| `.gitmodules` | 깨끗 | 안 실림 |
+
+`SubmodulePinTest` 가 그 한 줄을 지킨다. `configureWikiIgnore` 태스크가 심는
+로컬 config 는 이제 중복이고, git 판본이 다를 때를 위해 남겨 둔 것이다.
 
 ## 데이터베이스
 
