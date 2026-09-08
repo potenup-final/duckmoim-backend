@@ -32,8 +32,8 @@ CREATE TABLE refresh_token
 
     PRIMARY KEY (id),
 
-    -- 같은 토큰이 두 행으로 존재할 수 없다. AU-03 회전은 「지우고 새로 넣기」이고, 지우는
-    -- 쪽의 영향 행 수가 동시 재발급의 승자를 가른다.
+    -- 같은 토큰이 두 행으로 존재할 수 없다. AU-03 회전의 승자는 「아직 회전되지 않은 행」을
+    -- 잡는 단일 UPDATE 의 영향 행 수가 가른다 — 그 표시 컬럼은 V13 이 넣는다.
     CONSTRAINT uk_refresh_token_token_hash UNIQUE (token_hash)
 ) DEFAULT CHARSET = utf8mb4
   COLLATE = utf8mb4_0900_ai_ci;
