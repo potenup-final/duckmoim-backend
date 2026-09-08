@@ -11,5 +11,8 @@ import java.util.List;
  *
  * @param roots 루트 댓글. 각자 자기 대댓글을 안에 달고 있다
  * @param nextCursor 마지막 페이지면 null 이다
+ * @param hostId 이 모집글의 방장. <b>본문 열람 판정의 입력이라 함께 올린다</b> — 방장은 남의 비밀 댓글을 볼 수 있는 유일한 일반 유저다
+ *     (도메인-모델링.md 「7.1 가시성과 권한」). 없으면 presentation 이 모집글을 다시 읽어야 한다
  */
-public record CommentSlice(List<CommentView> roots, CommentCursor nextCursor, boolean hasNext) {}
+public record CommentSlice(
+    List<CommentView> roots, CommentCursor nextCursor, boolean hasNext, Long hostId) {}

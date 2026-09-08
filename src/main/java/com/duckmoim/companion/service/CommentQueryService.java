@@ -5,6 +5,7 @@ import com.duckmoim.companion.domain.Comment;
 import com.duckmoim.companion.domain.CommentCursor;
 import com.duckmoim.companion.domain.CommentListQuery;
 import com.duckmoim.companion.domain.CommentStatus;
+import com.duckmoim.companion.domain.CompanionPost;
 import com.duckmoim.companion.exception.PostErrorCode;
 import com.duckmoim.companion.infra.AuthoredComment;
 import com.duckmoim.companion.infra.CommentRepository;
@@ -40,20 +41,21 @@ public class CommentQueryService {
    */
   @Transactional(readOnly = true)
   public CommentSlice findComments(CommentListQuery query) {
-    requirePost(query.postId());
+    CompanionPost post = requirePost(query.postId());
 
     List<AuthoredComment> read = commentRepository.findRootSlice(query);
     boolean hasNext = read.size() > query.size();
     List<AuthoredComment> roots = hasNext ? read.subList(0, query.size()) : read;
 
     return new CommentSlice(
-        withReplies(query.postId(), roots), nextCursor(roots, hasNext), hasNext);
+        withReplies(query.postId(), roots), nextCursor(roots, hasNext), hasNext, post.getHostId());
   }
 
-  private void requirePost(Long postId) {
-    if (!companionPostRepository.existsById(postId)) {
-      throw new BusinessException(PostErrorCode.POST_NOT_FOUND);
-    }
+  /** 방장이 누구인지가 본문 열람 판정의 입력이라 존재 확인만으로 끝나지 않는다 (도메인 7.1). */
+  private CompanionPost requirePost(Long postId) {
+    return companionPostRepository
+        .findById(postId)
+        .orElseThrow(() -> new BusinessException(PostErrorCode.POST_NOT_FOUND));
   }
 
   private List<CommentView> withReplies(Long postId, List<AuthoredComment> roots) {

@@ -1,11 +1,13 @@
 package com.duckmoim.companion.presentation;
 
+import com.duckmoim.companion.domain.CommentAvailableAction;
 import com.duckmoim.companion.domain.CommentStatus;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.util.List;
 
 /**
  * 조회 경로가 내려주는 댓글 한 건 (API-설계.md 「2-5. 댓글 (Companion)」).
@@ -22,6 +24,8 @@ import java.time.ZoneOffset;
  *
  * @param content 열람 권한이 없으면 <b>키째 빠진다.</b> {@code status} 가 ACTIVE 가 아닐 때도 마찬가지다 (CM-08 · CM-11)
  * @param createdAt 저장은 UTC 이고 응답은 KST 오프셋을 포함한다 (API-컨벤션.md 「필드 표기 규칙」)
+ * @param availableActions 이 요청자가 이 댓글에 할 수 있는 것 (CM-18). 서버가 채운다
+ * @param replies 대댓글. 루트가 아니면 언제나 비어 있다 — 깊이가 1단계로 고정이다 (I-06)
  */
 public record CommentItemResponse(
     Long id,
@@ -30,7 +34,9 @@ public record CommentItemResponse(
     CommentStatus status,
     @JsonInclude(JsonInclude.Include.NON_NULL) String content,
     OffsetDateTime createdAt,
-    CommentAuthorResponse author) {
+    CommentAuthorResponse author,
+    List<CommentAvailableAction> availableActions,
+    List<CommentItemResponse> replies) {
 
   private static final ZoneId KST = ZoneId.of("Asia/Seoul");
 

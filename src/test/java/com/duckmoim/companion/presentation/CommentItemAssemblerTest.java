@@ -5,10 +5,12 @@ import static com.duckmoim.companion.CompanionPostFixture.aCompanionPost;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.duckmoim.companion.domain.Comment;
+import com.duckmoim.companion.domain.CommentActionPolicy;
 import com.duckmoim.companion.domain.CommentReadContext;
 import com.duckmoim.companion.domain.CommentStatus;
 import com.duckmoim.companion.domain.CommentVisibilityPolicy;
 import com.duckmoim.companion.infra.CommentRepository;
+import com.duckmoim.identity.domain.LastSeen;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -39,10 +41,10 @@ class CommentItemAssemblerTest {
   private static final long STRANGER_ID = 14L;
 
   private static final CommentAuthorResponse AUTHOR_BLOCK =
-      new CommentAuthorResponse(AUTHOR_ID, "밤샘예매", "/avatar/a2.webp");
+      new CommentAuthorResponse(AUTHOR_ID, "밤샘예매", "/avatar/a2.webp", LastSeen.WITHIN_WEEK);
 
   private final CommentItemAssembler assembler =
-      new CommentItemAssembler(new CommentVisibilityPolicy());
+      new CommentItemAssembler(new CommentVisibilityPolicy(), new CommentActionPolicy());
 
   @Autowired private CommentRepository commentRepository;
   @Autowired private JdbcTemplate jdbc;
