@@ -45,6 +45,11 @@ duckmoim:
   jwt:
     secret: ${JWT_SECRET}
 
+  # 개발용 키로 뜨면 누구나 가짜 행사를 밀어 넣을 수 있다. 수집 원칙 6번
+  # (「출처를 속이지 않는다」)이 무의미해지므로 기동 실패가 낫다.
+  ingest:
+    key: ${INGEST_KEY}
+
   # localhost 기본값이 운영까지 따라오면 개발자 PC 에서 운영 API 를 부를 수 있다.
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS}
