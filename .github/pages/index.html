@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>덕모임 API 문서</title>
+    <!-- 버전은 올릴 때 확인한다. 저장소가 다른 의존성을 정확한 버전으로 박는 것과 같은 방식. -->
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.17.14/swagger-ui.css"
+    />
+    <style>
+      body { margin: 0; }
+    </style>
+  </head>
+  <body>
+    <div id="ui"></div>
+    <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.17.14/swagger-ui-bundle.js"></script>
+    <script>
+      // supportedSubmitMethods 를 비워 「Try it out」 을 없앤다. 정적 페이지라 부를 서버가
+      // 없고, 운영 주소를 넣으면 이 페이지 출처(github.io)를 CORS 에 열어야 한다.
+      // 읽기 전용 문서로 둔다.
+      window.ui = SwaggerUIBundle({
+        url: 'openapi.json',
+        dom_id: '#ui',
+        supportedSubmitMethods: [],
+        deepLinking: true,
+      });
+    </script>
+  </body>
+</html>

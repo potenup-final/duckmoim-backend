@@ -64,6 +64,27 @@ tasks.named('test') {
 	// 플랫폼에 넘기므로 이름 규칙이 걸리지 않는다. 컴파일은 그대로여서 ArchUnit 은
 	// 계속 읽는다.
 	exclude '**/architecture/fixture/**'
+	// 산출물 생성이라 요구사항 검증 목록에서 뺀다. 아래 apiSpec 태스크가 따로 돌린다.
+	exclude '**/OpenApiSpecWriter.class'
+}
+
+// API 문서용 스펙 추출. 컨텍스트가 떠야 스펙이 나오고, 그 컨텍스트를 띄우는 수단이
+// 테스트 쪽에만 있어서(Testcontainers) 같은 클래스패스를 빌려 쓴다. test 와 갈라 둔
+// 이유는 이게 검증이 아니라 파일 하나를 만드는 일이기 때문이다.
+tasks.register('apiSpec', Test) {
+	description = 'OpenAPI 스펙을 build/openapi/openapi.json 으로 뽑는다'
+	group = 'documentation'
+
+	useJUnitPlatform()
+	testClassesDirs = sourceSets.test.output.classesDirs
+	classpath = sourceSets.test.runtimeClasspath
+
+	systemProperty 'spring.datasource.url', 'jdbc:tc:mysql:8.4:///duckmoim'
+	systemProperty 'spring.datasource.driver-class-name', 'org.testcontainers.jdbc.ContainerDatabaseDriver'
+
+	filter {
+		includeTestsMatching 'com.duckmoim.common.config.OpenApiSpecWriter'
+	}
 }
 
 // 포맷을 부탁하지 않고 강제한다. 에이전트가 어떤 스타일로 써도 spotlessApply 한
