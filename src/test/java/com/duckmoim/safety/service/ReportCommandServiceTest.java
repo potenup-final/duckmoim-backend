@@ -7,16 +7,25 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.duckmoim.common.exception.BusinessException;
 import com.duckmoim.common.exception.ErrorCode;
+import com.duckmoim.companion.domain.CommentReadContext;
+import com.duckmoim.companion.domain.CommentReadTarget;
+import com.duckmoim.companion.domain.CommentVisibilityPolicy;
 import com.duckmoim.companion.exception.CommentErrorCode;
 import com.duckmoim.companion.exception.PostErrorCode;
+import com.duckmoim.companion.infra.CommentRepository;
+import com.duckmoim.companion.infra.CompanionPostRepository;
 import com.duckmoim.identity.exception.UserErrorCode;
 import com.duckmoim.safety.domain.ReportReason;
 import com.duckmoim.safety.domain.ReportStatus;
 import com.duckmoim.safety.domain.ReportTargetType;
 import com.duckmoim.safety.infra.ReportRepository;
+import java.util.Arrays;
+import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -43,6 +52,8 @@ class ReportCommandServiceTest {
 
   @Autowired private ReportCommandService reportCommandService;
   @Autowired private ReportRepository reportRepository;
+  @Autowired private CommentRepository commentRepository;
+  @Autowired private CompanionPostRepository companionPostRepository;
   @Autowired private JdbcTemplate jdbc;
 
   private long postId;
@@ -88,6 +99,65 @@ class ReportCommandServiceTest {
             command(ReportTargetType.COMMENT, commentId, ReportReason.FALSE_INFO));
 
     assertThat(reportRepository.existsById(reportId)).isTrue();
+  }
+
+  /**
+   * CM-14 의 검증 기준 — <b>「비밀 댓글도 신고 가능」</b>. 접수는 본문 열람 권한과 무관하다.
+   *
+   * <p><b>열람할 수 없다는 것을 판정기로 확인하고 시작한다.</b> 그러지 않으면 픽스처가 밀려 신고자가 방장이 되는 날 이 테스트가 조용히 아무것도 검증하지 않게 된다
+   * — 이름은 그대로 「본문을 볼 수 없는 사람도」 인 채로.
+   */
+  @DisplayName("본문을 볼 수 없는 사람도 비밀 댓글을 신고할 수 있다.")
+  @Test
+  void reportSecretComment() {
+    long secretCommentId =
+        aComment().postId(postId).authorId(TARGET_USER_ID).secret(true).insert(jdbc);
+    assertThat(canRead(secretCommentId, REPORTER_ID)).isFalse();
+
+    Long reportId =
+        reportCommandService.report(
+            command(ReportTargetType.COMMENT, secretCommentId, ReportReason.ABUSE));
+
+    assertThat(reportRepository.existsById(reportId)).isTrue();
+  }
+
+  /**
+   * 사유를 손으로 적지 않고 조합표에서 뽑는다.
+   *
+   * <p>표 자체가 맞는지는 {@code ReportReasonTest} 가 전 21조합으로 본다. 여기서 같은 목록을 다시 적으면 둘이 갈라지고, 갈라진 뒤에는 어느 쪽이
+   * 정본인지 알 수 없다.
+   */
+  @DisplayName("댓글 사유 넷 모두로 접수된다.")
+  @ParameterizedTest(name = "{0}")
+  @MethodSource("commentReasons")
+  void reportComment_hasEveryCommentReason(ReportReason reason) {
+    long targetCommentId = aComment().postId(postId).authorId(TARGET_USER_ID).insert(jdbc);
+
+    Long reportId =
+        reportCommandService.report(command(ReportTargetType.COMMENT, targetCommentId, reason));
+
+    assertThat(reportRepository.existsById(reportId)).isTrue();
+  }
+
+  static List<ReportReason> commentReasons() {
+    return Arrays.stream(ReportReason.values())
+        .filter(reason -> reason.supports(ReportTargetType.COMMENT))
+        .toList();
+  }
+
+  @DisplayName("같은 댓글을 다시 신고하면 거절한다.")
+  @Test
+  void reportComment_isDuplicated() {
+    reportCommandService.report(
+        command(ReportTargetType.COMMENT, commentId, ReportReason.INAPPROPRIATE));
+
+    assertThatThrownBy(
+            () ->
+                reportCommandService.report(
+                    command(ReportTargetType.COMMENT, commentId, ReportReason.ABUSE)))
+        .isInstanceOf(BusinessException.class)
+        .extracting(ReportCommandServiceTest::errorCodeOf)
+        .isEqualTo(ReportErrorCodeHolder.DUPLICATED);
   }
 
   @DisplayName("없는 대상은 대상별 404 로 거절한다.")
@@ -212,6 +282,16 @@ class ReportCommandServiceTest {
         Integer.class,
         REPORTER_ID,
         targetId);
+  }
+
+  /** 도메인 7.1 의 판정기를 그대로 쓴다. 신고자가 작성자도 방장도 부모 댓글 작성자도 아니면 비밀 댓글 본문을 볼 수 없다. */
+  private boolean canRead(long targetCommentId, long requesterId) {
+    Long hostId = companionPostRepository.findById(postId).orElseThrow().getHostId();
+    CommentReadTarget target =
+        CommentReadTarget.of(commentRepository.findById(targetCommentId).orElseThrow());
+
+    return new CommentVisibilityPolicy()
+        .canReadContent(target, new CommentReadContext(requesterId, hostId, null));
   }
 
   private static ReportCommand command(
