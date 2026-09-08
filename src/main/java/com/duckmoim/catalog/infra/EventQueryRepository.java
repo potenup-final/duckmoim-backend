@@ -2,6 +2,7 @@ package com.duckmoim.catalog.infra;
 
 import com.duckmoim.catalog.domain.Event;
 import com.duckmoim.catalog.domain.EventQuery;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
 
@@ -21,6 +22,9 @@ public interface EventQueryRepository {
    *
    * <p>{@code today} 를 인자로 받는 이유는 {@code LocalDate.now()} 를 여기서 부르면 테스트가 실행 날짜에 끌려가기 때문이다. 판정 기준은
    * KST 다 (도메인 4장).
+   *
+   * <p>{@code staleBefore} 도 같은 이유로 밖에서 받는다. 이 시각보다 오래 안 잡힌 행사는 목록에서 빠진다 — 원본에서 사라진 행사를 걸러내는 조건이다
+   * (D-7).
    */
-  List<Event> findSlice(EventQuery query, LocalDate today);
+  List<Event> findSlice(EventQuery query, LocalDate today, Instant staleBefore);
 }
