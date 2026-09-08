@@ -1,7 +1,9 @@
 package com.duckmoim.catalog;
 
 import com.duckmoim.catalog.domain.EventKind;
+import com.duckmoim.catalog.domain.PlaceKind;
 import java.time.LocalDate;
+import java.time.LocalTime;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 /**
@@ -17,11 +19,11 @@ public final class EventFixture {
   private static final String INSERT =
       """
       INSERT INTO event (external_id, source, kind, subject_type, trust, subject, title,
-                         starts_on, ends_on, source_url,
+                         starts_on, ends_on, starts_at, source_url,
                          place_name, place_address, place_lat, place_lng, place_kind, region_id,
                          created_at, updated_at)
-      VALUES (?, 'POPGA', ?, 'IDOL', 'PARSED', ?, ?, ?, ?, 'https://example.test/1',
-              '테스트 장소', '서울 성동구 1', 37.5, 127.0, 'POPUP_VENUE', ?,
+      VALUES (?, 'POPGA', ?, 'IDOL', 'PARSED', ?, ?, ?, ?, ?, 'https://example.test/1',
+              '테스트 장소', '서울 성동구 1', 37.5, 127.0, ?, ?,
               UTC_TIMESTAMP(6), UTC_TIMESTAMP(6))
       """;
 
@@ -31,6 +33,8 @@ public final class EventFixture {
   private String title;
   private LocalDate startsOn = LocalDate.of(2026, 10, 1);
   private LocalDate endsOn = LocalDate.of(2026, 10, 31);
+  private LocalTime startsAt;
+  private PlaceKind placeKind = PlaceKind.POPUP_VENUE;
   private long regionId;
 
   private EventFixture() {}
@@ -69,6 +73,17 @@ public final class EventFixture {
     return this;
   }
 
+  /** 공연 시작 시각. 콘서트만 갖는다 (EV-10 · 화면 계약 1장). */
+  public EventFixture startsAt(LocalTime startsAt) {
+    this.startsAt = startsAt;
+    return this;
+  }
+
+  public EventFixture placeKind(PlaceKind placeKind) {
+    this.placeKind = placeKind;
+    return this;
+  }
+
   public EventFixture regionId(long regionId) {
     this.regionId = regionId;
     return this;
@@ -76,7 +91,17 @@ public final class EventFixture {
 
   /** 넣은 행의 id 를 준다. 커서 경계 검증이 id 순서를 알아야 해서 돌려준다. */
   public long insert(JdbcTemplate jdbc) {
-    jdbc.update(INSERT, externalId, kind.name(), subject, title, startsOn, endsOn, regionId);
+    jdbc.update(
+        INSERT,
+        externalId,
+        kind.name(),
+        subject,
+        title,
+        startsOn,
+        endsOn,
+        startsAt,
+        placeKind.name(),
+        regionId);
 
     return jdbc.queryForObject(
         "SELECT id FROM event WHERE external_id = ?", Long.class, externalId);

@@ -11,8 +11,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.duckmoim.auth.domain.AuthUser;
 import com.duckmoim.auth.domain.TokenProvider;
 import com.duckmoim.auth.presentation.ImportSecurity;
+import com.duckmoim.companion.domain.CommentActionPolicy;
 import com.duckmoim.companion.domain.CommentStatus;
+import com.duckmoim.companion.domain.CommentVisibilityPolicy;
 import com.duckmoim.companion.service.CommentCommandService;
+import com.duckmoim.companion.service.CommentQueryService;
 import com.duckmoim.companion.service.CommentWriteCommand;
 import com.duckmoim.companion.service.WrittenComment;
 import java.time.LocalDateTime;
@@ -22,6 +25,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -42,6 +46,7 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
  */
 @WebMvcTest(CommentController.class)
 @ImportSecurity
+@Import({CommentItemAssembler.class, CommentVisibilityPolicy.class, CommentActionPolicy.class})
 class CommentControllerTest {
 
   /** 저장은 UTC 다. 응답에서 KST 오프셋이 붙어 09:00 으로 나가야 한다. */
@@ -53,6 +58,7 @@ class CommentControllerTest {
   @Autowired private TokenProvider tokenProvider;
 
   @MockitoBean private CommentCommandService commentCommandService;
+  @MockitoBean private CommentQueryService commentQueryService;
 
   @Captor private ArgumentCaptor<CommentWriteCommand> command;
 

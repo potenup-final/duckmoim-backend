@@ -1,6 +1,7 @@
 package com.duckmoim.companion;
 
 import com.duckmoim.companion.domain.CommentStatus;
+import java.time.LocalDateTime;
 import java.util.concurrent.atomic.AtomicLong;
 import org.springframework.jdbc.core.JdbcTemplate;
 
@@ -20,7 +21,7 @@ public final class CommentFixture {
       """
       INSERT INTO comment (post_id, author_id, parent_id, content, secret, status,
                            created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6))
+      VALUES (?, ?, ?, ?, ?, ?, COALESCE(?, UTC_TIMESTAMP(6)), UTC_TIMESTAMP(6))
       """;
 
   private final String content = "픽스처 댓글 " + SEQUENCE.incrementAndGet();
@@ -29,6 +30,7 @@ public final class CommentFixture {
   private Long parentId;
   private boolean secret;
   private CommentStatus status = CommentStatus.ACTIVE;
+  private LocalDateTime createdAt;
 
   private CommentFixture() {}
 
@@ -61,8 +63,19 @@ public final class CommentFixture {
     return this;
   }
 
+  /**
+   * 작성 시각을 고정한다. <b>커서 경계 검증에 필요하다</b> — CM-07 이 정렬 키가 같은 데이터를 요구하는데, {@code UTC_TIMESTAMP(6)} 에
+   * 맡기면 마이크로초가 갈려 같은 시각이 만들어지지 않는다.
+   *
+   * <p>주지 않으면 현재 시각이다. 저장은 UTC 다.
+   */
+  public CommentFixture createdAt(LocalDateTime createdAtUtc) {
+    this.createdAt = createdAtUtc;
+    return this;
+  }
+
   public long insert(JdbcTemplate jdbc) {
-    jdbc.update(INSERT, postId, authorId, parentId, content, secret, status.name());
+    jdbc.update(INSERT, postId, authorId, parentId, content, secret, status.name(), createdAt);
 
     return jdbc.queryForObject("SELECT id FROM comment WHERE content = ?", Long.class, content);
   }
