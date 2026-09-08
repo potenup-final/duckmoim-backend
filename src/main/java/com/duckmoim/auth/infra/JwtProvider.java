@@ -12,6 +12,8 @@ import io.jsonwebtoken.security.Keys;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.Date;
 import java.util.UUID;
 import javax.crypto.SecretKey;
@@ -74,6 +76,30 @@ public class JwtProvider implements TokenProvider {
     } catch (ExpiredJwtException e) {
       throw new BusinessException(AuthErrorCode.AUTH_ACCESS_TOKEN_EXPIRED);
     } catch (JwtException | IllegalArgumentException e) {
+      throw new BusinessException(AuthErrorCode.AUTH_ACCESS_TOKEN_INVALID);
+    }
+  }
+
+  /**
+   * 액세스 토큰의 발급 시각 (AU-04).
+   *
+   * <p>무효화 시각과 견주려면 저장 형식과 같아야 한다 — {@code BaseEntity} 가 찍는 UTC {@code LocalDateTime} 이다.
+   *
+   * <p>이름이 「액세스 토큰의」라고 말하므로 용도도 스스로 본다. {@link #readAccessToken} 이 먼저 걸러 주는 자리에서만 쓰이지만, 포트 메서드 하나는
+   * 그것만으로 옳아야 다음 사람이 순서를 바꿔도 안전하다.
+   */
+  @Override
+  public LocalDateTime readAccessTokenIssuedAt(String accessToken) {
+    try {
+      Claims claims =
+          Jwts.parser().verifyWith(key).build().parseSignedClaims(accessToken).getPayload();
+
+      if (!ACCESS.equals(claims.get(CLAIM_TOKEN_TYPE, String.class))) {
+        throw new BusinessException(AuthErrorCode.AUTH_ACCESS_TOKEN_INVALID);
+      }
+
+      return LocalDateTime.ofInstant(claims.getIssuedAt().toInstant(), ZoneOffset.UTC);
+    } catch (JwtException | IllegalArgumentException | NullPointerException e) {
       throw new BusinessException(AuthErrorCode.AUTH_ACCESS_TOKEN_INVALID);
     }
   }

@@ -135,6 +135,28 @@ class JwtProviderTest {
     assertThat(jwtProvider.createRefreshToken(7L)).isNotEqualTo(jwtProvider.createRefreshToken(7L));
   }
 
+  @Test
+  @DisplayName("발급 시각을 읽으면 토큰에 찍힌 시각이 나온다.")
+  void readAccessTokenIssuedAt() {
+    String accessToken = jwtProvider.createAccessToken(AUTH_USER);
+
+    assertThat(jwtProvider.readAccessTokenIssuedAt(accessToken))
+        .isCloseTo(
+            java.time.LocalDateTime.now(java.time.ZoneOffset.UTC),
+            org.assertj.core.api.Assertions.within(5, java.time.temporal.ChronoUnit.SECONDS));
+  }
+
+  /** 이름이 「액세스 토큰의」라고 말하니 리프레시를 넣으면 거절해야 한다. */
+  @Test
+  @DisplayName("리프레시 토큰의 발급 시각을 읽으려 하면 거절한다.")
+  void readAccessTokenIssuedAt_refreshToken() {
+    String refreshToken = jwtProvider.createRefreshToken(7L);
+
+    assertThatThrownBy(() -> jwtProvider.readAccessTokenIssuedAt(refreshToken))
+        .isInstanceOf(BusinessException.class)
+        .hasFieldOrPropertyWithValue("errorCode", AuthErrorCode.AUTH_ACCESS_TOKEN_INVALID);
+  }
+
   /** 반대 방향의 교차 사용이다. 액세스 토큰이 리프레시로 통하면 30분마다 갱신되는 열쇠가 재발급 창구를 연다. */
   @Test
   @DisplayName("액세스 토큰을 리프레시 토큰으로 읽으면 다시 로그인하라는 뜻으로 거절한다.")

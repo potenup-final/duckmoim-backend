@@ -1,11 +1,18 @@
 package com.duckmoim.auth.presentation;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.mock;
 
 import com.duckmoim.auth.domain.AuthUser;
 import com.duckmoim.auth.exception.AuthErrorCode;
 import com.duckmoim.auth.infra.JwtProvider;
+import com.duckmoim.auth.service.AuthenticationService;
+import com.duckmoim.identity.domain.User;
+import com.duckmoim.identity.infra.UserRepository;
 import java.time.Duration;
+import java.util.Optional;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -22,7 +29,24 @@ class AuthenticationFilterTest {
 
   private final JwtProvider jwtProvider =
       new JwtProvider(SECRET, Duration.ofMinutes(30), REFRESH_TTL);
-  private final AuthenticationFilter filter = new AuthenticationFilter(jwtProvider);
+  private final AuthenticationFilter filter =
+      new AuthenticationFilter(authenticationWith(jwtProvider));
+
+  /**
+   * 무효화되지 않은 회원 하나를 가진 인증 서비스를 만든다.
+   *
+   * <p>필터가 {@code AuthenticationService} 를 받게 되면서(AU-04) 이 단위 테스트에도 회원 조회가 끼어든다. 여기서 볼 것은 <b>필터가
+   * SecurityContext 를 어떻게 채우는가</b>지 무효화 판정이 아니라, 조회는 고정해 둔다.
+   */
+  private static AuthenticationService authenticationWith(JwtProvider jwtProvider) {
+    User user = mock(User.class);
+    given(user.isTokenInvalidated(any())).willReturn(false);
+
+    UserRepository userRepository = mock(UserRepository.class);
+    given(userRepository.findById(any())).willReturn(Optional.of(user));
+
+    return new AuthenticationService(jwtProvider, userRepository);
+  }
 
   @AfterEach
   void clearContext() {

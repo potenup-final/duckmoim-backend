@@ -1,10 +1,23 @@
 package com.duckmoim.auth.domain;
 
+import java.time.LocalDateTime;
+
 public interface TokenProvider {
 
   String createAccessToken(AuthUser authUser);
 
   AuthUser readAccessToken(String accessToken);
+
+  /**
+   * Access 토큰의 발급 시각을 읽는다 (AU-04 「Access 잔여 TTL 차단」).
+   *
+   * <p><b>{@link AuthUser} 에 넣지 않는다.</b> 그것은 {@code @AuthenticationPrincipal} 로 남의 컨트롤러가 받는 공개
+   * 계약이고, 발급 시각은 토큰의 사정이지 요청자의 속성이 아니다.
+   *
+   * <p>토큰을 한 번 더 파싱하는 대가를 치른다. 뒤따르는 회원 조회가 SQL 한 번이라 그쪽이 훨씬 무겁고, 대신 {@link #readAccessToken} 의
+   * 시그니처가 그대로 남아 이미 쓰는 곳들이 안 바뀐다.
+   */
+  LocalDateTime readAccessTokenIssuedAt(String accessToken);
 
   /**
    * Refresh 토큰을 발급한다 (AU-02 Refresh 14일).

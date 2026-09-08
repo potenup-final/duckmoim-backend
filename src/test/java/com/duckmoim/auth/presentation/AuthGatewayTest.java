@@ -1,5 +1,6 @@
 package com.duckmoim.auth.presentation;
 
+import static com.duckmoim.identity.UserFixture.aUser;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -10,7 +11,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.duckmoim.auth.domain.AuthUser;
 import com.duckmoim.auth.domain.TokenProvider;
 import com.duckmoim.auth.infra.JwtProvider;
+import com.duckmoim.auth.service.AuthService;
 import java.time.Duration;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -39,6 +43,8 @@ class AuthGatewayTest {
 
   @Autowired private MockMvc mockMvc;
   @Autowired private TokenProvider tokenProvider;
+  @Autowired private AuthService authService;
+  @Autowired private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
 
   @Test
   @DisplayName("토큰이 없어도 헬스체크는 200 이다.")
@@ -139,6 +145,61 @@ class AuthGatewayTest {
 
     assertThat(response.getCookie("JSESSIONID")).isNull();
     assertThat(response.getHeaders(HttpHeaders.SET_COOKIE)).isEmpty();
+  }
+
+  /**
+   * AU-04 의 검증 기준 그 자체 — 「로그아웃 직후 기존 Access 로 401」.
+   *
+   * <p><b>서명만 보면 이 토큰은 멀쩡하다.</b> 만료도 안 됐고 위조도 아니다. 그래서 이 한 줄이 초록불이려면 관문이 서명 너머로 <b>회원의 무효화 시각</b>까지
+   * 봐야 한다. 관문을 DB 판정으로 바꾼 이유가 여기 있다.
+   */
+  @Test
+  @DisplayName("로그아웃하면 그전에 발급된 액세스 토큰으로는 401 이다.")
+  void logoutInvalidatesIssuedAccessToken() throws Exception {
+    long userId = aUser().insert(jdbcTemplate);
+    String accessToken = authService.createTokens(userId).accessToken();
+
+    authService.logout(userId);
+
+    mockMvc
+        .perform(get("/api/v1/users/me").header(HttpHeaders.AUTHORIZATION, "Bearer " + accessToken))
+        .andExpect(status().isUnauthorized())
+        .andExpect(jsonPath("$.code").value("AUTH_ACCESS_TOKEN_INVALID"));
+
+    cleanUp(userId);
+  }
+
+  /**
+   * 무효화 뒤에 받은 토큰은 살아 있어야 한다. 아니면 로그아웃한 사람이 다시 못 들어온다.
+   *
+   * <p><b>무효화 시각을 픽스처로 과거에 박는다.</b> {@code logout()} 을 부르고 바로 발급하면 <b>같은 초</b>가 되는데, JWT 의 {@code
+   * iat} 은 초 단위로 내려가므로 그 토큰이 거절된다 — 실측했다. 프로덕션에서는 로그아웃과 재로그인이 다른 요청이라 생기지 않는 일이고, 여기서 보려는 것은 시계가
+   * 아니라 <b>「나중에 발급된 토큰은 통과한다」</b>이다.
+   */
+  @Test
+  @DisplayName("무효화 시각보다 나중에 발급된 액세스 토큰은 관문을 통과한다.")
+  void tokenIssuedAfterInvalidationIsAccepted() throws Exception {
+    long userId =
+        aUser()
+            .tokensInvalidatedAt(LocalDateTime.now(ZoneOffset.UTC).minusHours(1))
+            .insert(jdbcTemplate);
+    String accessToken = authService.createTokens(userId).accessToken();
+
+    int status =
+        mockMvc
+            .perform(
+                get("/api/v1/users/me").header(HttpHeaders.AUTHORIZATION, "Bearer " + accessToken))
+            .andReturn()
+            .getResponse()
+            .getStatus();
+
+    assertThat(status).isNotEqualTo(401);
+    cleanUp(userId);
+  }
+
+  private void cleanUp(long userId) {
+    jdbcTemplate.update("DELETE FROM refresh_token WHERE user_id = ?", userId);
+    jdbcTemplate.update("DELETE FROM user WHERE id = ?", userId);
   }
 
   private HttpHeaders bearer(AuthUser authUser) {
