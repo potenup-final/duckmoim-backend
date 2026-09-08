@@ -1,7 +1,10 @@
 package com.duckmoim.identity.domain;
 
 import com.duckmoim.common.domain.BaseEntity;
+import com.duckmoim.common.exception.BusinessException;
+import com.duckmoim.identity.exception.UserErrorCode;
 import jakarta.persistence.Column;
+import jakarta.persistence.Embedded;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
@@ -38,11 +41,16 @@ public class User extends BaseEntity {
   @Column(name = "nickname", length = 20, unique = true)
   private String nickname;
 
-  @Column(name = "birth_year")
-  private Integer birthYear;
+  @Embedded private BirthYear birthYear;
 
-  @Column(name = "intro", length = 100)
-  private String intro;
+  /**
+   * 한줄소개.
+   *
+   * <p><b>컬럼과 필드가 {@code intro} 였다.</b> API 설계 2-2 가 응답 필드를 {@code bio} 로 못박았고(<i>"한줄소개 필드명은 bio
+   * 다"</i>) API 컨벤션이 도메인 식별자와 API 필드명을 일치시키라고 해서 V14 가 컬럼을 옮겼다.
+   */
+  @Column(name = "bio", length = 100)
+  private String bio;
 
   @Column(name = "profile_image_url", length = 500)
   private String profileImageUrl;
@@ -66,6 +74,29 @@ public class User extends BaseEntity {
    */
   @Column(name = "tokens_invalidated_at")
   private LocalDateTime tokensInvalidatedAt;
+
+  /**
+   * 가입 정보를 채워 활동할 수 있는 계정으로 만든다 (AU-05).
+   *
+   * <p>가입 축의 유일한 전진 전이다 — {@code PENDING_SIGNUP_INFO ──입력──▶ ACTIVE} (도메인 6장).
+   *
+   * <p><b>한 번만 통한다.</b> API 설계 2-2 가 <i>"이미 입력한 유저가 다시 부르면 409 다 — 출생연도는 가입 후 잠기기 때문이다"</i> 로 정했다.
+   * 닉네임만 바꾸는 것은 AU-08 의 {@code PATCH /users/me/profile} 몫이다.
+   *
+   * <p>탈퇴 계정도 이 검사에 걸린다. 다만 그쪽은 관문이 먼저 끊으므로 여기까지 오지 않는다 ({@link #isWithdrawn}).
+   *
+   * @throws BusinessException {@code PENDING_SIGNUP_INFO} 가 아니면 {@code
+   *     USER_SIGNUP_INFO_ALREADY_SET}
+   */
+  public void completeSignup(SignupInfo signupInfo) {
+    if (!isSignupPending()) {
+      throw new BusinessException(UserErrorCode.USER_SIGNUP_INFO_ALREADY_SET);
+    }
+
+    this.nickname = signupInfo.nickname();
+    this.birthYear = signupInfo.birthYear();
+    this.status = SignupStatus.ACTIVE;
+  }
 
   /** AU-03 재사용 탐지의 「해당 유저 전체 폐기」와 AU-04 로그아웃이 함께 부른다. */
   public void invalidateAllTokens(LocalDateTime now) {
@@ -130,5 +161,18 @@ public class User extends BaseEntity {
    */
   public boolean isSignupCompleted() {
     return status == SignupStatus.ACTIVE;
+  }
+
+  /**
+   * 가입 정보를 아직 안 낸 계정인지.
+   *
+   * <p><b>{@link #completeSignup} 의 통과 조건 그 자체다.</b> service 가 그 호출에 <b>앞서</b> 같은 판정을 해야 해서 꺼냈다 —
+   * 닉네임 사전 조회보다 이 검사가 먼저여야 하고(둘 다 걸리면 상태 쪽이 이긴다), 사전 조회는 엔티티를 바꾸기 전에 끝나야 한다.
+   *
+   * <p><b>{@code isSignupCompleted} 의 반대가 아니다.</b> 탈퇴한 계정은 둘 다 {@code false} 다. 그래서 이 판정을 부정으로 대신
+   * 쓰면 상태가 하나 늘어나는 날 조용히 갈라진다.
+   */
+  public boolean isSignupPending() {
+    return status == SignupStatus.PENDING_SIGNUP_INFO;
   }
 }

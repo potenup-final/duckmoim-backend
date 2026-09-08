@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.mock;
 
+import com.duckmoim.admin.infra.AdminAccountRepository;
 import com.duckmoim.auth.domain.AuthUser;
 import com.duckmoim.auth.exception.AuthErrorCode;
 import com.duckmoim.auth.infra.JwtProvider;
@@ -29,23 +30,34 @@ class AuthenticationFilterTest {
 
   private final JwtProvider jwtProvider =
       new JwtProvider(SECRET, Duration.ofMinutes(30), REFRESH_TTL);
-  private final AuthenticationFilter filter =
-      new AuthenticationFilter(authenticationWith(jwtProvider));
+  private final AuthenticationFilter filter = filterWith(true);
 
   /**
-   * 무효화되지 않은 회원 하나를 가진 인증 서비스를 만든다.
+   * 회원 조회를 고정한 필터를 만든다.
    *
    * <p>필터가 {@code AuthenticationService} 를 받게 되면서(AU-04) 이 단위 테스트에도 회원 조회가 끼어든다. 여기서 볼 것은 <b>필터가
-   * SecurityContext 를 어떻게 채우는가</b>지 무효화 판정이 아니라, 조회는 고정해 둔다.
+   * SecurityContext 를 어떻게 채우는가</b>지 조회 판정이 아니다.
+   *
+   * <p><b>{@code signupCompleted} 를 인자로 받는 이유</b> — 관문이 그 값을 토큰이 아니라 회원 행에서 읽게 됐다 (I-02 · AU-07).
+   * 토큰에 무엇을 담아도 DB 가 이긴다. 그래서 「가입 미완료」를 검증하려면 <b>DB 쪽을 미완료로</b> 만들어야 한다.
    */
-  private static AuthenticationService authenticationWith(JwtProvider jwtProvider) {
-    User user = mock(User.class);
-    given(user.isTokenInvalidated(any())).willReturn(false);
+  private AuthenticationFilter filterWith(boolean signupCompleted) {
+    AdminAccountRepository adminAccountRepository = mock(AdminAccountRepository.class);
+    given(adminAccountRepository.existsByKakaoUserId(any())).willReturn(true);
 
     UserRepository userRepository = mock(UserRepository.class);
-    given(userRepository.findById(any())).willReturn(Optional.of(user));
+    given(userRepository.findById(any()))
+        .willAnswer(
+            invocation -> {
+              User user = mock(User.class);
+              given(user.getId()).willReturn(invocation.<Long>getArgument(0));
+              given(user.isSignupCompleted()).willReturn(signupCompleted);
+              given(user.isTokenInvalidated(any())).willReturn(false);
+              return Optional.of(user);
+            });
 
-    return new AuthenticationService(jwtProvider, userRepository);
+    return new AuthenticationFilter(
+        new AuthenticationService(jwtProvider, userRepository, adminAccountRepository));
   }
 
   @AfterEach
@@ -92,6 +104,7 @@ class AuthenticationFilterTest {
   @Test
   @DisplayName("가입 미완료 회원에게는 아무 권한도 주어지지 않는다.")
   void doFilter_signupIncomplete() throws Exception {
+    AuthenticationFilter filter = filterWith(false);
     MockHttpServletRequest request =
         requestWith(jwtProvider.createAccessToken(new AuthUser(7L, false, false)));
 

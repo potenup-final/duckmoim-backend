@@ -28,6 +28,7 @@ public final class UserFixture {
   private final long sequence = SEQUENCE.getAndIncrement();
 
   private SignupStatus status = SignupStatus.ACTIVE;
+  private String nickname;
   private LocalDateTime lastSeenAt;
   private LocalDateTime tokensInvalidatedAt;
 
@@ -35,6 +36,12 @@ public final class UserFixture {
 
   public static UserFixture aUser() {
     return new UserFixture();
+  }
+
+  /** 닉네임을 지정한다. 안 주면 겹치지 않는 값이 자동으로 붙는다. */
+  public UserFixture nickname(String nickname) {
+    this.nickname = nickname;
+    return this;
   }
 
   public UserFixture status(SignupStatus status) {
@@ -64,6 +71,9 @@ public final class UserFixture {
 
   /** 가입 정보를 입력하기 전에는 닉네임이 없다 (V10 · AU-05). */
   private String nickname() {
+    if (nickname != null) {
+      return nickname;
+    }
     if (status == SignupStatus.PENDING_SIGNUP_INFO) {
       return null;
     }
