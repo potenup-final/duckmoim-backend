@@ -2,6 +2,7 @@ package com.duckmoim.companion.domain;
 
 import com.duckmoim.common.domain.BaseEntity;
 import jakarta.persistence.Column;
+import jakarta.persistence.Embedded;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
@@ -9,7 +10,6 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
-import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import lombok.AccessLevel;
 import lombok.Getter;
@@ -53,21 +53,15 @@ public class CompanionPost extends BaseEntity {
   @Column(name = "content", length = 500)
   private String content;
 
+  // 저장은 UTC 다. 판정 기준이 KST 인 것은 도메인-모델링.md 「4. 엔티티 · 값 객체 · 식별자」 가 정했다.
   @Column(name = "meet_at", nullable = false)
   private LocalDateTime meetAt;
 
-  @Column(name = "meet_place", nullable = false, length = 100)
-  private String meetPlace;
+  // 장소명과 좌표를 함께 갖는 값 객체다 (I-05).
+  @Embedded private MeetPoint meetPoint;
 
-  @Column(name = "meet_lat", nullable = false, precision = 10, scale = 7)
-  private BigDecimal meetLat;
-
-  @Column(name = "meet_lng", nullable = false, precision = 10, scale = 7)
-  private BigDecimal meetLng;
-
-  // 없으면 정원 미표시다. 값이 있으면 2~6 (I-03).
-  @Column(name = "capacity")
-  private Integer capacity;
+  // 없으면 정원 미표시다. 값이 있으면 2~6 (I-03). 없을 때는 이 객체 자체가 null 이다.
+  @Embedded private Capacity capacity;
 
   @Enumerated(EnumType.STRING)
   @Column(name = "status", nullable = false, length = 20)
