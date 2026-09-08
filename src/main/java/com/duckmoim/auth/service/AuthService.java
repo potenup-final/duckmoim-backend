@@ -3,7 +3,6 @@ package com.duckmoim.auth.service;
 import com.duckmoim.admin.infra.AdminAccountRepository;
 import com.duckmoim.auth.domain.AuthUser;
 import com.duckmoim.auth.domain.RefreshToken;
-import com.duckmoim.auth.domain.TokenPair;
 import com.duckmoim.auth.domain.TokenProvider;
 import com.duckmoim.auth.exception.AuthErrorCode;
 import com.duckmoim.auth.infra.RefreshTokenRepository;
@@ -63,7 +62,7 @@ public class AuthService {
    * TokenProvider.createAccessToken} · {@code RefreshToken.create} 와 접두어가 같아진다.
    */
   @Transactional
-  public TokenPair createTokens(Long userId) {
+  public AuthToken createTokens(Long userId) {
     return createTokens(loadUser(userId), now());
   }
 
@@ -77,7 +76,7 @@ public class AuthService {
    * <p>행이 없다는 것이 곧 재사용이다. 서명은 멀쩡하니 진짜 우리가 발급한 토큰인데, 회전 때 지워졌으므로 누군가 이미 썼다는 뜻이다.
    */
   @Transactional(noRollbackFor = BusinessException.class)
-  public TokenPair refresh(String rawRefreshToken) {
+  public AuthToken refresh(String rawRefreshToken) {
     LocalDateTime now = now();
     Long userId = tokenProvider.readRefreshToken(rawRefreshToken);
 
@@ -117,7 +116,7 @@ public class AuthService {
    * Access 에 찍는 {@code signupCompleted} 와 {@code admin} 을 <b>매번 다시 읽는다.</b> Refresh 는 14일을 사는데 그
    * 사이에 가입이 완료되거나(AU-05) 관리자 등록이 바뀔 수 있어서, 토큰에 물려주면 낡은 값이 2주 동안 따라다닌다.
    */
-  private TokenPair createTokens(User user, LocalDateTime now) {
+  private AuthToken createTokens(User user, LocalDateTime now) {
     String rawRefreshToken = tokenProvider.createRefreshToken(user.getId());
 
     refreshTokenRepository.save(
@@ -125,7 +124,8 @@ public class AuthService {
 
     AuthUser authUser = new AuthUser(user.getId(), user.isSignupCompleted(), isAdmin(user));
 
-    return new TokenPair(tokenProvider.createAccessToken(authUser), rawRefreshToken);
+    return new AuthToken(
+        tokenProvider.createAccessToken(authUser), rawRefreshToken, authUser.signupCompleted());
   }
 
   /** 그 회원의 로그인 상태를 통째로 끊는다 — AU-03 의 「해당 유저 전체 폐기」와 AU-04 로그아웃이 같은 동작이다. */

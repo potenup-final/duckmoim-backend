@@ -39,7 +39,7 @@ class UserTest {
 
   @Test
   @DisplayName("무효화 시각보다 먼저 발급된 토큰은 죽는다.")
-  void isTokenInvalidated_issuedBefore() {
+  void isTokenInvalidated_authTokenBefore() {
     User user = load(aUser().tokensInvalidatedAt(LOGOUT).insert(jdbcTemplate));
 
     assertThat(user.isTokenInvalidated(LOGOUT.minusSeconds(1))).isTrue();
@@ -48,7 +48,7 @@ class UserTest {
   /** 로그아웃 뒤에 다시 로그인해 받은 토큰이다. 이것까지 죽이면 로그인이 아예 안 된다. */
   @Test
   @DisplayName("무효화 시각보다 나중에 발급된 토큰은 살아 있다.")
-  void isTokenInvalidated_issuedAfter() {
+  void isTokenInvalidated_authTokenAfter() {
     User user = load(aUser().tokensInvalidatedAt(LOGOUT).insert(jdbcTemplate));
 
     assertThat(user.isTokenInvalidated(LOGOUT.plusSeconds(1))).isFalse();
@@ -60,7 +60,7 @@ class UserTest {
    */
   @Test
   @DisplayName("로그아웃과 같은 초에 발급된 토큰도 죽는다.")
-  void isTokenInvalidated_issuedInTheSameSecond() {
+  void isTokenInvalidated_authTokenInTheSameSecond() {
     User user =
         load(aUser().tokensInvalidatedAt(LOGOUT.withNano(700_000_000)).insert(jdbcTemplate));
 

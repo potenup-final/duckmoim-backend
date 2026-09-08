@@ -6,7 +6,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.duckmoim.auth.domain.AuthUser;
 import com.duckmoim.auth.domain.RefreshToken;
-import com.duckmoim.auth.domain.TokenPair;
 import com.duckmoim.auth.domain.TokenProvider;
 import com.duckmoim.auth.exception.AuthErrorCode;
 import com.duckmoim.auth.infra.RefreshTokenRepository;
@@ -41,12 +40,12 @@ class AuthServiceTest {
   @DisplayName("리프레시 토큰으로 재발급하면 새 토큰 쌍이 나온다.")
   void refresh() {
     long userId = aUser().insert(jdbcTemplate);
-    TokenPair issued = firstLogin(userId);
+    AuthToken authToken = firstLogin(userId);
 
-    TokenPair refreshd = authService.refresh(issued.refreshToken());
+    AuthToken refreshd = authService.refresh(authToken.refreshToken());
 
     assertThat(refreshd.accessToken()).isNotBlank();
-    assertThat(refreshd.refreshToken()).isNotEqualTo(issued.refreshToken());
+    assertThat(refreshd.refreshToken()).isNotEqualTo(authToken.refreshToken());
     cleanUp(userId);
   }
 
@@ -55,11 +54,11 @@ class AuthServiceTest {
   @DisplayName("재발급하면 쓰인 리프레시 토큰은 저장소에서 사라진다.")
   void refresh_removesUsedToken() {
     long userId = aUser().insert(jdbcTemplate);
-    TokenPair issued = firstLogin(userId);
+    AuthToken authToken = firstLogin(userId);
 
-    authService.refresh(issued.refreshToken());
+    authService.refresh(authToken.refreshToken());
 
-    assertThat(refreshTokenRepository.findByTokenHash(RefreshToken.hash(issued.refreshToken())))
+    assertThat(refreshTokenRepository.findByTokenHash(RefreshToken.hash(authToken.refreshToken())))
         .isEmpty();
     cleanUp(userId);
   }
@@ -69,10 +68,10 @@ class AuthServiceTest {
   @DisplayName("같은 리프레시 토큰을 두 번 쓰면 두 번째는 거부된다.")
   void refresh_reused() {
     long userId = aUser().insert(jdbcTemplate);
-    TokenPair issued = firstLogin(userId);
-    authService.refresh(issued.refreshToken());
+    AuthToken authToken = firstLogin(userId);
+    authService.refresh(authToken.refreshToken());
 
-    assertThatThrownBy(() -> authService.refresh(issued.refreshToken()))
+    assertThatThrownBy(() -> authService.refresh(authToken.refreshToken()))
         .isInstanceOf(BusinessException.class)
         .hasFieldOrPropertyWithValue("errorCode", AuthErrorCode.AUTH_REFRESH_TOKEN_INVALID);
     cleanUp(userId);
@@ -88,10 +87,10 @@ class AuthServiceTest {
   @DisplayName("재사용을 탐지하면 회전으로 받은 새 토큰까지 폐기된다.")
   void refresh_reusedInvalidatesEverySession() {
     long userId = aUser().insert(jdbcTemplate);
-    TokenPair issued = firstLogin(userId);
-    TokenPair rotated = authService.refresh(issued.refreshToken());
+    AuthToken authToken = firstLogin(userId);
+    AuthToken rotated = authService.refresh(authToken.refreshToken());
 
-    assertThatThrownBy(() -> authService.refresh(issued.refreshToken()))
+    assertThatThrownBy(() -> authService.refresh(authToken.refreshToken()))
         .isInstanceOf(BusinessException.class);
 
     assertThatThrownBy(() -> authService.refresh(rotated.refreshToken()))
@@ -104,10 +103,10 @@ class AuthServiceTest {
   @DisplayName("재사용을 탐지하면 이미 발급된 액세스 토큰도 무효화된다.")
   void refresh_reusedInvalidatesIssuedAccessTokens() {
     long userId = aUser().insert(jdbcTemplate);
-    TokenPair issued = firstLogin(userId);
-    authService.refresh(issued.refreshToken());
+    AuthToken authToken = firstLogin(userId);
+    authService.refresh(authToken.refreshToken());
 
-    assertThatThrownBy(() -> authService.refresh(issued.refreshToken()))
+    assertThatThrownBy(() -> authService.refresh(authToken.refreshToken()))
         .isInstanceOf(BusinessException.class);
 
     assertThat(invalidatedAt(userId)).isNotNull();
@@ -120,11 +119,11 @@ class AuthServiceTest {
   void refresh_reusedKeepsOtherUsers() {
     long userId = aUser().insert(jdbcTemplate);
     long otherUserId = aUser().insert(jdbcTemplate);
-    TokenPair issued = firstLogin(userId);
-    TokenPair othersToken = firstLogin(otherUserId);
-    authService.refresh(issued.refreshToken());
+    AuthToken authToken = firstLogin(userId);
+    AuthToken othersToken = firstLogin(otherUserId);
+    authService.refresh(authToken.refreshToken());
 
-    assertThatThrownBy(() -> authService.refresh(issued.refreshToken()))
+    assertThatThrownBy(() -> authService.refresh(authToken.refreshToken()))
         .isInstanceOf(BusinessException.class);
 
     assertThat(authService.refresh(othersToken.refreshToken()).accessToken()).isNotBlank();
@@ -136,9 +135,9 @@ class AuthServiceTest {
   @DisplayName("액세스 토큰으로 재발급하면 거부된다.")
   void refresh_accessToken() {
     long userId = aUser().insert(jdbcTemplate);
-    TokenPair issued = firstLogin(userId);
+    AuthToken authToken = firstLogin(userId);
 
-    assertThatThrownBy(() -> authService.refresh(issued.accessToken()))
+    assertThatThrownBy(() -> authService.refresh(authToken.accessToken()))
         .isInstanceOf(BusinessException.class)
         .hasFieldOrPropertyWithValue("errorCode", AuthErrorCode.AUTH_REFRESH_TOKEN_INVALID);
     cleanUp(userId);
@@ -150,9 +149,9 @@ class AuthServiceTest {
   void refresh_updatesLastSeenAt() {
     LocalDateTime longAgo = LocalDateTime.now(ZoneOffset.UTC).minusDays(30);
     long userId = aUser().lastSeenAt(longAgo).insert(jdbcTemplate);
-    TokenPair issued = firstLogin(userId);
+    AuthToken authToken = firstLogin(userId);
 
-    authService.refresh(issued.refreshToken());
+    authService.refresh(authToken.refreshToken());
 
     assertThat(userRepository.findById(userId).orElseThrow().getLastSeenAt()).isAfter(longAgo);
     cleanUp(userId);
@@ -163,10 +162,10 @@ class AuthServiceTest {
   @DisplayName("가입 미완료로 발급받았어도 가입을 마친 뒤 재발급하면 가입 완료로 나온다.")
   void refresh_readsSignupStatusAgain() {
     long userId = aUser().status(SignupStatus.PENDING_SIGNUP_INFO).insert(jdbcTemplate);
-    TokenPair issued = firstLogin(userId);
+    AuthToken authToken = firstLogin(userId);
     jdbcTemplate.update("UPDATE user SET status = 'ACTIVE' WHERE id = ?", userId);
 
-    TokenPair refreshd = authService.refresh(issued.refreshToken());
+    AuthToken refreshd = authService.refresh(authToken.refreshToken());
 
     assertThat(tokenProvider.readAccessToken(refreshd.accessToken()))
         .isEqualTo(new AuthUser(userId, true, false));
@@ -178,11 +177,11 @@ class AuthServiceTest {
   @DisplayName("로그아웃하면 리프레시 토큰이 사라지고 액세스 토큰도 무효화된다.")
   void logout() {
     long userId = aUser().insert(jdbcTemplate);
-    TokenPair issued = firstLogin(userId);
+    AuthToken authToken = firstLogin(userId);
 
     authService.logout(userId);
 
-    assertThat(refreshTokenRepository.findByTokenHash(RefreshToken.hash(issued.refreshToken())))
+    assertThat(refreshTokenRepository.findByTokenHash(RefreshToken.hash(authToken.refreshToken())))
         .isEmpty();
     assertThat(invalidatedAt(userId)).isNotNull();
     cleanUp(userId);
@@ -192,10 +191,10 @@ class AuthServiceTest {
   @DisplayName("로그아웃한 뒤에는 그 리프레시 토큰으로 재발급할 수 없다.")
   void logout_thenReissue() {
     long userId = aUser().insert(jdbcTemplate);
-    TokenPair issued = firstLogin(userId);
+    AuthToken authToken = firstLogin(userId);
     authService.logout(userId);
 
-    assertThatThrownBy(() -> authService.refresh(issued.refreshToken()))
+    assertThatThrownBy(() -> authService.refresh(authToken.refreshToken()))
         .isInstanceOf(BusinessException.class)
         .hasFieldOrPropertyWithValue("errorCode", AuthErrorCode.AUTH_REFRESH_TOKEN_INVALID);
     cleanUp(userId);
@@ -207,7 +206,7 @@ class AuthServiceTest {
    * <p>실제 진입점은 카카오 로그인(AU-01)이고 E 티켓의 몫이지만, 발급 자체는 이 티켓의 AU-02 라 서비스의 공개 메서드를 그대로 부른다. 여기서 베껴 쓰면
    * {@code admin} 판정이나 Refresh 수명이 프로덕션과 조용히 갈라진다.
    */
-  private TokenPair firstLogin(long userId) {
+  private AuthToken firstLogin(long userId) {
     return authService.createTokens(userId);
   }
 

@@ -1,5 +1,6 @@
 package com.duckmoim.auth.presentation;
 
+import static com.duckmoim.identity.UserFixture.aUser;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.request;
 
@@ -16,6 +17,7 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 
 /**
@@ -26,6 +28,10 @@ import org.springframework.test.web.servlet.MockMvc;
  *
  * <p><b>컨트롤러가 없어도 정확하다.</b> 인가는 핸들러 탐색보다 먼저 돌아서, 통과하면 404 가 나고 막히면 401·403 이 난다. 그래서 「막혔는가」는 컨트롤러
  * 유무와 무관하게 판정된다.
+ *
+ * <p><b>다만 컨트롤러가 생기면 이 표가 진짜 명령을 실행한다.</b> {@code DELETE /auth/token} 이 그랬다 — 등급을 확인하려고 찌른 요청이 실제
+ * 로그아웃이 되어 그 회원의 토큰을 전부 무효화했고, <b>뒤따르는 검사 열다섯 개가 401 로 무너졌다.</b> 실측했다. 그래서 {@link #statusOf} 가 요청마다
+ * 회원을 새로 만든다.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -95,6 +101,7 @@ class EndpointGradeTest {
 
   @Autowired private MockMvc mockMvc;
   @Autowired private TokenProvider tokenProvider;
+  @Autowired private JdbcTemplate jdbcTemplate;
 
   private static Stream<Endpoint> publicEndpoints() {
     return endpointsOf(Grade.PUBLIC);
@@ -209,11 +216,20 @@ class EndpointGradeTest {
     assertThat(statusOf(new Endpoint(HttpMethod.POST, path, Grade.PUBLIC), null)).isEqualTo(401);
   }
 
+  /**
+   * 요청 하나를 보내고 상태 코드만 돌려준다.
+   *
+   * <p><b>회원을 매번 새로 만든다.</b> 위 상수 셋은 이제 회원번호가 아니라 <b>등급 조합</b>만 뜻한다. 같은 회원을 돌려쓰면 명령을 실행하는 엔드포인트 하나가
+   * 그 회원의 상태를 바꿔 뒤따르는 검사를 오염시킨다.
+   */
   private int statusOf(Endpoint endpoint, AuthUser authUser) throws Exception {
     HttpHeaders headers = new HttpHeaders();
 
     if (authUser != null) {
-      headers.setBearerAuth(tokenProvider.createAccessToken(authUser));
+      AuthUser freshUser =
+          new AuthUser(aUser().insert(jdbcTemplate), authUser.signupCompleted(), authUser.admin());
+
+      headers.setBearerAuth(tokenProvider.createAccessToken(freshUser));
     }
     return mockMvc
         .perform(request(endpoint.method(), endpoint.path()).headers(headers))
