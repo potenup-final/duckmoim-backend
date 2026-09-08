@@ -11,6 +11,7 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import java.time.LocalDateTime;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -24,7 +25,9 @@ import lombok.NoArgsConstructor;
  * <p>대상을 {@code (targetType, targetId)} 두 컬럼으로 가리킨다. 종류가 셋이라 한 컬럼으로는 안 되고, 그래서 FK 도 걸 수 없다 — 컨텍스트
  * 맵이 Safety → Identity 를 [ID 참조] 로 정한 것과 같은 방향이다.
  *
- * <p><b>처리 전이는 여기 없다.</b> {@code PENDING → PROCESSING → RESOLVED} 는 백오피스(AD-03) 소관이고, 이 티켓은 접수까지다.
+ * <p><b>처리 이력을 이 애그리게이트가 진다</b> (도메인-모델링.md 「1. 유비쿼터스 언어」 각주). 감사 로그 다섯에 신고 처리가 없는 이유가 이것이다 — 같은
+ * 사실을 두 곳에 두면 갈라진다. 그래서 {@code result} · {@code memo} · {@code handledBy} · {@code handledAt} 가 여기
+ * 있다.
  */
 @Entity
 @Table(name = "report")
@@ -56,6 +59,22 @@ public class Report extends BaseEntity {
   @Enumerated(EnumType.STRING)
   @Column(name = "status", nullable = false, length = 20)
   private ReportStatus status;
+
+  // 무엇으로 종결했는가 (AD-03). 처리 전에는 null 이다.
+  @Enumerated(EnumType.STRING)
+  @Column(name = "result", length = 30)
+  private ReportResult result;
+
+  // 관리자가 남기는 판단 맥락. 선택이고 길이는 detail 과 같게 맞췄다.
+  @Column(name = "memo", length = 500)
+  private String memo;
+
+  // 애그리게이트 밖은 ID 로만 참조한다 (도메인 3.2).
+  @Column(name = "handled_by")
+  private Long handledBy;
+
+  @Column(name = "handled_at")
+  private LocalDateTime handledAt;
 
   private Report(
       Long reporterId,
