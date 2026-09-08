@@ -6,11 +6,16 @@ springdoc:
   swagger-ui:
     enabled: false
 
-# 아래 다섯 개는 GitHub Secrets 에 있고 배포 워크플로가 --env-file 로 넘긴다
+# 아래 여섯 개는 GitHub Secrets 에 있고 배포 워크플로가 --env-file 로 넘긴다
 # (ci-cd.yml 「환경 파일 전송」).
 #   DB_URL · DB_USERNAME · DB_PASSWORD · JWT_SECRET · CORS_ALLOWED_ORIGINS
-# 다섯 개 모두 기본값을 두지 않는다. 하나라도 비면 기동이 실패해야 한다 — 조용히 뜨면
+#   KAKAO_CLIENT_ID
+# 여섯 개 모두 기본값을 두지 않는다. 하나라도 비면 기동이 실패해야 한다 — 조용히 뜨면
 # 개발용 열쇠로 관리자 토큰을 위조할 수 있고, localhost 가 허용 출처로 남는다.
+#
+# KAKAO_CLIENT_SECRET 만 기본값이 빈 문자열이다. 카카오 콘솔에서 「보안」의 시크릿을
+# 켜지 않으면 애초에 보낼 값이 없고, 켜지 않은 상태가 정상 동작이라 필수로 두면
+# 켜지 않은 앱이 기동조차 못 한다.
 spring:
   datasource:
     url: ${DB_URL}
@@ -33,3 +38,8 @@ duckmoim:
   # localhost 기본값이 운영까지 따라오면 개발자 PC 에서 운영 API 를 부를 수 있다.
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS}
+
+  # 더미 열쇠로 뜨면 로그인이 카카오에서 KOE101 로 실패한다. 기동 실패가 낫다 —
+  # 「로그인만 안 되는 정상 기동」은 헬스체크를 통과해 배포가 성공으로 보인다.
+  kakao:
+    client-id: ${KAKAO_CLIENT_ID}
