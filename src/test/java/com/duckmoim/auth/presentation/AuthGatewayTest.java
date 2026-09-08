@@ -47,6 +47,9 @@ class AuthGatewayTest {
    */
   private static final AuthUser SIGNUP_COMPLETED = new AuthUser(2L, true, false);
 
+  /** V11 의 6번(카카오 1006). V31 이 {@code admin_accounts} 에 등록해 둔 유일한 관리자다. */
+  private static final long SEEDED_ADMIN = 6L;
+
   @Autowired private MockMvc mockMvc;
   @Autowired private TokenProvider tokenProvider;
   @Autowired private AuthService authService;
@@ -146,6 +149,57 @@ class AuthGatewayTest {
         .andExpect(jsonPath("$.code").value("AUTH_FORBIDDEN"));
 
     cleanUp(pending);
+  }
+
+  /**
+   * <b>AD-06 의 검증 기준 — 일반 계정으로 접근 시 403.</b>
+   *
+   * <p>토큰이 「관리자다」라고 주장해도 화이트리스트에 없으면 막힌다. <b>토큰만 믿으면 화이트리스트에서 지운 뒤에도 최대 30분간 통과한다</b> — 그 문 안에 비밀
+   * 댓글 본문이 있다 (ADR 0003).
+   */
+  @Test
+  @DisplayName("토큰이 관리자라고 해도 화이트리스트에 없으면 관리자 경로가 403 이다.")
+  void adminPathRejectsUnlistedAccount() throws Exception {
+    long userId = aUser().insert(jdbcTemplate);
+
+    mockMvc
+        .perform(get("/api/v1/admin/reports").headers(bearer(new AuthUser(userId, true, true))))
+        .andExpect(status().isForbidden())
+        .andExpect(jsonPath("$.code").value("AUTH_FORBIDDEN"));
+
+    cleanUp(userId);
+  }
+
+  /** V11 의 6번이 V31 로 {@code admin_accounts} 에 등록된 관리자다. */
+  @Test
+  @DisplayName("화이트리스트에 등록된 계정은 관리자 경로의 인가를 통과한다.")
+  void adminPathAcceptsListedAccount() throws Exception {
+    int status =
+        mockMvc
+            .perform(
+                get("/api/v1/admin/reports")
+                    .headers(bearer(new AuthUser(SEEDED_ADMIN, true, true))))
+            .andReturn()
+            .getResponse()
+            .getStatus();
+
+    assertThat(status).isNotIn(401, 403);
+  }
+
+  /**
+   * 권한을 주는 쪽은 최대 30분 늦는다 — 의도한 비대칭이다.
+   *
+   * <p>화이트리스트에 있어도 토큰이 {@code admin: false} 면 통과하지 않는다. 그 사용자는 재발급 뒤에 통한다. <b>불편이지 구멍이 아니다</b> — 반대
+   * 방향(뺏는 쪽)이 즉시 반영되는 것이 중요하다.
+   */
+  @Test
+  @DisplayName("화이트리스트에 있어도 토큰이 관리자가 아니면 관리자 경로가 403 이다.")
+  void adminPathRejectsWhenTokenIsNotAdmin() throws Exception {
+    mockMvc
+        .perform(
+            get("/api/v1/admin/reports").headers(bearer(new AuthUser(SEEDED_ADMIN, true, false))))
+        .andExpect(status().isForbidden())
+        .andExpect(jsonPath("$.code").value("AUTH_FORBIDDEN"));
   }
 
   @Test

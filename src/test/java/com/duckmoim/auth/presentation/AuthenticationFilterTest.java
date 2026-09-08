@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.mock;
 
+import com.duckmoim.admin.infra.AdminAccountRepository;
 import com.duckmoim.auth.domain.AuthUser;
 import com.duckmoim.auth.exception.AuthErrorCode;
 import com.duckmoim.auth.infra.JwtProvider;
@@ -41,6 +42,9 @@ class AuthenticationFilterTest {
    * 토큰에 무엇을 담아도 DB 가 이긴다. 그래서 「가입 미완료」를 검증하려면 <b>DB 쪽을 미완료로</b> 만들어야 한다.
    */
   private AuthenticationFilter filterWith(boolean signupCompleted) {
+    AdminAccountRepository adminAccountRepository = mock(AdminAccountRepository.class);
+    given(adminAccountRepository.existsByKakaoUserId(any())).willReturn(true);
+
     UserRepository userRepository = mock(UserRepository.class);
     given(userRepository.findById(any()))
         .willAnswer(
@@ -52,7 +56,8 @@ class AuthenticationFilterTest {
               return Optional.of(user);
             });
 
-    return new AuthenticationFilter(new AuthenticationService(jwtProvider, userRepository));
+    return new AuthenticationFilter(
+        new AuthenticationService(jwtProvider, userRepository, adminAccountRepository));
   }
 
   @AfterEach

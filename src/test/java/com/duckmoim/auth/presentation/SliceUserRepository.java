@@ -4,6 +4,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.mock;
 
+import com.duckmoim.admin.infra.AdminAccountRepository;
 import com.duckmoim.identity.domain.User;
 import com.duckmoim.identity.infra.UserRepository;
 import java.util.Optional;
@@ -41,5 +42,14 @@ public class SliceUserRepository {
             });
 
     return userRepository;
+  }
+
+  /** 관문이 관리자 여부도 DB 로 확인하게 됐다 (AD-06). 슬라이스에는 그 표도 없다. */
+  @Bean
+  public AdminAccountRepository adminAccountRepository() {
+    AdminAccountRepository adminAccountRepository = mock(AdminAccountRepository.class);
+    given(adminAccountRepository.existsByKakaoUserId(any())).willReturn(true);
+
+    return adminAccountRepository;
   }
 }

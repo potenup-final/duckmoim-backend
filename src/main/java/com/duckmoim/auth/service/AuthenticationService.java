@@ -1,5 +1,6 @@
 package com.duckmoim.auth.service;
 
+import com.duckmoim.admin.infra.AdminAccountRepository;
 import com.duckmoim.auth.domain.AccessTokenClaims;
 import com.duckmoim.auth.domain.AuthUser;
 import com.duckmoim.auth.domain.TokenProvider;
@@ -26,6 +27,7 @@ public class AuthenticationService {
 
   private final TokenProvider tokenProvider;
   private final UserRepository userRepository;
+  private final AdminAccountRepository adminAccountRepository;
 
   /**
    * 토큰을 인증 주체로 바꾼다. 판정 셋을 차례로 지난다 — 서명·용도·만료, 회원 실재, 무효화 시각.
@@ -44,6 +46,8 @@ public class AuthenticationService {
    *
    * <p><b>가입 완료 여부는 토큰이 아니라 회원 행에서 읽는다</b> (I-02 · AU-07). 토큰의 클레임은 발급 시점의 사진이라 최대 30분 낡는다 — 가입 정보를
    * 방금 입력한 사용자가 <b>재발급 전까지 계속 「가입 정보를 먼저 입력해 주세요」로 막혔다.</b> 회원은 위에서 이미 읽었으므로 조회가 늘지 않는다.
+   *
+   * <p><b>관리자 여부도 DB 로 확인한다</b> (AD-06). 다만 방향이 비대칭이다 — {@link #isAdmin} 에 이유가 있다.
    */
   @Transactional(readOnly = true)
   public AuthUser authenticate(String accessToken) {
@@ -65,13 +69,30 @@ public class AuthenticationService {
   /**
    * 관문이 쓸 인증 주체를 만든다.
    *
-   * <p><b>{@code signupCompleted} 만 회원 행에서 덮는다.</b> 관리자 여부는 아직 클레임을 그대로 쓴다 — 화이트리스트 조회가 별도 표라 조회가
-   * 하나 늘고, 그 자리를 관리자 경로로 좁힐지가 따로 판단할 일이다 (AD-06).
-   *
    * <p>회원번호도 회원 행에서 가져온다. 클레임의 {@code sub} 로 찾은 행이라 같은 값이지만, <b>판정에 쓰는 값의 출처를 하나로</b> 두면 다음 사람이 어디를
    * 믿어야 하는지 묻지 않는다.
    */
   private AuthUser authUserOf(User user, AuthUser fromToken) {
-    return new AuthUser(user.getId(), user.isSignupCompleted(), fromToken.admin());
+    return new AuthUser(user.getId(), user.isSignupCompleted(), isAdmin(user, fromToken));
+  }
+
+  /**
+   * 관리자인지 (AD-06 · 0003-관리자-인가-방식.md 「선택」).
+   *
+   * <p><b>토큰이 「관리자다」라고 할 때만 DB 로 확인한다.</b> 판정을 한쪽 방향으로만 미룬 것이고, 그 비대칭이 의도다.
+   *
+   * <ul>
+   *   <li><b>권한을 뺏는 쪽은 즉시 반영된다.</b> 화이트리스트에서 회원번호를 지우면 다음 요청에서 끊긴다. 토큰만 믿으면 최대 30분간 관리자로 남고, 그 문 안에
+   *       <b>비밀 댓글 본문</b>이 있다 (ADR 0003 이 백오피스를 「그것을 여는 유일한 창구」로 적었다)
+   *   <li><b>권한을 주는 쪽은 최대 30분 늦는다.</b> 방금 등록된 관리자는 재발급 뒤에 통한다 — 불편이지 구멍이 아니다
+   * </ul>
+   *
+   * <p><b>그래서 모든 요청에 조회가 붙지 않는다.</b> 관리자는 넷이고 나머지 사용자는 클레임이 {@code false} 라 단축 평가에서 끝난다. `SIGNUP` 은
+   * 회원을 이미 읽어 공짜였지만 {@code admin_accounts} 는 별도 표라 사정이 다르다.
+   *
+   * <p>판정 자리는 ADR 0003 조건 2 를 지킨다 — 관문 <b>한 곳</b>이고, 컨트롤러마다 어노테이션을 흩뿌리지 않는다.
+   */
+  private boolean isAdmin(User user, AuthUser fromToken) {
+    return fromToken.admin() && adminAccountRepository.existsByKakaoUserId(user.getKakaoUserId());
   }
 }
