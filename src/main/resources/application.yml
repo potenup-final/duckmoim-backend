@@ -29,6 +29,21 @@ duckmoim:
     access-token-ttl: 30m
     refresh-token-ttl: 14d
 
+  # 크롤러 적재 키 (EV-03 · D-11). 사람이 아니라 GitHub Actions 가 보낸다.
+  # jwt.secret 과 같은 배치다 — local·test 는 아래 기본값으로 뜨고 prod 는 필수다.
+  ingest:
+    key: ${INGEST_KEY:duckmoim-local-ingest-key-do-not-use-in-production}
+
+  catalog:
+    # 이 시간 동안 크롤러에 안 잡힌 행사를 목록에서 숨긴다 (D-7).
+    #
+    # 72시간인 이유 — 잡이 하루 한 번(04:00 KST)이라 이틀 연속 실패해도 멀쩡한 행사가
+    # 사라지지 않는다. 잡 실패 횟수가 아니라 시각으로 판정하는 이유는, 카운터 방식은
+    # 잡이 멈춘 동안 카운터도 멈춰서 유령이 무한히 남기 때문이다.
+    #
+    # 잠정값이다. 전환(EV-08) 이후 실측으로 조정한다.
+    stale-after: 72h
+
   # 프론트(Vercel)와 API(AWS)가 다른 도메인이라 브라우저 호출에 CORS 가 필요하다.
   # 쿠키를 쓰지 않으므로 credentials 는 열지 않는다 (ADR 0001).
   cors:

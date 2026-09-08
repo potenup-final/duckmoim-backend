@@ -17,7 +17,8 @@ import org.springframework.http.HttpStatus;
 @Getter
 @RequiredArgsConstructor
 public enum EventErrorCode implements ErrorCode {
-  EVENT_NOT_FOUND(HttpStatus.NOT_FOUND, "행사를 찾을 수 없습니다.");
+  EVENT_NOT_FOUND(HttpStatus.NOT_FOUND, "행사를 찾을 수 없습니다."),
+  EVENT_REGION_UNKNOWN(HttpStatus.BAD_REQUEST, "등록되지 않은 지역 코드입니다.");
 
   private final HttpStatus status;
   private final String message;
