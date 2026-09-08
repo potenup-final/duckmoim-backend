@@ -12,6 +12,8 @@ import com.duckmoim.auth.domain.TokenProvider;
 import com.duckmoim.identity.domain.SignupStatus;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -32,6 +34,7 @@ import org.springframework.test.web.servlet.MockMvc;
 class UserControllerTest {
 
   @Autowired private MockMvc mockMvc;
+  @Autowired private com.fasterxml.jackson.databind.ObjectMapper objectMapper;
   @Autowired private TokenProvider tokenProvider;
   @Autowired private JdbcTemplate jdbcTemplate;
 
@@ -214,10 +217,18 @@ class UserControllerTest {
     cleanUp(userId);
   }
 
-  /** {@code @Size(min = 1)} 이 {@code null} 은 통과시키고 빈 문자열은 막는다 — 닉네임은 비울 수 없다. */
-  @Test
-  @DisplayName("닉네임을 빈 문자열로 보내면 400 이다.")
-  void updateProfile_blankNickname() throws Exception {
+  /**
+   * <b>닉네임은 안 보낼 수는 있어도 비울 수는 없다.</b> 「비움」의 모양이 하나가 아니라서 셋을 함께 본다.
+   *
+   * <p>{@code @Size(min = 1)} 만 걸었을 때 <b>공백만으로 이루어진 닉네임이 통과했다</b> — 길이 검사라 {@code " "} 를 3자로 센다. PR
+   * #57 리뷰에서 지적받아 실측하고(200 이 나왔다) {@code @Pattern} 으로 고쳤다.
+   *
+   * <p>탭과 줄바꿈까지 넣은 것은 정규식에 {@code (?s)} 를 붙인 이유를 지키기 위함이다 — 없으면 {@code .} 가 줄바꿈을 넘지 못해 판정이 갈린다.
+   */
+  @ParameterizedTest
+  @ValueSource(strings = {"", "   ", "\t", "\n", " \t\n "})
+  @DisplayName("닉네임을 빈 값이나 공백만으로 보내면 400 이다.")
+  void updateProfile_blankNickname(String nickname) throws Exception {
     long userId = aUser().insert(jdbcTemplate);
 
     mockMvc
@@ -225,8 +236,25 @@ class UserControllerTest {
             patch("/api/v1/users/me/profile")
                 .headers(bearer(userId, true))
                 .contentType(MediaType.APPLICATION_JSON)
-                .content("{\"nickname\":\"\"}"))
+                .content(objectMapper.writeValueAsString(java.util.Map.of("nickname", nickname))))
         .andExpect(status().isBadRequest());
+
+    cleanUp(userId);
+  }
+
+  /** 앞뒤 공백은 막지 않는다 — 가입(AU-05)의 {@code @NotBlank} 와 같은 판정이어야 두 경로가 갈리지 않는다. */
+  @Test
+  @DisplayName("앞뒤에 공백이 섞인 닉네임은 통과한다.")
+  void updateProfile_nicknameWithSurroundingSpaces() throws Exception {
+    long userId = aUser().insert(jdbcTemplate);
+
+    mockMvc
+        .perform(
+            patch("/api/v1/users/me/profile")
+                .headers(bearer(userId, true))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"nickname\":\" 띄어쓴덕후 \"}"))
+        .andExpect(status().isOk());
 
     cleanUp(userId);
   }
