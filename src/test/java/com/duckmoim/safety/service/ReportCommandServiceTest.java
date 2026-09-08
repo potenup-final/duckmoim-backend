@@ -9,6 +9,7 @@ import com.duckmoim.common.exception.BusinessException;
 import com.duckmoim.common.exception.ErrorCode;
 import com.duckmoim.companion.domain.CommentReadContext;
 import com.duckmoim.companion.domain.CommentReadTarget;
+import com.duckmoim.companion.domain.CommentStatus;
 import com.duckmoim.companion.domain.CommentVisibilityPolicy;
 import com.duckmoim.companion.exception.CommentErrorCode;
 import com.duckmoim.companion.exception.PostErrorCode;
@@ -25,6 +26,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -158,6 +160,31 @@ class ReportCommandServiceTest {
         .isInstanceOf(BusinessException.class)
         .extracting(ReportCommandServiceTest::errorCodeOf)
         .isEqualTo(ReportErrorCodeHolder.DUPLICATED);
+  }
+
+  /**
+   * CM-14 의 「확정 후 반영」 항목을 못박는다 — <b>지운 댓글 신고도 접수한다</b> (STAR-60 에서 결정).
+   *
+   * <p>근거는 {@link ReportTargetReader} 에 적었다. 요약하면 막으면 지우고 도망가는 길이 생기고, 조치가 유저 제재로 가므로 댓글이 없어진 뒤에도
+   * 접수가 생산적이다.
+   *
+   * <p><b>이 테스트가 결정을 지키는 유일한 장치다.</b> 판정기는 {@code existsById} 라 상태를 보지 않아서, 누가 「소프트 삭제는 404」 규칙에
+   * 맞추려고 상태 조건을 넣어도 다른 테스트는 하나도 빨개지지 않는다.
+   */
+  @DisplayName("지운 댓글도 신고로 접수된다.")
+  @ParameterizedTest(name = "{0}")
+  @EnumSource(
+      value = CommentStatus.class,
+      names = {"DELETED", "BLINDED"})
+  void reportComment_isInactive(CommentStatus status) {
+    long inactiveCommentId =
+        aComment().postId(postId).authorId(TARGET_USER_ID).status(status).insert(jdbc);
+
+    Long reportId =
+        reportCommandService.report(
+            command(ReportTargetType.COMMENT, inactiveCommentId, ReportReason.ABUSE));
+
+    assertThat(reportRepository.existsById(reportId)).isTrue();
   }
 
   @DisplayName("없는 대상은 대상별 404 로 거절한다.")
