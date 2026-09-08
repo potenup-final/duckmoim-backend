@@ -8,13 +8,15 @@ import com.duckmoim.identity.exception.UserErrorCode;
 import com.duckmoim.identity.infra.UserRepository;
 import java.time.Clock;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 회원 쓰기 — 가입 정보 입력과 프로필 수정 (AU-05 · AU-06 · AU-08).
+ * 회원 쓰기 — 가입 정보 입력 · 프로필 수정 · 탈퇴 (AU-05 · AU-06 · AU-08 · AU-11).
  *
  * <p>카카오가 주는 것은 회원번호뿐이라(결정 D-2) 계정은 {@code PENDING_SIGNUP_INFO} 로 태어난다. <b>여기가 그 상태를 벗어나는 유일한
  * 창구다.</b>
@@ -115,6 +117,36 @@ public class UserService {
   /** 보내지 않았거나({@code null}) 지금 값과 같으면 바뀌는 것이 없다. */
   private boolean isNicknameChanged(User user, String nickname) {
     return nickname != null && !nickname.equals(user.getNickname());
+  }
+
+  /**
+   * 계정을 탈퇴 처리한다 (AU-11).
+   *
+   * <p><b>토큰을 여기서 지우지 않는다.</b> {@code refresh_token} 은 {@code auth} 의 표이고, 게이트가 service 를
+   * presentation 에서만 참조하게 막아 여기서 {@code AuthService} 를 부를 수 없다. 저장소를 직접 뚫으면 {@code identity → auth}
+   * 방향이 생겨 <b>컨텍스트 의존이 순환한다</b>({@code auth → identity} 가 이미 있다). 그래서 컨트롤러가 이 호출 뒤에 로그아웃을 이어 부른다.
+   *
+   * <p><b>그래도 접근은 이 한 번의 커밋으로 끊긴다.</b> 관문이 매 요청 회원을 읽어 탈퇴를 검사하므로(D 티켓) 토큰이 살아 있어도 401 이다. 토큰 정리는 접근
+   * 차단이 아니라 남는 행을 없애는 위생 작업이다.
+   *
+   * <p><b>{@code flush} 를 부르지 않는다.</b> 닉네임을 <b>비우는</b> 것이라 유니크 제약을 위반할 수가 없다 — 제약 위반을 409 로 옮기는
+   * {@code completeSignup} · {@code updateProfile} 과 다른 자리다.
+   *
+   * <p>회원 행을 잠그고 읽는다. B 티켓의 토큰 경로와 같은 락 순서라 데드락이 생기지 않는다.
+   *
+   * <p><b>주입된 {@code Clock} 을 쓰지 않는다.</b> 그 빈은 {@code Asia/Seoul} 이고(행사 종료일 판정이 KST 여야 해서 그렇게 정해졌다)
+   * {@code withdrawn_at} 은 다른 타임스탬프와 같은 UTC 컬럼이다. 같은 이유를 {@code AuthService.now} 가 이미 적어 두었다. 이
+   * 서비스의 {@code Clock} 은 「올해」를 KST 로 읽어야 하는 {@code currentYear} 전용이다.
+   */
+  @Transactional
+  public void withdraw(Long userId) {
+    User user =
+        userRepository
+            .findByIdForUpdate(userId)
+            .filter(found -> !found.isWithdrawn())
+            .orElseThrow(() -> new BusinessException(UserErrorCode.USER_NOT_FOUND));
+
+    user.withdraw(LocalDateTime.now(ZoneOffset.UTC));
   }
 
   /**
