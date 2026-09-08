@@ -21,9 +21,9 @@ public final class UserFixture {
 
   private static final String INSERT =
       """
-      INSERT INTO user (kakao_user_id, nickname, birth_year, status,
+      INSERT INTO user (kakao_user_id, nickname, birth_year, bio, profile_image_url, status,
                         last_seen_at, tokens_invalidated_at, created_at, updated_at)
-      VALUES (?, ?, 1998, ?, ?, ?, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6))
+      VALUES (?, ?, 1998, ?, ?, ?, ?, ?, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6))
       """;
 
   private final long sequence = SEQUENCE.getAndIncrement();
@@ -31,6 +31,8 @@ public final class UserFixture {
   private SignupStatus status = SignupStatus.ACTIVE;
   private Long kakaoUserId;
   private String nickname;
+  private String bio;
+  private String profileImageUrl;
   private LocalDateTime lastSeenAt;
   private LocalDateTime tokensInvalidatedAt;
 
@@ -57,6 +59,18 @@ public final class UserFixture {
     return this;
   }
 
+  /**
+   * 한줄소개와 프로필 이미지 URL 을 지정한다. 안 주면 둘 다 {@code null} 이다.
+   *
+   * <p>기본값을 {@code null} 로 두는 것이 실제와 같다 — 자동 가입(AU-01)도 가입 정보 입력(AU-05)도 이 둘을 채우지 않아서, 채우는 경로는 프로필
+   * 수정(AU-08)과 이미지 업로드(I 티켓)뿐이다.
+   */
+  public UserFixture profile(String bio, String profileImageUrl) {
+    this.bio = bio;
+    this.profileImageUrl = profileImageUrl;
+    return this;
+  }
+
   public UserFixture status(SignupStatus status) {
     this.status = status;
     return this;
@@ -76,7 +90,15 @@ public final class UserFixture {
   public long insert(JdbcTemplate jdbc) {
     long inserted = kakaoUserId == null ? sequence : kakaoUserId;
 
-    jdbc.update(INSERT, inserted, nickname(), status.name(), lastSeenAt, tokensInvalidatedAt);
+    jdbc.update(
+        INSERT,
+        inserted,
+        nickname(),
+        bio,
+        profileImageUrl,
+        status.name(),
+        lastSeenAt,
+        tokensInvalidatedAt);
 
     return jdbc.queryForObject("SELECT id FROM user WHERE kakao_user_id = ?", Long.class, inserted);
   }
