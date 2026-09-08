@@ -115,6 +115,29 @@ public class User extends BaseEntity {
     this.status = SignupStatus.ACTIVE;
   }
 
+  /**
+   * 프로필을 고친다 (AU-08).
+   *
+   * <p><b>부분 수정이다.</b> {@code null} 인 필드는 건드리지 않는다 — {@code PATCH} 라 「보내지 않았다」와 「비워 달라」가 달라야 하고, 그
+   * 구분을 {@link Profile} 이 값으로 표현한다.
+   *
+   * <p><b>빈 한줄소개는 {@code null} 로 저장한다.</b> 「비어 있다」를 표현하는 방법이 두 가지가 되면 조회하는 쪽이 둘 다 검사해야 한다 — 자동 가입
+   * 직후는 {@code null} 이고 지운 뒤는 {@code ""} 가 되어, 같은 화면 상태가 값 둘로 갈린다.
+   *
+   * <p><b>닉네임은 비울 수 없다.</b> 빈 값이 오면 여기까지 도달하지 않는다 — 요청 DTO 가 400 으로 끊는다. 도메인이 다시 막지 않는 이유는 「비움」의
+   * 의미가 프로필 수정이라는 <b>입력 계약</b>에서 나오기 때문이다. 유일성(I-01)은 여기가 아니라 DB 제약이 지킨다.
+   *
+   * <p><b>출생연도를 바꾸지 않는다.</b> 가입 후 잠기고({@link #completeSignup}) {@link Profile} 에 필드조차 없다.
+   */
+  public void updateProfile(Profile profile) {
+    if (profile.nickname() != null) {
+      this.nickname = profile.nickname();
+    }
+    if (profile.bio() != null) {
+      this.bio = profile.bio().isBlank() ? null : profile.bio();
+    }
+  }
+
   /** AU-03 재사용 탐지의 「해당 유저 전체 폐기」와 AU-04 로그아웃이 함께 부른다. */
   public void invalidateAllTokens(LocalDateTime now) {
     this.tokensInvalidatedAt = now;

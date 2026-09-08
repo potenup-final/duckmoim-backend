@@ -2,6 +2,7 @@ package com.duckmoim.identity.presentation;
 
 import static com.duckmoim.identity.UserFixture.aUser;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -11,6 +12,8 @@ import com.duckmoim.auth.domain.TokenProvider;
 import com.duckmoim.identity.domain.SignupStatus;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -27,10 +30,11 @@ import org.springframework.test.web.servlet.MockMvc;
  */
 @SpringBootTest
 @AutoConfigureMockMvc
-@DisplayName("가입 정보와 내 정보")
+@DisplayName("가입 정보 · 내 정보 · 프로필")
 class UserControllerTest {
 
   @Autowired private MockMvc mockMvc;
+  @Autowired private com.fasterxml.jackson.databind.ObjectMapper objectMapper;
   @Autowired private TokenProvider tokenProvider;
   @Autowired private JdbcTemplate jdbcTemplate;
 
@@ -189,6 +193,239 @@ class UserControllerTest {
 
   private long pendingUser() {
     return aUser().status(SignupStatus.PENDING_SIGNUP_INFO).insert(jdbcTemplate);
+  }
+
+  /** AU-08 의 응답 계약 — 본문 없이 200 이다. 컨벤션 표에 204 가 없다. */
+  @Test
+  @DisplayName("프로필을 수정하면 본문 없이 200 이다.")
+  void updateProfile() throws Exception {
+    long userId = aUser().nickname("계약전덕후").insert(jdbcTemplate);
+
+    mockMvc
+        .perform(
+            patch("/api/v1/users/me/profile")
+                .headers(bearer(userId, true))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"nickname\":\"계약후덕후\",\"bio\":\"새 소개\"}"))
+        .andExpect(status().isOk())
+        .andExpect(
+            result ->
+                org.assertj.core.api.Assertions.assertThat(
+                        result.getResponse().getContentAsString())
+                    .isEmpty());
+
+    cleanUp(userId);
+  }
+
+  /**
+   * <b>닉네임은 안 보낼 수는 있어도 비울 수는 없다.</b> 「비움」의 모양이 하나가 아니라서 셋을 함께 본다.
+   *
+   * <p>{@code @Size(min = 1)} 만 걸었을 때 <b>공백만으로 이루어진 닉네임이 통과했다</b> — 길이 검사라 {@code " "} 를 3자로 센다. PR
+   * #57 리뷰에서 지적받아 실측하고(200 이 나왔다) {@code @Pattern} 으로 고쳤다.
+   *
+   * <p>탭과 줄바꿈까지 넣은 것은 정규식에 {@code (?s)} 를 붙인 이유를 지키기 위함이다 — 없으면 {@code .} 가 줄바꿈을 넘지 못해 판정이 갈린다.
+   */
+  @ParameterizedTest
+  @ValueSource(strings = {"", "   ", "\t", "\n", " \t\n "})
+  @DisplayName("닉네임을 빈 값이나 공백만으로 보내면 400 이다.")
+  void updateProfile_blankNickname(String nickname) throws Exception {
+    long userId = aUser().insert(jdbcTemplate);
+
+    mockMvc
+        .perform(
+            patch("/api/v1/users/me/profile")
+                .headers(bearer(userId, true))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(java.util.Map.of("nickname", nickname))))
+        .andExpect(status().isBadRequest());
+
+    cleanUp(userId);
+  }
+
+  /** 앞뒤 공백은 막지 않는다 — 가입(AU-05)의 {@code @NotBlank} 와 같은 판정이어야 두 경로가 갈리지 않는다. */
+  @Test
+  @DisplayName("앞뒤에 공백이 섞인 닉네임은 통과한다.")
+  void updateProfile_nicknameWithSurroundingSpaces() throws Exception {
+    long userId = aUser().insert(jdbcTemplate);
+
+    mockMvc
+        .perform(
+            patch("/api/v1/users/me/profile")
+                .headers(bearer(userId, true))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"nickname\":\" 띄어쓴덕후 \"}"))
+        .andExpect(status().isOk());
+
+    cleanUp(userId);
+  }
+
+  @Test
+  @DisplayName("한줄소개가 100자를 넘으면 400 이다.")
+  void updateProfile_bioTooLong() throws Exception {
+    long userId = aUser().insert(jdbcTemplate);
+
+    mockMvc
+        .perform(
+            patch("/api/v1/users/me/profile")
+                .headers(bearer(userId, true))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"bio\":\"" + "가".repeat(101) + "\"}"))
+        .andExpect(status().isBadRequest());
+
+    cleanUp(userId);
+  }
+
+  /**
+   * 출생연도를 <b>거부하지 않고 무시한다.</b> 요청 DTO 에 필드가 없어서 잭슨이 흘려보낸다 — 400 을 내면 그 필드가 언젠가 열릴 것처럼 보인다 (API 설계
+   * 2-2 「출생연도는 받지 않는다」).
+   */
+  @Test
+  @DisplayName("출생연도를 함께 보내도 200 이고 값이 바뀌지 않는다.")
+  void updateProfile_ignoresBirthYear() throws Exception {
+    long userId = aUser().nickname("연도보낸덕후").insert(jdbcTemplate);
+
+    mockMvc
+        .perform(
+            patch("/api/v1/users/me/profile")
+                .headers(bearer(userId, true))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"nickname\":\"연도무시덕후\",\"birthYear\":1900}"))
+        .andExpect(status().isOk());
+
+    Integer birthYear =
+        jdbcTemplate.queryForObject(
+            "SELECT birth_year FROM user WHERE id = ?", Integer.class, userId);
+    org.assertj.core.api.Assertions.assertThat(birthYear).isEqualTo(1998);
+
+    cleanUp(userId);
+  }
+
+  @Test
+  @DisplayName("토큰 없이 프로필을 수정하면 401 이다.")
+  void updateProfile_withoutToken() throws Exception {
+    mockMvc
+        .perform(
+            patch("/api/v1/users/me/profile")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"nickname\":\"익명덕후\"}"))
+        .andExpect(status().isUnauthorized());
+  }
+
+  /** AU-09 의 노출 범위다. <b>필드가 다섯을 넘으면 실패한다</b> — 출생연도나 가입 상태가 새어 나가면 여기서 잡힌다. */
+  @Test
+  @DisplayName("공개 프로필에는 노출 항목 넷과 회원번호만 나간다.")
+  void findPublicProfile() throws Exception {
+    long userId =
+        aUser().nickname("공개프로필덕후").profile("생카 돌기 좋아해요", "/avatar/a1.webp").insert(jdbcTemplate);
+
+    mockMvc
+        .perform(get("/api/v1/users/" + userId))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.id").value(userId))
+        .andExpect(jsonPath("$.nickname").value("공개프로필덕후"))
+        .andExpect(jsonPath("$.bio").value("생카 돌기 좋아해요"))
+        .andExpect(jsonPath("$.profileImageUrl").value("/avatar/a1.webp"))
+        // 접속이 관측된 적 없는 픽스처라 값이 null 이다. 키는 있다 (API 컨벤션 「DTO 규칙」)
+        .andExpect(jsonPath("$.lastSeen").value(org.hamcrest.Matchers.nullValue()))
+        .andExpect(jsonPath("$.birthYear").doesNotExist())
+        .andExpect(jsonPath("$.signupCompleted").doesNotExist())
+        .andExpect(jsonPath("$.sanction").doesNotExist())
+        .andExpect(jsonPath("$.length()").value(5));
+
+    cleanUp(userId);
+  }
+
+  /** 프론트가 이 문자열을 화면 문구로 매핑한다 (화면 계약 3장의 표). 열거값 이름이 그대로 나가야 한다. */
+  @Test
+  @DisplayName("최근 접속은 구간 이름 문자열로 나간다.")
+  void findPublicProfile_lastSeen() throws Exception {
+    long userId =
+        aUser()
+            .nickname("접속있는덕후")
+            .lastSeenAt(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).minusDays(5))
+            .insert(jdbcTemplate);
+
+    mockMvc
+        .perform(get("/api/v1/users/" + userId))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.lastSeen").value("WITHIN_WEEK"));
+
+    cleanUp(userId);
+  }
+
+  /** 만나기 전에 상대를 확인하는 화면이라 로그인을 요구하면 그 확인이 막힌다 (등급 {@code PUBLIC}). */
+  @Test
+  @DisplayName("공개 프로필은 토큰 없이 읽을 수 있다.")
+  void findPublicProfile_withoutToken() throws Exception {
+    long userId = aUser().nickname("비회원도보는덕후").insert(jdbcTemplate);
+
+    mockMvc.perform(get("/api/v1/users/" + userId)).andExpect(status().isOk());
+
+    cleanUp(userId);
+  }
+
+  @Test
+  @DisplayName("탈퇴한 회원의 공개 프로필은 404 다.")
+  void findPublicProfile_withdrawn() throws Exception {
+    long userId = aUser().status(SignupStatus.WITHDRAWN).insert(jdbcTemplate);
+
+    mockMvc.perform(get("/api/v1/users/" + userId)).andExpect(status().isNotFound());
+
+    cleanUp(userId);
+  }
+
+  @Test
+  @DisplayName("가입을 마치지 않은 회원의 공개 프로필은 404 다.")
+  void findPublicProfile_signupIncomplete() throws Exception {
+    long userId = aUser().status(SignupStatus.PENDING_SIGNUP_INFO).insert(jdbcTemplate);
+
+    mockMvc.perform(get("/api/v1/users/" + userId)).andExpect(status().isNotFound());
+
+    cleanUp(userId);
+  }
+
+  /**
+   * <b>{@code /users/me} 가 {@code /users/&#123;userId&#125;} 에 먹히지 않는지 본다.</b>
+   *
+   * <p>둘이 같은 모양이고 등급도 다르다 ({@code AUTH} vs {@code PUBLIC}). 스프링이 리터럴 경로를 변수 경로보다 먼저 고르므로 지금은 내 정보로
+   * 가는데, 그 우선순위가 뒤집히면 {@code "me"} 를 {@code Long} 으로 바꾸다 터진다. <b>조용히 뒤집히지 않게 못박는다.</b>
+   */
+  @Test
+  @DisplayName("내 정보 경로는 회원번호 경로에 먹히지 않는다.")
+  void findMyProfile_isNotSwallowedByPathVariable() throws Exception {
+    long userId = aUser().nickname("리터럴우선덕후").insert(jdbcTemplate);
+
+    mockMvc
+        .perform(get("/api/v1/users/me").headers(bearer(userId, true)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.signupCompleted").value(true))
+        .andExpect(jsonPath("$.sanction").exists());
+
+    cleanUp(userId);
+  }
+
+  /** 같은 자리에 있는 또 하나의 리터럴 경로다. 이쪽이 먹히면 닉네임 사전 조회가 죽는다. */
+  @Test
+  @DisplayName("닉네임 확인 경로도 회원번호 경로에 먹히지 않는다.")
+  void checkNicknameAvailability_isNotSwallowedByPathVariable() throws Exception {
+    long userId = aUser().insert(jdbcTemplate);
+
+    mockMvc
+        .perform(
+            get("/api/v1/users/nickname-availability")
+                .param("nickname", "먹히지않는이름")
+                .headers(bearer(userId, false)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.available").exists());
+
+    cleanUp(userId);
+  }
+
+  /** 숫자가 아닌 값은 타입 변환에서 걸린다. {@code GlobalExceptionHandler} 가 400 으로 옮긴다. */
+  @Test
+  @DisplayName("회원번호가 숫자가 아니면 400 이다.")
+  void findPublicProfile_malformedUserId() throws Exception {
+    mockMvc.perform(get("/api/v1/users/abc")).andExpect(status().isBadRequest());
   }
 
   private HttpHeaders bearer(long userId, boolean signupCompleted) {
