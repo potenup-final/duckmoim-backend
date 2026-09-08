@@ -13,10 +13,11 @@ import java.time.OffsetDateTime;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
-/** 모집글 작성의 검증 기준 중 도메인이 지는 것 (PO-01 · PO-02 · I-04). */
+/** 모집글 작성과 마감의 검증 기준 중 도메인이 지는 것 (PO-01 · PO-02 · PO-07 · I-04). */
 class CompanionPostTest {
 
   private static final long HOST_ID = 7L;
+  private static final long STRANGER_ID = 99L;
   private static final LocalDate ENDS_ON = LocalDate.of(2026, 9, 14);
 
   private static final MeetPoint MEET_POINT =
@@ -97,6 +98,58 @@ class CompanionPostTest {
     CompanionPost post = open(kst("2026-09-14T09:00:00+09:00"), null);
 
     assertThat(post.getCapacity()).isNull();
+  }
+
+  @DisplayName("방장이 마감하면 모집이 완료되고 사유가 직접 마감으로 남는다.")
+  @Test
+  void closeByHost() {
+    CompanionPost post = open(kst("2026-09-14T09:00:00+09:00"), null);
+
+    post.closeByHost(HOST_ID);
+
+    assertThat(post.getStatus()).isEqualTo(PostStatus.CLOSED);
+    assertThat(post.getClosedReason()).isEqualTo(ClosedReason.MANUAL);
+  }
+
+  @DisplayName("이미 마감된 모집글은 다시 마감할 수 없다.")
+  @Test
+  void closeByHost_postIsAlreadyClosed() {
+    CompanionPost post = open(kst("2026-09-14T09:00:00+09:00"), null);
+    post.closeByHost(HOST_ID);
+
+    assertThatThrownBy(() -> post.closeByHost(HOST_ID))
+        .isInstanceOf(BusinessException.class)
+        .extracting(thrown -> ((BusinessException) thrown).getErrorCode())
+        .isEqualTo(PostErrorCode.POST_ALREADY_CLOSED);
+  }
+
+  @DisplayName("방장이 아니면 모집을 마감할 수 없다.")
+  @Test
+  void closeByHost_requesterIsNotHost() {
+    CompanionPost post = open(kst("2026-09-14T09:00:00+09:00"), null);
+
+    assertThatThrownBy(() -> post.closeByHost(STRANGER_ID))
+        .isInstanceOf(BusinessException.class)
+        .extracting(thrown -> ((BusinessException) thrown).getErrorCode())
+        .isEqualTo(PostErrorCode.POST_NOT_HOST);
+  }
+
+  /**
+   * 상태를 권한보다 먼저 보기 때문이다.
+   *
+   * <p>두 가드가 동시에 걸리는 요청에서 어느 코드가 나가는지가 계약이다. 순서를 뒤집으면 같은 요청이 403 을 받게 되고, 그때 클라이언트는 「내 글이 아니다」로 읽는다
+   * — 마감된 자기 글에 대해서도 그렇다.
+   */
+  @DisplayName("남이 마감된 모집글을 마감하려 하면 방장 여부보다 마감 상태를 먼저 알려준다.")
+  @Test
+  void closeByHost_closedPostReportsStatusBeforeHost() {
+    CompanionPost post = open(kst("2026-09-14T09:00:00+09:00"), null);
+    post.closeByHost(HOST_ID);
+
+    assertThatThrownBy(() -> post.closeByHost(STRANGER_ID))
+        .isInstanceOf(BusinessException.class)
+        .extracting(thrown -> ((BusinessException) thrown).getErrorCode())
+        .isEqualTo(PostErrorCode.POST_ALREADY_CLOSED);
   }
 
   private static CompanionPost open(OffsetDateTime meetAt, ChosenEvent event) {
