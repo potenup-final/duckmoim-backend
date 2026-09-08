@@ -7,9 +7,10 @@ import org.springframework.data.jpa.repository.JpaRepository;
 /**
  * 신고 저장소.
  *
- * <p>백오피스 목록(AD-02)의 조회 메서드를 두지 않는다. 최신순 커서를 쥔 그 티켓이 정하고, 여기서 미리 지어내면 쓰지 않는 메서드가 다음 담당의 기준선이 된다.
+ * <p>백오피스 목록(AD-02)은 필터가 선택이라 파생 쿼리 메서드로 감당할 수 없고, 대상 표시명을 세 곳에서 조인해야 한다. 커스텀 프래그먼트 {@link
+ * ReportQueryRepository} 로 빼고 여기서 함께 상속한다 — service 에는 여전히 저장소 하나만 주입된다.
  */
-public interface ReportRepository extends JpaRepository<Report, Long> {
+public interface ReportRepository extends JpaRepository<Report, Long>, ReportQueryRepository {
 
   /**
    * 이미 신고했는지 본다 (SF-01).
