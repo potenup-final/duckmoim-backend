@@ -87,6 +87,8 @@ class EndpointGradeTest {
           new Endpoint(HttpMethod.PUT, "/api/v1/users/me/signup-info", Grade.AUTH),
           new Endpoint(HttpMethod.PATCH, "/api/v1/users/me/profile", Grade.SIGNUP),
           new Endpoint(HttpMethod.POST, "/api/v1/users/me/profile-image", Grade.SIGNUP),
+          // Presigned 는 서버가 파일을 받지 않아 「올라간 것을 확인하는」 단계가 따로 필요하다 (AU-08)
+          new Endpoint(HttpMethod.PUT, "/api/v1/users/me/profile-image", Grade.SIGNUP),
           new Endpoint(HttpMethod.GET, "/api/v1/users/me/posts", Grade.SIGNUP),
           new Endpoint(HttpMethod.GET, "/api/v1/users/me/comments", Grade.SIGNUP),
           new Endpoint(HttpMethod.DELETE, "/api/v1/users/me", Grade.SIGNUP),
