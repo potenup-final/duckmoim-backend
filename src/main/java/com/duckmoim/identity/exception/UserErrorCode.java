@@ -18,7 +18,11 @@ public enum UserErrorCode implements ErrorCode {
 
   // 가입 정보 입력은 한 번뿐이다 (API-설계.md 2-2). 출생연도가 가입 후 잠기기 때문이다 —
   // 닉네임만 바꾸는 것은 AU-08 의 PATCH /users/me/profile 몫이다.
-  USER_SIGNUP_INFO_ALREADY_SET(HttpStatus.CONFLICT, "가입 정보는 이미 입력되었습니다.");
+  USER_SIGNUP_INFO_ALREADY_SET(HttpStatus.CONFLICT, "가입 정보는 이미 입력되었습니다."),
+
+  // I-01 닉네임 유일성. 도메인 3.3 이 「DB 유니크 제약. 위반을 409로 변환」으로 정했다.
+  // 가입(AU-06)과 프로필 수정(AU-08) 양쪽이 쓴다.
+  USER_NICKNAME_DUPLICATED(HttpStatus.CONFLICT, "이미 사용 중인 닉네임입니다.");
 
   private final HttpStatus status;
   private final String message;

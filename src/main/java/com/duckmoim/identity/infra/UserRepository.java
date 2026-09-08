@@ -14,7 +14,6 @@ import org.springframework.data.repository.query.Param;
  */
 public interface UserRepository extends JpaRepository<User, Long> {
 
-
   /**
    * 그 닉네임을 쓰는 회원이 있는지 (AU-06 사전 조회).
    *
@@ -25,6 +24,7 @@ public interface UserRepository extends JpaRepository<User, Long> {
    * 저장에서 409 가 되어, <b>사용자가 원인을 알 수 없는 실패</b>를 본다.
    */
   boolean existsByNickname(String nickname);
+
   /**
    * 회원 행을 잠그고 읽는다 ({@code SELECT ... FOR UPDATE}).
    *
