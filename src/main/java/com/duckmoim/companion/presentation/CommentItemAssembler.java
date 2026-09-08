@@ -6,6 +6,7 @@ import com.duckmoim.companion.domain.CommentReadContext;
 import com.duckmoim.companion.domain.CommentReadTarget;
 import com.duckmoim.companion.domain.CommentVisibilityPolicy;
 import com.duckmoim.companion.service.CommentView;
+import com.duckmoim.companion.service.MyCommentView;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -40,6 +41,33 @@ public class CommentItemAssembler {
   public CommentItemResponse assemble(
       Comment comment, CommentAuthorResponse author, CommentReadContext context) {
     return assemble(comment, author, context, List.of());
+  }
+
+  /**
+   * 내 댓글 내역의 한 줄을 조립한다 (CM-16).
+   *
+   * <p><b>여기를 지나는 것이 이 티켓의 요점이다.</b> 본문을 내려주는 경로가 셋인데 (도메인-모델링.md 「7.1 가시성과 권한」) 그중 둘째가 내 내역이다.
+   * 요청자가 곧 작성자라 판정이 늘 통과할 것처럼 보이지만, <b>삭제 · 블라인드 댓글의 본문을 작성자 본인에게도 막는 것이 바로 이 판정기다.</b>
+   *
+   * <p>판정 맥락은 요청자 하나뿐이다. 방장과 부모 댓글 작성자는 <b>내 것이 아닌 비밀 댓글</b>을 열어주는 입력이라 (7.1) 내 내역에서는 쓰이지 않는다.
+   *
+   * @param requesterId 요청자. 이 경로는 {@code SIGNUP} 등급이라 null 이 될 수 없다 (API-설계.md 「2-2. 회원
+   *     (Identity)」)
+   */
+  public MyCommentItemResponse assembleMine(MyCommentView view, Long requesterId) {
+    Comment comment = view.comment();
+
+    boolean readable =
+        visibilityPolicy.canReadContent(
+            CommentReadTarget.of(comment), new CommentReadContext(requesterId, null, null));
+
+    return new MyCommentItemResponse(
+        comment.getId(),
+        comment.getPostId(),
+        view.postTitle(),
+        readable ? comment.getContent() : null,
+        comment.isSecret(),
+        CommentItemResponse.toKst(comment.getCreatedAt()));
   }
 
   /**
