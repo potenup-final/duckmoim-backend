@@ -3,6 +3,8 @@ package com.duckmoim.identity.presentation;
 import static com.duckmoim.companion.CommentFixture.aComment;
 import static com.duckmoim.companion.CompanionPostFixture.aCompanionPost;
 import static com.duckmoim.identity.UserFixture.aUser;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.doThrow;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -10,6 +12,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.duckmoim.auth.domain.AuthUser;
 import com.duckmoim.auth.domain.TokenProvider;
+import com.duckmoim.auth.service.AuthService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -17,6 +20,7 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.HttpHeaders;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 /**
@@ -39,6 +43,9 @@ class WithdrawalTest {
   @Autowired private MockMvc mockMvc;
   @Autowired private TokenProvider tokenProvider;
   @Autowired private JdbcTemplate jdbcTemplate;
+
+  /** 실물 로그아웃을 그대로 쓰고, 롤백 테스트 하나에서만 실패를 심는다. */
+  @MockitoSpyBean private AuthService authService;
 
   /** AU-11 의 검증 기준. 댓글은 남고 작성자만 익명이 된다. */
   @Test
@@ -105,6 +112,38 @@ class WithdrawalTest {
   @DisplayName("토큰 없이 탈퇴하면 401 이다.")
   void withdraw_withoutToken() throws Exception {
     mockMvc.perform(delete("/api/v1/users/me")).andExpect(status().isUnauthorized());
+  }
+
+  /**
+   * <b>PR #84 리뷰가 지적한 자리다.</b> 탈퇴와 토큰 정리가 각자의 트랜잭션이면 앞이 커밋된 뒤 뒤가 실패해 「탈퇴는 됐는데 토큰이 남은」 상태로 굳고, 사용자가
+   * 다시 부르면 이미 탈퇴한 계정이라 404 를 받아 <b>빠져나올 방법이 없다.</b>
+   *
+   * <p>한 트랜잭션으로 묶었으므로 <b>아무것도 일어나지 않은 상태로 돌아가야 한다.</b> 스파이라 다른 테스트는 실물 로그아웃을 그대로 쓴다.
+   */
+  @Test
+  @DisplayName("토큰 정리가 실패하면 탈퇴도 함께 롤백된다.")
+  void withdraw_rollsBackWhenLogoutFails() throws Exception {
+    long userId = aUser().nickname("롤백덕후").insert(jdbcTemplate);
+    doThrow(new IllegalStateException("토큰 정리 실패")).when(authService).logout(userId);
+
+    mockMvc
+        .perform(delete("/api/v1/users/me").headers(bearer(userId)))
+        .andExpect(status().isInternalServerError());
+
+    assertThat(statusOf(userId)).isEqualTo("ACTIVE");
+    assertThat(nicknameOf(userId)).isEqualTo("롤백덕후");
+
+    cleanUp(userId, null, null);
+  }
+
+  private String statusOf(long userId) {
+    return jdbcTemplate.queryForObject(
+        "SELECT status FROM user WHERE id = ?", String.class, userId);
+  }
+
+  private String nicknameOf(long userId) {
+    return jdbcTemplate.queryForObject(
+        "SELECT nickname FROM user WHERE id = ?", String.class, userId);
   }
 
   private HttpHeaders bearer(long userId) {

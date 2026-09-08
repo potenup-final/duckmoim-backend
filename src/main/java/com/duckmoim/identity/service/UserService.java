@@ -1,5 +1,6 @@
 package com.duckmoim.identity.service;
 
+import com.duckmoim.auth.service.AuthService;
 import com.duckmoim.common.exception.BusinessException;
 import com.duckmoim.identity.domain.Profile;
 import com.duckmoim.identity.domain.SignupInfo;
@@ -30,6 +31,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class UserService {
 
   private final UserRepository userRepository;
+  private final AuthService authService;
   private final Clock clock;
 
   /**
@@ -122,12 +124,18 @@ public class UserService {
   /**
    * 계정을 탈퇴 처리한다 (AU-11).
    *
-   * <p><b>토큰을 여기서 지우지 않는다.</b> {@code refresh_token} 은 {@code auth} 의 표이고, 게이트가 service 를
-   * presentation 에서만 참조하게 막아 여기서 {@code AuthService} 를 부를 수 없다. 저장소를 직접 뚫으면 {@code identity → auth}
-   * 방향이 생겨 <b>컨텍스트 의존이 순환한다</b>({@code auth → identity} 가 이미 있다). 그래서 컨트롤러가 이 호출 뒤에 로그아웃을 이어 부른다.
+   * <p><b>토큰 정리까지 한 트랜잭션이다.</b> {@code AuthService.logout} 을 이어 부르고, 그쪽이 {@code @Transactional} 이라
+   * 이 트랜잭션에 합류한다 — 뒤가 실패하면 탈퇴도 함께 롤백되므로 <b>「탈퇴는 됐는데 토큰이 남은」 중간 상태가 없다.</b> 사용자는 500 을 받고 다시 부르면
+   * 처음부터 실행된다.
    *
-   * <p><b>그래도 접근은 이 한 번의 커밋으로 끊긴다.</b> 관문이 매 요청 회원을 읽어 탈퇴를 검사하므로(D 티켓) 토큰이 살아 있어도 401 이다. 토큰 정리는 접근
-   * 차단이 아니라 남는 행을 없애는 위생 작업이다.
+   * <p><b>{@code identity.service → auth.service} 를 여기서 허용한다.</b> 두 컨텍스트는 이미 {@code user} 행 한 장을
+   * 공유한다 — {@code logout} 이 지우는 것은 {@code refresh_token} 이지만 잔여 Access 를 끊는 {@code
+   * tokensInvalidatedAt} 은 {@code User} 의 컬럼이고, 그 전이({@code invalidateAllTokens})도 {@code User} 의
+   * 메서드다. 사이에 포트를 끼워도 그 공유가 없어지지 않으므로 우회 없이 직접 부른다 (PR #84 리뷰).
+   *
+   * <p><b>순서를 이렇게 두는 이유.</b> 탈퇴 전이를 먼저 실행해 <b>락과 탈퇴 검사를 한 곳에 모은다.</b> {@code logout} 은 탈퇴 여부를 보지 않고
+   * {@code ifPresent} 로만 동작해서, 먼저 부르면 이미 탈퇴한 계정에도 무효화 시각을 다시 찍는다 — {@code User} 가 <i>"무효화를 반복해서 찍으면
+   * 안 된다"</i> 고 적어 둔 그 자리다.
    *
    * <p><b>{@code flush} 를 부르지 않는다.</b> 닉네임을 <b>비우는</b> 것이라 유니크 제약을 위반할 수가 없다 — 제약 위반을 409 로 옮기는
    * {@code completeSignup} · {@code updateProfile} 과 다른 자리다.
@@ -147,6 +155,8 @@ public class UserService {
             .orElseThrow(() -> new BusinessException(UserErrorCode.USER_NOT_FOUND));
 
     user.withdraw(LocalDateTime.now(ZoneOffset.UTC));
+
+    authService.logout(userId);
   }
 
   /**
