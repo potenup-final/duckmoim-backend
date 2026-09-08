@@ -41,8 +41,14 @@ public class User extends BaseEntity {
   @Column(name = "birth_year")
   private Integer birthYear;
 
-  @Column(name = "intro", length = 100)
-  private String intro;
+  /**
+   * 한줄소개.
+   *
+   * <p><b>컬럼과 필드가 {@code intro} 였다.</b> API 설계 2-2 가 응답 필드를 {@code bio} 로 못박았고(<i>"한줄소개 필드명은 bio
+   * 다"</i>) API 컨벤션이 도메인 식별자와 API 필드명을 일치시키라고 해서 V14 가 컬럼을 옮겼다.
+   */
+  @Column(name = "bio", length = 100)
+  private String bio;
 
   @Column(name = "profile_image_url", length = 500)
   private String profileImageUrl;
