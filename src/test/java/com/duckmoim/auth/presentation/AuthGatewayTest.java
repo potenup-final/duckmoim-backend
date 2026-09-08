@@ -12,6 +12,7 @@ import com.duckmoim.auth.domain.AuthUser;
 import com.duckmoim.auth.domain.TokenProvider;
 import com.duckmoim.auth.infra.JwtProvider;
 import com.duckmoim.auth.service.AuthService;
+import com.duckmoim.identity.domain.SignupStatus;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
@@ -38,8 +39,16 @@ class AuthGatewayTest {
   private static final String OTHER_SECRET = "someone-elses-secret-key-32-bytes-or-longer-here";
   private static final Duration REFRESH_TTL = Duration.ofDays(14);
 
-  private static final AuthUser SIGNUP_INCOMPLETE = new AuthUser(1L, false, false);
+  /**
+   * V11 시드의 1번·2번은 둘 다 {@code ACTIVE} 다.
+   *
+   * <p><b>가입 미완료 상수를 두지 않는다.</b> 관문이 가입 완료 여부를 토큰이 아니라 회원 행에서 읽게 됐다 (I-02 · AU-07) — 토큰에 {@code
+   * false} 를 담아도 DB 가 {@code ACTIVE} 면 통과한다. 미완료를 검증하는 테스트는 <b>회원을 그 상태로 만들어</b> 쓴다.
+   */
   private static final AuthUser SIGNUP_COMPLETED = new AuthUser(2L, true, false);
+
+  /** V11 의 6번(카카오 1006). V31 이 {@code admin_accounts} 에 등록해 둔 유일한 관리자다. */
+  private static final long SEEDED_ADMIN = 6L;
 
   @Autowired private MockMvc mockMvc;
   @Autowired private TokenProvider tokenProvider;
@@ -109,10 +118,14 @@ class AuthGatewayTest {
   @Test
   @DisplayName("가입 미완료로 막히면 가입 정보를 입력하라는 에러 코드가 나간다.")
   void forbiddenBySignupIncomplete() throws Exception {
+    long userId = pendingUser();
+
     mockMvc
-        .perform(post("/api/v1/posts").headers(bearer(SIGNUP_INCOMPLETE)))
+        .perform(post("/api/v1/posts").headers(bearer(new AuthUser(userId, false, false))))
         .andExpect(status().isForbidden())
         .andExpect(jsonPath("$.code").value("USER_SIGNUP_INFO_REQUIRED"));
+
+    cleanUp(userId);
   }
 
   @Test
@@ -128,8 +141,63 @@ class AuthGatewayTest {
   @Test
   @DisplayName("가입 미완료 계정이 관리자 경로에서 막혀도 가입 안내가 아니라 권한 없음이 나간다.")
   void forbiddenByNotAdmin_signupIncomplete() throws Exception {
+    long pending = pendingUser();
+
     mockMvc
-        .perform(get("/api/v1/admin/reports").headers(bearer(SIGNUP_INCOMPLETE)))
+        .perform(get("/api/v1/admin/reports").headers(bearer(new AuthUser(pending, false, false))))
+        .andExpect(status().isForbidden())
+        .andExpect(jsonPath("$.code").value("AUTH_FORBIDDEN"));
+
+    cleanUp(pending);
+  }
+
+  /**
+   * <b>AD-06 의 검증 기준 — 일반 계정으로 접근 시 403.</b>
+   *
+   * <p>토큰이 「관리자다」라고 주장해도 화이트리스트에 없으면 막힌다. <b>토큰만 믿으면 화이트리스트에서 지운 뒤에도 최대 30분간 통과한다</b> — 그 문 안에 비밀
+   * 댓글 본문이 있다 (ADR 0003).
+   */
+  @Test
+  @DisplayName("토큰이 관리자라고 해도 화이트리스트에 없으면 관리자 경로가 403 이다.")
+  void adminPathRejectsUnlistedAccount() throws Exception {
+    long userId = aUser().insert(jdbcTemplate);
+
+    mockMvc
+        .perform(get("/api/v1/admin/reports").headers(bearer(new AuthUser(userId, true, true))))
+        .andExpect(status().isForbidden())
+        .andExpect(jsonPath("$.code").value("AUTH_FORBIDDEN"));
+
+    cleanUp(userId);
+  }
+
+  /** V11 의 6번이 V31 로 {@code admin_accounts} 에 등록된 관리자다. */
+  @Test
+  @DisplayName("화이트리스트에 등록된 계정은 관리자 경로의 인가를 통과한다.")
+  void adminPathAcceptsListedAccount() throws Exception {
+    int status =
+        mockMvc
+            .perform(
+                get("/api/v1/admin/reports")
+                    .headers(bearer(new AuthUser(SEEDED_ADMIN, true, true))))
+            .andReturn()
+            .getResponse()
+            .getStatus();
+
+    assertThat(status).isNotIn(401, 403);
+  }
+
+  /**
+   * 권한을 주는 쪽은 최대 30분 늦는다 — 의도한 비대칭이다.
+   *
+   * <p>화이트리스트에 있어도 토큰이 {@code admin: false} 면 통과하지 않는다. 그 사용자는 재발급 뒤에 통한다. <b>불편이지 구멍이 아니다</b> — 반대
+   * 방향(뺏는 쪽)이 즉시 반영되는 것이 중요하다.
+   */
+  @Test
+  @DisplayName("화이트리스트에 있어도 토큰이 관리자가 아니면 관리자 경로가 403 이다.")
+  void adminPathRejectsWhenTokenIsNotAdmin() throws Exception {
+    mockMvc
+        .perform(
+            get("/api/v1/admin/reports").headers(bearer(new AuthUser(SEEDED_ADMIN, true, false))))
         .andExpect(status().isForbidden())
         .andExpect(jsonPath("$.code").value("AUTH_FORBIDDEN"));
   }
@@ -195,6 +263,10 @@ class AuthGatewayTest {
 
     assertThat(status).isNotEqualTo(401);
     cleanUp(userId);
+  }
+
+  private long pendingUser() {
+    return aUser().status(SignupStatus.PENDING_SIGNUP_INFO).insert(jdbcTemplate);
   }
 
   private void cleanUp(long userId) {
