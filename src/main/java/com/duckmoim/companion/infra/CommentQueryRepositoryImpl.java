@@ -2,10 +2,13 @@ package com.duckmoim.companion.infra;
 
 import com.duckmoim.companion.domain.CommentCursor;
 import com.duckmoim.companion.domain.CommentListQuery;
+import com.duckmoim.companion.domain.CommentStatus;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import jakarta.persistence.TypedQuery;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * JPQL 로 쓴 이유 — {@code Comment} 에 {@code User} 로 가는 연관이 없다. 애그리게이트끼리 ID 로만 참조하기 때문이다 (도메인 3.2).
@@ -73,5 +76,32 @@ public class CommentQueryRepositoryImpl implements CommentQueryRepository {
         .setParameter("postId", postId)
         .setParameter("parentIds", parentIds)
         .getResultList();
+  }
+
+  /**
+   * {@code ACTIVE} 만 센다. 그것이 CM-12 의 「비밀 포함 · 삭제·블라인드 제외 · 대댓글 포함」과 같은 조건이다 — 비밀은 {@code status} 가
+   * 아니라 {@code secret} 플래그이고, 대댓글도 같은 표의 행이라 {@code parentId} 를 보지 않으면 함께 세어진다.
+   */
+  @Override
+  public Map<Long, Long> countActiveByPostIds(List<Long> postIds) {
+    if (postIds.isEmpty()) {
+      // IN () 는 문법 오류다. 셀 모집글이 없으면 셀 것도 없다.
+      return Map.of();
+    }
+
+    return entityManager
+        .createQuery(
+            """
+            SELECT c.postId, count(c)
+              FROM Comment c
+             WHERE c.postId IN :postIds AND c.status = :active
+             GROUP BY c.postId
+            """,
+            Object[].class)
+        .setParameter("postIds", postIds)
+        .setParameter("active", CommentStatus.ACTIVE)
+        .getResultList()
+        .stream()
+        .collect(Collectors.toMap(row -> (Long) row[0], row -> (Long) row[1]));
   }
 }
