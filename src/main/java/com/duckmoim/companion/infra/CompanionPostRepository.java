@@ -11,4 +11,6 @@ import org.springframework.data.jpa.repository.JpaRepository;
  * CompanionPostQueryRepository} 로 빼고 여기서 함께 상속한다 — service 에는 저장소 하나만 주입된다.
  */
 public interface CompanionPostRepository
-    extends JpaRepository<CompanionPost, Long>, CompanionPostQueryRepository {}
+    extends JpaRepository<CompanionPost, Long>,
+        CompanionPostQueryRepository,
+        UserPostQueryRepository {}
