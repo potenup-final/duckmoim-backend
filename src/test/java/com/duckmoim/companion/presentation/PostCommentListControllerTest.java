@@ -41,10 +41,10 @@ import org.springframework.test.web.servlet.MockMvc;
  * <p><b>{@code Comment} 를 리플렉션으로 세운다.</b> 저장 없이는 id 와 createdAt 이 없는데, 이 슬라이스 테스트에는 DB 가 없다. 도메인에
  * 테스트용 생성 경로를 뚫는 대신 테스트 안에서만 값을 채운다.
  */
-@WebMvcTest(CommentController.class)
+@WebMvcTest(PostCommentController.class)
 @ImportSecurity
 @Import({CommentItemAssembler.class, CommentVisibilityPolicy.class, CommentActionPolicy.class})
-class CommentListControllerTest {
+class PostCommentListControllerTest {
 
   private static final LocalDateTime WRITTEN_AT_UTC = LocalDateTime.of(2026, 9, 14, 0, 0);
 
