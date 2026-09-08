@@ -21,9 +21,9 @@ public class DevTokenController {
   private final TokenProvider tokenProvider;
 
   @PostMapping("/token")
-  public DevTokenResponse issueAccessToken(@Valid @RequestBody DevTokenRequest request) {
+  public DevTokenResponse createAccessToken(@Valid @RequestBody DevTokenRequest request) {
     AuthUser authUser = new AuthUser(request.userId(), request.signupCompleted(), request.admin());
 
-    return new DevTokenResponse(tokenProvider.issueAccessToken(authUser));
+    return new DevTokenResponse(tokenProvider.createAccessToken(authUser));
   }
 }

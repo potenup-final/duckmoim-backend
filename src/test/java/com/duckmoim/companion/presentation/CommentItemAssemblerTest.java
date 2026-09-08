@@ -10,7 +10,9 @@ import com.duckmoim.companion.domain.CommentReadContext;
 import com.duckmoim.companion.domain.CommentStatus;
 import com.duckmoim.companion.domain.CommentVisibilityPolicy;
 import com.duckmoim.companion.infra.CommentRepository;
+import com.duckmoim.companion.service.MyCommentView;
 import com.duckmoim.identity.domain.LastSeen;
+import java.time.ZoneOffset;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -138,6 +140,53 @@ class CommentItemAssemblerTest {
 
     assertThat(response.content()).isNull();
     assertThat(response.status()).isEqualTo(status);
+  }
+
+  /** 내 내역도 이 조립기를 지난다 (CM-16). 판정 지점이 하나여야 한다는 7.1 이 요구하는 것이다. */
+  @DisplayName("내 비밀 댓글은 내 내역에서 본문이 담긴다.")
+  @Test
+  void assembleMine() {
+    Comment comment = saved(aComment().postId(postId).authorId(AUTHOR_ID).secret(true));
+
+    MyCommentItemResponse response =
+        assembler.assembleMine(new MyCommentView(comment, "에이티즈 팝업 오픈런 같이 하실 분"), AUTHOR_ID);
+
+    assertThat(response.content()).isEqualTo(comment.getContent());
+    assertThat(response.secret()).isTrue();
+    assertThat(response.postTitle()).isEqualTo("에이티즈 팝업 오픈런 같이 하실 분");
+    assertThat(response.postId()).isEqualTo(postId);
+    assertThat(response.createdAt().getOffset()).isEqualTo(ZoneOffset.ofHours(9));
+  }
+
+  /**
+   * <b>이 판정기가 살아 있음을 증명하는 자리다.</b> 내 내역은 요청자가 곧 작성자라 판정이 늘 통과할 것처럼 보이는데, 7.1 「삭제 · 블라인드 댓글 — 없음」 행은
+   * 작성자 본인에게도 적용된다. 조회가 이 둘을 이미 걸러도 조립기는 판정을 건너뛰지 않는다.
+   */
+  @DisplayName("삭제되거나 블라인드된 댓글은 내 내역에서도 본문이 담기지 않는다.")
+  @ParameterizedTest
+  @EnumSource(
+      value = CommentStatus.class,
+      names = {"DELETED", "BLINDED"})
+  void assembleMine_isInactive(CommentStatus status) {
+    Comment comment =
+        saved(aComment().postId(postId).authorId(AUTHOR_ID).secret(false).status(status));
+
+    MyCommentItemResponse response =
+        assembler.assembleMine(new MyCommentView(comment, "픽스처 모집글"), AUTHOR_ID);
+
+    assertThat(response.content()).isNull();
+  }
+
+  /** 방장·부모 작성자를 넘기지 않으므로, 내 것이 아닌 비밀 댓글이 이 경로로 열리지 않는다. */
+  @DisplayName("내 내역 조립은 남의 비밀 댓글 본문을 열지 않는다.")
+  @Test
+  void assembleMine_isNotAuthor() {
+    Comment comment = saved(aComment().postId(postId).authorId(AUTHOR_ID).secret(true));
+
+    MyCommentItemResponse response =
+        assembler.assembleMine(new MyCommentView(comment, "픽스처 모집글"), HOST_ID);
+
+    assertThat(response.content()).isNull();
   }
 
   private Comment saved(com.duckmoim.companion.CommentFixture fixture) {

@@ -1,10 +1,12 @@
 package com.duckmoim.auth.presentation;
 
+import static com.duckmoim.identity.UserFixture.aUser;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.request;
 
 import com.duckmoim.auth.domain.AuthUser;
 import com.duckmoim.auth.domain.TokenProvider;
+import com.duckmoim.identity.domain.SignupStatus;
 import java.util.List;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.DisplayName;
@@ -16,6 +18,7 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 
 /**
@@ -26,6 +29,10 @@ import org.springframework.test.web.servlet.MockMvc;
  *
  * <p><b>컨트롤러가 없어도 정확하다.</b> 인가는 핸들러 탐색보다 먼저 돌아서, 통과하면 404 가 나고 막히면 401·403 이 난다. 그래서 「막혔는가」는 컨트롤러
  * 유무와 무관하게 판정된다.
+ *
+ * <p><b>다만 컨트롤러가 생기면 이 표가 진짜 명령을 실행한다.</b> {@code DELETE /auth/token} 이 그랬다 — 등급을 확인하려고 찌른 요청이 실제
+ * 로그아웃이 되어 그 회원의 토큰을 전부 무효화했고, <b>뒤따르는 검사 열다섯 개가 401 로 무너졌다.</b> 실측했다. 그래서 {@link #statusOf} 가 요청마다
+ * 회원을 새로 만든다.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -37,6 +44,27 @@ class EndpointGradeTest {
     AUTH,
     SIGNUP,
     ADMIN
+  }
+
+  /**
+   * 그 회원을 관리자 화이트리스트에 등록한다 (AD-06 · 0003-관리자-인가-방식.md 「선택」).
+   *
+   * <p><b>관문이 관리자 여부도 DB 로 확인하게 됐다.</b> 토큰에 {@code admin: true} 를 담아도 {@code admin_accounts} 에 없으면
+   * 막힌다 — 등급 표가 뜻하는 것을 실제로 검사하려면 그 표에도 넣어야 한다.
+   *
+   * <p>회원번호가 아니라 <b>카카오 회원번호</b>로 등록한다. `User` 애그리게이트를 건드리지 않고 판정 근거를 다른 표에 두는 것이 ADR 0003 의 선택이다.
+   */
+  private void grantAdmin(long userId) {
+    jdbcTemplate.update(
+        "INSERT INTO admin_accounts (kakao_user_id, granted_at, created_at, updated_at)"
+            + " SELECT kakao_user_id, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)"
+            + " FROM user WHERE id = ?",
+        userId);
+  }
+
+  /** 등급 조합의 {@code signupCompleted} 를 회원 행의 가입 축 상태로 옮긴다 (도메인 6장). */
+  private static SignupStatus statusOf(AuthUser authUser) {
+    return authUser.signupCompleted() ? SignupStatus.ACTIVE : SignupStatus.PENDING_SIGNUP_INFO;
   }
 
   private record Endpoint(HttpMethod method, String path, Grade grade) {
@@ -95,6 +123,7 @@ class EndpointGradeTest {
 
   @Autowired private MockMvc mockMvc;
   @Autowired private TokenProvider tokenProvider;
+  @Autowired private JdbcTemplate jdbcTemplate;
 
   private static Stream<Endpoint> publicEndpoints() {
     return endpointsOf(Grade.PUBLIC);
@@ -209,11 +238,28 @@ class EndpointGradeTest {
     assertThat(statusOf(new Endpoint(HttpMethod.POST, path, Grade.PUBLIC), null)).isEqualTo(401);
   }
 
+  /**
+   * 요청 하나를 보내고 상태 코드만 돌려준다.
+   *
+   * <p><b>회원을 매번 새로 만든다.</b> 위 상수 셋은 이제 회원번호가 아니라 <b>등급 조합</b>만 뜻한다. 같은 회원을 돌려쓰면 명령을 실행하는 엔드포인트 하나가
+   * 그 회원의 상태를 바꿔 뒤따르는 검사를 오염시킨다.
+   *
+   * <p><b>가입 상태를 DB 에도 맞춘다.</b> 관문이 가입 완료 여부를 토큰이 아니라 회원 행에서 읽게 됐다 (I-02 · AU-07) — 토큰에 무엇을 담아도 DB
+   * 가 이긴다. 상수의 {@code signupCompleted} 를 회원 행의 {@code status} 로 옮겨야 이 표가 뜻하는 것을 실제로 검사한다.
+   */
   private int statusOf(Endpoint endpoint, AuthUser authUser) throws Exception {
     HttpHeaders headers = new HttpHeaders();
 
     if (authUser != null) {
-      headers.setBearerAuth(tokenProvider.issueAccessToken(authUser));
+      long userId = aUser().status(statusOf(authUser)).insert(jdbcTemplate);
+
+      if (authUser.admin()) {
+        grantAdmin(userId);
+      }
+
+      headers.setBearerAuth(
+          tokenProvider.createAccessToken(
+              new AuthUser(userId, authUser.signupCompleted(), authUser.admin())));
     }
     return mockMvc
         .perform(request(endpoint.method(), endpoint.path()).headers(headers))

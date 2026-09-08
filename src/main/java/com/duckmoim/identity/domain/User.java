@@ -1,7 +1,10 @@
 package com.duckmoim.identity.domain;
 
 import com.duckmoim.common.domain.BaseEntity;
+import com.duckmoim.common.exception.BusinessException;
+import com.duckmoim.identity.exception.UserErrorCode;
 import jakarta.persistence.Column;
+import jakarta.persistence.Embedded;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
@@ -10,6 +13,7 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -37,11 +41,16 @@ public class User extends BaseEntity {
   @Column(name = "nickname", length = 20, unique = true)
   private String nickname;
 
-  @Column(name = "birth_year")
-  private Integer birthYear;
+  @Embedded private BirthYear birthYear;
 
-  @Column(name = "intro", length = 100)
-  private String intro;
+  /**
+   * 한줄소개.
+   *
+   * <p><b>컬럼과 필드가 {@code intro} 였다.</b> API 설계 2-2 가 응답 필드를 {@code bio} 로 못박았고(<i>"한줄소개 필드명은 bio
+   * 다"</i>) API 컨벤션이 도메인 식별자와 API 필드명을 일치시키라고 해서 V14 가 컬럼을 옮겼다.
+   */
+  @Column(name = "bio", length = 100)
+  private String bio;
 
   @Column(name = "profile_image_url", length = 500)
   private String profileImageUrl;
@@ -56,4 +65,114 @@ public class User extends BaseEntity {
 
   @Column(name = "withdrawn_at")
   private LocalDateTime withdrawnAt;
+
+  /**
+   * 이 시각 이전에 발급된 토큰을 전부 죽인다 (AU-04 「Access 잔여 TTL 차단」).
+   *
+   * <p><b>{@code refresh_token} 행을 지우는 것만으로는 부족하다.</b> 이미 발급된 Access 는 서명만으로 검증되므로 최대 30분 더 산다. 그
+   * 구멍을 여기서 막는다. 이 컬럼을 {@code refresh_token} 에 둘 수 없는 이유도 같다 — 그 행을 전부 지운 뒤에는 비교할 행이 남지 않는다.
+   */
+  @Column(name = "tokens_invalidated_at")
+  private LocalDateTime tokensInvalidatedAt;
+
+  /**
+   * 가입 정보를 채워 활동할 수 있는 계정으로 만든다 (AU-05).
+   *
+   * <p>가입 축의 유일한 전진 전이다 — {@code PENDING_SIGNUP_INFO ──입력──▶ ACTIVE} (도메인 6장).
+   *
+   * <p><b>한 번만 통한다.</b> API 설계 2-2 가 <i>"이미 입력한 유저가 다시 부르면 409 다 — 출생연도는 가입 후 잠기기 때문이다"</i> 로 정했다.
+   * 닉네임만 바꾸는 것은 AU-08 의 {@code PATCH /users/me/profile} 몫이다.
+   *
+   * <p>탈퇴 계정도 이 검사에 걸린다. 다만 그쪽은 관문이 먼저 끊으므로 여기까지 오지 않는다 ({@link #isWithdrawn}).
+   *
+   * @throws BusinessException {@code PENDING_SIGNUP_INFO} 가 아니면 {@code
+   *     USER_SIGNUP_INFO_ALREADY_SET}
+   */
+  public void completeSignup(SignupInfo signupInfo) {
+    if (!isSignupPending()) {
+      throw new BusinessException(UserErrorCode.USER_SIGNUP_INFO_ALREADY_SET);
+    }
+
+    this.nickname = signupInfo.nickname();
+    this.birthYear = signupInfo.birthYear();
+    this.status = SignupStatus.ACTIVE;
+  }
+
+  /** AU-03 재사용 탐지의 「해당 유저 전체 폐기」와 AU-04 로그아웃이 함께 부른다. */
+  public void invalidateAllTokens(LocalDateTime now) {
+    this.tokensInvalidatedAt = now;
+  }
+
+  /** AU-03 「재발급 성공 시 lastSeenAt 갱신」. */
+  public void updateLastSeenAt(LocalDateTime now) {
+    this.lastSeenAt = now;
+  }
+
+  /**
+   * 이 발급 시각의 토큰이 무효화됐는지 본다. 인증 필터가 매 요청에서 부른다.
+   *
+   * <p><b>더 이른 발급만 죽인다({@code isBefore}).</b> JWT 의 {@code iat} 은 초 단위로 내려가고 무효화 시각은 마이크로초까지 남으므로,
+   * 같은 초에 로그아웃하면 그 초에 발급된 토큰도 걸린다. 여는 쪽에 두면 로그아웃 직전에 발급된 토큰이 30분을 더 살아서, 그쪽이 훨씬 나쁘다.
+   *
+   * <p><b>대가를 정확히 적는다 — 무효화와 같은 초에 발급된 토큰은 그 토큰의 수명 30분 내내 거절된다.</b> {@code iat} 이 이미 고정된 값이라 시간이
+   * 흐른다고 풀리지 않는다. 「다음 초에 풀린다」는 <b>그때 새로 발급받는 토큰</b> 이야기이고, 이미 손에 든 토큰은 버려야 한다. 클라이언트는 {@code
+   * AUTH_ACCESS_TOKEN_INVALID} 를 받으므로 재로그인으로 빠져나온다.
+   *
+   * <p>그래서 <b>무효화를 반복해서 찍으면 안 된다</b> — 매초 앞으로 밀리면 재로그인해서 받은 토큰도 매번 걸려 빠져나올 방법이 없어진다. {@code
+   * AuthService} 가 재사용 탐지에서 멱등하게 처리하는 이유다.
+   */
+  public boolean isTokenInvalidated(LocalDateTime issuedAt) {
+    return tokensInvalidatedAt != null && issuedAt.isBefore(tokensInvalidatedAt);
+  }
+
+  /**
+   * 그 발급 시각의 토큰이 <b>지난 무효화에 이미 덮였는지</b> 본다 (AU-03 재사용 탐지의 멱등 판정).
+   *
+   * <p><b>{@link #isTokenInvalidated} 와 초 단위 처리가 반대다.</b> 저쪽은 「이 요청을 통과시킬까」라 경계를 닫는 쪽에 두고, 이쪽은 「폐기를
+   * 한 번 더 실행할까」라 <b>여는 쪽</b>에 둔다. 무효화 시각을 초로 내려 비교하므로, 무효화와 <b>같은 초에 발급된</b> 토큰은 「덮이지 않았다」로 본다 — 그
+   * 토큰은 무효화 직후에 발급된 것일 수 있어서 재사용이면 탐지해야 한다.
+   *
+   * <p>더 이른 초에 발급된 토큰은 그 무효화가 이미 행을 지우고 Access 를 끊었으므로, 다시 폐기해도 새로 끊을 것이 없다. 그때 또 찍으면 무효화 시각이 앞으로
+   * 밀려 <b>그 사이 재로그인한 사용자까지 계속 끊긴다.</b>
+   */
+  public boolean isCoveredByPastInvalidation(LocalDateTime issuedAt) {
+    return tokensInvalidatedAt != null
+        && issuedAt.isBefore(tokensInvalidatedAt.truncatedTo(ChronoUnit.SECONDS));
+  }
+
+  /**
+   * 탈퇴한 계정인지.
+   *
+   * <p><b>탈퇴는 소프트 삭제다</b> — {@code withdrawn_at} 을 찍고 행은 남긴다 (V10). 탈퇴한 사람이 쓴 댓글·모집글이 「탈퇴한 회원」으로
+   * 표시돼야 하므로 행을 지울 수 없다. 그래서 <b>행이 있는지로는 탈퇴를 판별할 수 없다.</b>
+   *
+   * <p>판정을 {@code status} 로 한다. {@code withdrawn_at} 은 시각의 기록이고, 「가입 축의 상태」는 이 값이 정본이다 (도메인 6장).
+   * {@link #isSignupCompleted} 도 같은 필드를 본다 — 둘이 다른 필드를 보면 한쪽만 갱신됐을 때 갈라진다.
+   */
+  public boolean isWithdrawn() {
+    return status == SignupStatus.WITHDRAWN;
+  }
+
+  /**
+   * 가입 정보를 마쳤는지 (AU-05).
+   *
+   * <p>재발급이 새 Access 토큰에 이 값을 다시 찍는다. Refresh 토큰에 담아 두면 가입을 마친 사용자가 14일 동안 낡은 {@code false} 를
+   * 물려받는다.
+   */
+  public boolean isSignupCompleted() {
+    return status == SignupStatus.ACTIVE;
+  }
+
+  /**
+   * 가입 정보를 아직 안 낸 계정인지.
+   *
+   * <p><b>{@link #completeSignup} 의 통과 조건 그 자체다.</b> service 가 그 호출에 <b>앞서</b> 같은 판정을 해야 해서 꺼냈다 —
+   * 닉네임 사전 조회보다 이 검사가 먼저여야 하고(둘 다 걸리면 상태 쪽이 이긴다), 사전 조회는 엔티티를 바꾸기 전에 끝나야 한다.
+   *
+   * <p><b>{@code isSignupCompleted} 의 반대가 아니다.</b> 탈퇴한 계정은 둘 다 {@code false} 다. 그래서 이 판정을 부정으로 대신
+   * 쓰면 상태가 하나 늘어나는 날 조용히 갈라진다.
+   */
+  public boolean isSignupPending() {
+    return status == SignupStatus.PENDING_SIGNUP_INFO;
+  }
 }

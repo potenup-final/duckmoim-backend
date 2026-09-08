@@ -19,10 +19,10 @@ public final class EventFixture {
   private static final String INSERT =
       """
       INSERT INTO event (external_id, source, kind, subject_type, trust, subject, title,
-                         starts_on, ends_on, starts_at, source_url,
+                         starts_on, ends_on, starts_at, source_url, image_url,
                          place_name, place_address, place_lat, place_lng, place_kind, region_id,
                          created_at, updated_at)
-      VALUES (?, 'POPGA', ?, 'IDOL', 'PARSED', ?, ?, ?, ?, ?, 'https://example.test/1',
+      VALUES (?, 'POPGA', ?, 'IDOL', 'PARSED', ?, ?, ?, ?, ?, 'https://example.test/1', ?,
               '테스트 장소', '서울 성동구 1', 37.5, 127.0, ?, ?,
               UTC_TIMESTAMP(6), UTC_TIMESTAMP(6))
       """;
@@ -34,6 +34,7 @@ public final class EventFixture {
   private LocalDate startsOn = LocalDate.of(2026, 10, 1);
   private LocalDate endsOn = LocalDate.of(2026, 10, 31);
   private LocalTime startsAt;
+  private String imageUrl;
   private PlaceKind placeKind = PlaceKind.POPUP_VENUE;
   private long regionId;
 
@@ -79,6 +80,12 @@ public final class EventFixture {
     return this;
   }
 
+  /** 대표 이미지. 모집글이 스냅샷으로 복제해 가는 값이다 (도메인-모델링.md 「3.2 애그리게이트 간 참조 규칙」). */
+  public EventFixture imageUrl(String imageUrl) {
+    this.imageUrl = imageUrl;
+    return this;
+  }
+
   public EventFixture placeKind(PlaceKind placeKind) {
     this.placeKind = placeKind;
     return this;
@@ -100,6 +107,7 @@ public final class EventFixture {
         startsOn,
         endsOn,
         startsAt,
+        imageUrl,
         placeKind.name(),
         regionId);
 
