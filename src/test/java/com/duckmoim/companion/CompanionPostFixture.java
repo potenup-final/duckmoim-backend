@@ -25,7 +25,7 @@ public final class CompanionPostFixture {
                                   meet_place, meet_lat, meet_lng, capacity,
                                   status, closed_reason, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, '홍대입구역 2번 출구', 37.5, 127.0, ?, ?, ?,
-              UTC_TIMESTAMP(6), UTC_TIMESTAMP(6))
+              COALESCE(?, UTC_TIMESTAMP(6)), UTC_TIMESTAMP(6))
       """;
 
   private String title = "픽스처 모집글 " + SEQUENCE.incrementAndGet();
@@ -38,6 +38,7 @@ public final class CompanionPostFixture {
   private Integer capacity;
   private PostStatus status = PostStatus.OPEN;
   private ClosedReason closedReason;
+  private LocalDateTime createdAt;
 
   private CompanionPostFixture() {}
 
@@ -85,6 +86,17 @@ public final class CompanionPostFixture {
     return this;
   }
 
+  /**
+   * 작성 시각을 고정한다. <b>유저가 쓴 모집글 목록의 커서 경계 검증에 필요하다</b> (AU-09 · AU-10) — 그 목록은 작성 최신순이고, 정렬 키가 같은 글이
+   * 있어야 경계에서 누락·중복이 나는지를 볼 수 있다.
+   *
+   * <p>주지 않으면 {@code UTC_TIMESTAMP(6)} 이다. 저장은 UTC 다 (도메인-모델링.md 「4. 엔티티 · 값 객체 · 식별자」).
+   */
+  public CompanionPostFixture createdAt(LocalDateTime createdAtUtc) {
+    this.createdAt = createdAtUtc;
+    return this;
+  }
+
   public CompanionPostFixture capacity(Integer capacity) {
     this.capacity = capacity;
     return this;
@@ -114,7 +126,8 @@ public final class CompanionPostFixture {
         meetAt,
         capacity,
         status.name(),
-        closedReason == null ? null : closedReason.name());
+        closedReason == null ? null : closedReason.name(),
+        createdAt);
 
     return jdbc.queryForObject("SELECT id FROM companion_post WHERE title = ?", Long.class, title);
   }
