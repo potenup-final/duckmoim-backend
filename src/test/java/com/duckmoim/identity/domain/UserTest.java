@@ -32,6 +32,58 @@ class UserTest {
   @Autowired private UserRepository userRepository;
   @Autowired private JdbcTemplate jdbcTemplate;
 
+  /**
+   * AU-08 의 부분 수정 규칙이다. <b>세 상태가 갈린다</b> — {@code null} 은 안 건드림, 빈 문자열은 비움, 그 밖은 교체.
+   *
+   * <p>DB 를 쓰지 않는다. 값 객체를 받아 필드를 바꾸는 것이 전부라 단위로 충분하다.
+   */
+  @Test
+  @DisplayName("프로필을 고치면 닉네임과 한줄소개가 그 값으로 바뀐다.")
+  void updateProfile() {
+    User user =
+        load(aUser().nickname("고치기전덕후").profile("전 소개", "/avatar/old.webp").insert(jdbcTemplate));
+
+    user.updateProfile(new Profile("고친덕후", "새 소개"));
+
+    assertThat(user.getNickname()).isEqualTo("고친덕후");
+    assertThat(user.getBio()).isEqualTo("새 소개");
+  }
+
+  /** 프로필 화면이 한줄소개만 고쳐 보내는 것이 가장 흔한 요청이다. 그때 닉네임이 지워지면 안 된다. */
+  @Test
+  @DisplayName("보내지 않은 필드는 바뀌지 않는다.")
+  void updateProfile_partial() {
+    User user = load(aUser().nickname("그대로덕후").profile("그대로 소개", null).insert(jdbcTemplate));
+
+    user.updateProfile(new Profile(null, "새 소개만"));
+
+    assertThat(user.getNickname()).isEqualTo("그대로덕후");
+    assertThat(user.getBio()).isEqualTo("새 소개만");
+  }
+
+  /** 「비어 있다」를 표현하는 값이 둘이 되면 조회하는 쪽이 둘 다 검사해야 한다. */
+  @Test
+  @DisplayName("빈 한줄소개를 보내면 값이 비워진다.")
+  void updateProfile_clearsBio() {
+    User user = load(aUser().profile("지울 소개", null).insert(jdbcTemplate));
+
+    user.updateProfile(new Profile(null, ""));
+
+    assertThat(user.getBio()).isNull();
+  }
+
+  /** 출생연도는 가입 후 잠긴다 (AU-08). {@code Profile} 에 필드가 없어서 바꿀 수단 자체가 없다. */
+  @Test
+  @DisplayName("프로필을 고쳐도 출생연도는 그대로다.")
+  void updateProfile_keepsBirthYear() {
+    User user = load(aUser().insert(jdbcTemplate));
+    int before = user.getBirthYear().getValue();
+
+    user.updateProfile(new Profile("연도안바뀜덕후", "소개"));
+
+    assertThat(user.getBirthYear().getValue()).isEqualTo(before);
+  }
+
   @Test
   @DisplayName("무효화 시각이 없으면 어느 시각에 발급된 토큰도 살아 있다.")
   void isTokenInvalidated_neverInvalidated() {
