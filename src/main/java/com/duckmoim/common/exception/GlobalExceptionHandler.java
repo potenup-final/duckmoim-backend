@@ -17,9 +17,15 @@ import org.springframework.web.servlet.resource.NoResourceFoundException;
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
+  /**
+   * 문구는 예외가 들고 온 것을 쓴다.
+   *
+   * <p>생성자 하나짜리로 만든 예외는 그 값이 곧 코드의 고정 문구라 동작이 그대로이고, 문서가 요청마다 다른 문장을 요구한 자리(예: {@code
+   * USER_SANCTIONED} 의 제재 사유)만 갈린다.
+   */
   @ExceptionHandler(BusinessException.class)
   public ResponseEntity<ErrorResponse> handleBusinessException(BusinessException e) {
-    return respond(e, e.getErrorCode());
+    return respond(e, e.getErrorCode(), e.getMessage());
   }
 
   @ExceptionHandler(MethodArgumentNotValidException.class)
@@ -88,6 +94,11 @@ public class GlobalExceptionHandler {
   }
 
   private ResponseEntity<ErrorResponse> respond(Exception e, ErrorCode errorCode) {
+    return respond(e, errorCode, errorCode.getMessage());
+  }
+
+  private ResponseEntity<ErrorResponse> respond(Exception e, ErrorCode errorCode, String message) {
+
     HttpStatus status = errorCode.getStatus();
 
     if (status.is5xxServerError()) {
@@ -104,6 +115,6 @@ public class GlobalExceptionHandler {
           e.getClass().getSimpleName());
     }
 
-    return ResponseEntity.status(status).body(ErrorResponse.of(errorCode));
+    return ResponseEntity.status(status).body(new ErrorResponse(errorCode.getCode(), message));
   }
 }

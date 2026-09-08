@@ -22,7 +22,17 @@ public enum UserErrorCode implements ErrorCode {
 
   // I-01 닉네임 유일성. 도메인 3.3 이 「DB 유니크 제약. 위반을 409로 변환」으로 정했다.
   // 가입(AU-06)과 프로필 수정(AU-08) 양쪽이 쓴다.
-  USER_NICKNAME_DUPLICATED(HttpStatus.CONFLICT, "이미 사용 중인 닉네임입니다.");
+  USER_NICKNAME_DUPLICATED(HttpStatus.CONFLICT, "이미 사용 중인 닉네임입니다."),
+
+  /**
+   * 제재 중인 회원이 쓰기를 시도했다 (I-14).
+   *
+   * <p><b>여기 적힌 문구는 사유를 모를 때의 것이다.</b> API-설계.md 「4. 에러 코드」가 <i>"{@code USER_SANCTIONED} 의 {@code
+   * message} 에 제재 사유를 담는다"</i> 고 정했고, 실제 응답에는 그 회원에게 걸린 사유가 실린다 (AD-04 · AU-12).
+   *
+   * <p><b>정본에 있는데 코드에 없던 값이다.</b> 던질 자리가 AD-04 소관이라 STAR-80 이 만들면서 넣었다.
+   */
+  USER_SANCTIONED(HttpStatus.FORBIDDEN, "제재 중에는 글을 쓸 수 없습니다.");
 
   private final HttpStatus status;
   private final String message;
