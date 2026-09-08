@@ -1,6 +1,7 @@
 package com.duckmoim.identity.presentation;
 
 import com.duckmoim.auth.domain.AuthUser;
+import com.duckmoim.auth.service.AuthService;
 import com.duckmoim.identity.presentation.dto.MyProfileResponse;
 import com.duckmoim.identity.presentation.dto.NicknameAvailabilityResponse;
 import com.duckmoim.identity.presentation.dto.ProfileUpdateRequest;
@@ -15,6 +16,7 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -24,7 +26,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-@Tag(name = "회원", description = "가입 정보 입력 · 내 정보 · 프로필 수정 · 공개 프로필")
+@Tag(name = "회원", description = "가입 정보 입력 · 내 정보 · 프로필 수정 · 공개 프로필 · 탈퇴")
 @RestController
 @RequestMapping("/api/v1/users")
 @RequiredArgsConstructor
@@ -32,6 +34,14 @@ public class UserController {
 
   private final UserService userService;
   private final UserQueryService userQueryService;
+
+  /**
+   * 탈퇴가 토큰까지 정리하려면 {@code auth} 의 유스케이스가 필요하다 (AU-11 · AU-04 재사용).
+   *
+   * <p>아키텍처 컨벤션 「절차」가 <i>"다른 도메인을 참조해야 한다면 먼저 의존 방향과 공개 API를 PR에서 합의한다"</i> 고 정했으므로 PR 에 근거를 적는다.
+   * 방향은 {@code identity.presentation → auth.service} 한쪽이고, 이미 {@code AuthUser} 를 같은 방향으로 참조하고 있다.
+   */
+  private final AuthService authService;
 
   /**
    * 닉네임을 쓸 수 있는지 미리 본다 (AU-06).
@@ -124,5 +134,28 @@ public class UserController {
   @GetMapping("/{userId}")
   public PublicProfileResponse findPublicProfile(@PathVariable Long userId) {
     return PublicProfileResponse.from(userQueryService.findPublicProfile(userId));
+  }
+
+  /**
+   * 계정을 탈퇴 처리한다 (AU-11).
+   *
+   * <p><b>되돌릴 수 없다.</b> 같은 카카오 계정으로 다시 로그인해도 404 다 — 소프트 삭제라 행이 남고 {@code kakao_user_id} 가 UNIQUE 라
+   * 새 계정을 만들 수도 없다. 「탈퇴 후 재가입」은 요구사항이 없어 열지 않았다.
+   *
+   * <p><b>두 서비스를 차례로 부른다.</b> 게이트가 service 를 presentation 에서만 참조하게 막아 {@code identity} 서비스가 {@code
+   * auth} 서비스를 부를 수 없다 — 저장소를 직접 뚫으면 컨텍스트 의존이 순환한다. 조립할 자리가 여기뿐이다.
+   *
+   * <p><b>순서가 중요하다.</b> 탈퇴를 먼저 커밋한다. 뒤쪽이 실패해도 <b>접근은 이미 끊겨 있다</b> — 관문이 매 요청 탈퇴를 검사한다(D 티켓). 순서를
+   * 뒤집으면 「로그아웃은 됐는데 탈퇴가 안 된」 상태가 남아 다시 로그인할 수 있다.
+   *
+   * <p>등급이 {@code SIGNUP} 이다 (API 설계 2-2). <b>가입 미완료 계정은 이 경로로 탈퇴할 수 없다</b> — 관문이 403 으로 끊는다.
+   *
+   * <p>성공은 본문 없는 200 이다 (컨벤션의 상태 코드 표에 204 가 없다). 로그아웃과 같은 모양이다.
+   */
+  @Operation(summary = "회원 탈퇴", description = "되돌릴 수 없다. 닉네임과 프로필 이미지가 비워지고 쓴 글과 댓글은 남는다.")
+  @DeleteMapping("/me")
+  public void withdraw(@AuthenticationPrincipal AuthUser authUser) {
+    userService.withdraw(authUser.userId());
+    authService.logout(authUser.userId());
   }
 }
