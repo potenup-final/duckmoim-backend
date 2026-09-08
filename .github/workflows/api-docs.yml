@@ -14,9 +14,12 @@ on:
     branches: [develop]
   workflow_dispatch:
 
+# 취소하지 않는다. deploy-pages 가 도는 중에 끊기면 github-pages 환경에 in-progress 배포가
+# 남아 다음 배포가 막히고, 푸는 데 손이 든다. GitHub 의 Pages 템플릿이 false 인 이유가 이것이다.
+# 뒤에 들어온 실행이 어차피 최신 develop 을 다시 뽑으므로 기다려도 잃는 것이 없다.
 concurrency:
   group: api-docs
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   publish:
