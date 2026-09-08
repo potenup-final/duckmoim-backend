@@ -44,10 +44,10 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
  * <p>{@link ImportSecurity} 가 필요한 이유 — {@code @WebMvcTest} 는 {@code @Configuration} 을 안 집어서, 이것 없이는
  * 우리 설정 대신 Spring Boot 기본 보안이 걸려 모든 요청이 403 이 된다.
  */
-@WebMvcTest(CommentController.class)
+@WebMvcTest(PostCommentController.class)
 @ImportSecurity
 @Import({CommentItemAssembler.class, CommentVisibilityPolicy.class, CommentActionPolicy.class})
-class CommentControllerTest {
+class PostCommentControllerTest {
 
   /** 저장은 UTC 다. 응답에서 KST 오프셋이 붙어 09:00 으로 나가야 한다. */
   private static final LocalDateTime WRITTEN_AT_UTC = LocalDateTime.of(2026, 9, 14, 0, 0);
