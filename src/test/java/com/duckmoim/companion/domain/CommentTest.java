@@ -150,8 +150,8 @@ class CommentTest {
   /**
    * 금지된 전이다. 도메인 6장에서 DELETED 가 종착이고 되돌아오는 전이가 없다.
    *
-   * <p>BLINDED 에서 출발하는 경우는 여기서 못 만든다 — 블라인드로 가는 전이는 신고 처리(AD-07) 소관이라 아직 없다. 같은 가드를 지나므로 서비스 통합
-   * 테스트가 픽스처로 확인한다.
+   * <p>BLINDED 에서 출발하는 경우는 아래 {@link #edit_isBlinded} · {@link #deleteBy_isBlinded} 가 본다. STAR-54
+   * 때는 블라인드로 가는 전이가 없어 여기서 만들 수 없었고, AD-07 이 {@link Comment#blind} 로 그 자리를 만들었다.
    */
   @DisplayName("이미 지운 댓글은 다시 지울 수 없다.")
   @Test
@@ -172,6 +172,78 @@ class CommentTest {
     comment.deleteBy(AUTHOR_ID, HOST_ID);
 
     assertThatThrownBy(() -> comment.edit(AUTHOR_ID, "고친다", null))
+        .isInstanceOf(BusinessException.class)
+        .extracting(thrown -> ((BusinessException) thrown).getErrorCode())
+        .isEqualTo(CommentErrorCode.COMMENT_NOT_FOUND);
+  }
+
+  @DisplayName("신고 처리로 댓글을 가리면 BLINDED 가 된다.")
+  @Test
+  void blind() {
+    Comment comment = comment(false);
+
+    comment.blind();
+
+    assertThat(comment.getStatus()).isEqualTo(CommentStatus.BLINDED);
+    assertThat(comment.isActive()).isFalse();
+  }
+
+  /** 본문이 남아야 관리자가 CM-17 로 판단 재료를 보고, 가려진 뒤에도 신고를 계속 받는다 (STAR-60). */
+  @DisplayName("가린 뒤에도 본문은 지워지지 않는다.")
+  @Test
+  void blindKeepsContent() {
+    Comment comment = comment(true);
+
+    comment.blind();
+
+    assertThat(comment.getContent()).isEqualTo("저 갈게요!");
+  }
+
+  /** 종착 전이를 다시 부른 것이라 404 가 아니라 409 다. 부르는 쪽이 관리자라 「없다」가 사실이 아니다. */
+  @DisplayName("이미 가린 댓글은 다시 가릴 수 없다.")
+  @Test
+  void blind_isAlreadyBlinded() {
+    Comment comment = comment(false);
+    comment.blind();
+
+    assertThatThrownBy(comment::blind)
+        .isInstanceOf(BusinessException.class)
+        .extracting(thrown -> ((BusinessException) thrown).getErrorCode())
+        .isEqualTo(CommentErrorCode.COMMENT_NOT_ACTIVE);
+  }
+
+  /** DELETED 와 BLINDED 는 각각 종착이고 둘 사이 전이가 없다 (도메인 6장). */
+  @DisplayName("지운 댓글은 가릴 수 없다.")
+  @Test
+  void blind_isDeleted() {
+    Comment comment = comment(false);
+    comment.deleteBy(AUTHOR_ID, HOST_ID);
+
+    assertThatThrownBy(comment::blind)
+        .isInstanceOf(BusinessException.class)
+        .extracting(thrown -> ((BusinessException) thrown).getErrorCode())
+        .isEqualTo(CommentErrorCode.COMMENT_NOT_ACTIVE);
+  }
+
+  @DisplayName("가린 댓글은 고칠 수 없다.")
+  @Test
+  void edit_isBlinded() {
+    Comment comment = comment(false);
+    comment.blind();
+
+    assertThatThrownBy(() -> comment.edit(AUTHOR_ID, "고친다", null))
+        .isInstanceOf(BusinessException.class)
+        .extracting(thrown -> ((BusinessException) thrown).getErrorCode())
+        .isEqualTo(CommentErrorCode.COMMENT_NOT_FOUND);
+  }
+
+  @DisplayName("가린 댓글은 지울 수 없다.")
+  @Test
+  void deleteBy_isBlinded() {
+    Comment comment = comment(false);
+    comment.blind();
+
+    assertThatThrownBy(() -> comment.deleteBy(AUTHOR_ID, HOST_ID))
         .isInstanceOf(BusinessException.class)
         .extracting(thrown -> ((BusinessException) thrown).getErrorCode())
         .isEqualTo(CommentErrorCode.COMMENT_NOT_FOUND);

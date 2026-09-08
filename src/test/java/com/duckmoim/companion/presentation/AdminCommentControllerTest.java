@@ -5,7 +5,9 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
+import static org.mockito.BDDMockito.willThrow;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -16,6 +18,7 @@ import com.duckmoim.common.exception.BusinessException;
 import com.duckmoim.companion.domain.Comment;
 import com.duckmoim.companion.domain.CommentStatus;
 import com.duckmoim.companion.exception.CommentErrorCode;
+import com.duckmoim.companion.service.AdminCommentCommandService;
 import com.duckmoim.companion.service.AdminCommentReadService;
 import com.duckmoim.companion.service.AdminCommentView;
 import com.duckmoim.identity.domain.LastSeen;
@@ -34,13 +37,12 @@ import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.servlet.MockMvc;
 
 /**
- * 관리자 댓글 열람의 HTTP 계약 (CM-17).
+ * 관리자 댓글 열람과 조치의 HTTP 계약 (CM-17 · AD-07).
  *
- * <p>기록이 실제로 남는지는 서비스 통합 테스트가 본다. 여기서는 <b>파라미터가 서비스로 옮겨지는지</b>와 응답 모양만 본다.
+ * <p>기록과 전이가 실제로 일어나는지는 서비스 통합 테스트가 본다. 여기서는 <b>파라미터가 서비스로 옮겨지는지</b>와 응답 모양·상태 코드만 본다.
  *
- * <p>등급 판정(익명 401 · 일반 계정 403)도 여기 없다 — {@code EndpointGradeTest} 의 권한 표가 {@code GET
- * /api/v1/admin/comments/{commentId}} 행으로 이미 지킨다. 그 표는 위키의 권한 표를 옮긴 것이고, 이 컨트롤러가 생기면서 진짜 요청을 실행하게
- * 된다.
+ * <p>등급 판정(익명 401 · 일반 계정 403)도 여기 없다 — {@code EndpointGradeTest} 의 권한 표가 두 경로 행으로 이미 지킨다. 그 표는 위키의
+ * 권한 표를 옮긴 것이고, 이 컨트롤러가 생기면서 진짜 요청을 실행하게 된다.
  */
 @WebMvcTest(AdminCommentController.class)
 @ImportSecurity
@@ -57,6 +59,7 @@ class AdminCommentControllerTest {
   @Autowired private TokenProvider tokenProvider;
 
   @MockitoBean private AdminCommentReadService adminCommentReadService;
+  @MockitoBean private AdminCommentCommandService adminCommentCommandService;
 
   @Captor private ArgumentCaptor<Long> reportId;
 
@@ -184,6 +187,52 @@ class AdminCommentControllerTest {
     ReflectionTestUtils.setField(comment, "status", status);
 
     return new AdminCommentView(comment, "댓글덕후", null, LastSeen.TODAY);
+  }
+
+  /** 결과 상태가 BLINDED 하나로 정해져 있어 돌려줄 정보가 없다 (API-컨벤션.md 「Status Code 규칙」). */
+  @DisplayName("블라인드하면 본문 없이 200 이다.")
+  @Test
+  void blindComment() throws Exception {
+    mockMvc
+        .perform(post("/api/v1/admin/comments/{commentId}/blind", COMMENT_ID).headers(bearer()))
+        .andExpect(status().isOk());
+  }
+
+  /** 인가가 아니라 기록 때문에 받는다. 누가 가렸는지가 감사 로그의 행위자다 (AD-05). */
+  @DisplayName("가린 사람의 회원번호가 서비스로 넘어간다.")
+  @Test
+  void blindCommentCarriesActor() throws Exception {
+    mockMvc
+        .perform(post("/api/v1/admin/comments/{commentId}/blind", COMMENT_ID).headers(bearer()))
+        .andExpect(status().isOk());
+
+    then(adminCommentCommandService).should().blind(COMMENT_ID, ADMIN_ID);
+  }
+
+  @DisplayName("ACTIVE 가 아닌 댓글은 COMMENT_NOT_ACTIVE 409 다.")
+  @Test
+  void blindNotActiveComment() throws Exception {
+    willThrow(new BusinessException(CommentErrorCode.COMMENT_NOT_ACTIVE))
+        .given(adminCommentCommandService)
+        .blind(COMMENT_ID, ADMIN_ID);
+
+    mockMvc
+        .perform(post("/api/v1/admin/comments/{commentId}/blind", COMMENT_ID).headers(bearer()))
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("COMMENT_NOT_ACTIVE"));
+  }
+
+  @DisplayName("없는 댓글을 가리려 하면 COMMENT_NOT_FOUND 404 다.")
+  @Test
+  void blindMissingComment() throws Exception {
+    willThrow(new BusinessException(CommentErrorCode.COMMENT_NOT_FOUND))
+        .given(adminCommentCommandService)
+        .blind(COMMENT_ID, ADMIN_ID);
+
+    mockMvc
+        .perform(post("/api/v1/admin/comments/{commentId}/blind", COMMENT_ID).headers(bearer()))
+        .andExpect(status().isNotFound())
+        .andExpect(jsonPath("$.code").value("COMMENT_NOT_FOUND"));
   }
 
   private HttpHeaders bearer() {
