@@ -1,9 +1,11 @@
 package com.duckmoim.companion.service;
 
+import com.duckmoim.common.exception.BusinessException;
 import com.duckmoim.companion.domain.Capacity;
 import com.duckmoim.companion.domain.CompanionPost;
 import com.duckmoim.companion.domain.PostCursor;
 import com.duckmoim.companion.domain.PostListQuery;
+import com.duckmoim.companion.exception.PostErrorCode;
 import com.duckmoim.companion.infra.AuthoredPost;
 import com.duckmoim.companion.infra.CommentRepository;
 import com.duckmoim.companion.infra.CompanionPostRepository;
@@ -16,7 +18,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 모집글 조회 (PO-08).
+ * 모집글 조회 — 목록(PO-08)과 상세(PO-11).
  *
  * <p><b>작성과 나눈 이유.</b> 아키텍처 컨벤션이 service 를 나누는 기준으로 「하나의 유즈케이스」를 들었고, 여기가 쓰는 것은 조회 전용 저장소와 시계뿐이다
  * ({@code EventQueryService} 가 같은 자리).
@@ -50,6 +52,27 @@ public class CompanionPostQueryService {
         page.stream().map(authored -> toView(authored, commentCounts)).toList(),
         nextCursor(page, hasNext),
         hasNext);
+  }
+
+  /**
+   * 모집글 한 건을 읽는다 (PO-11).
+   *
+   * <p><b>요청자를 받지 않는다.</b> API-설계.md 「2-4. 모집글 (Companion)」이 <i>"비인증 요청에도 본문 포함 200"</i> 으로 정했다 —
+   * 모집글 본문은 도메인-모델링.md 「7.1 가시성과 권한」의 표에서 「비회원 및 회원 열람 가능」이고, 가리는 것은 비밀 댓글 본문뿐이다. 요청자를 인자로 두면 쓰지 않는
+   * 판정 입력이 생기고 그것이 나중에 판정처럼 읽힌다.
+   *
+   * <p><b>마감된 글도 준다.</b> 도메인 6장이 {@code CLOSED} 의 열람을 「가능」으로 정했다.
+   *
+   * <p>없으면 {@code POST_NOT_FOUND} 404 다. 모집글에 삭제가 없으므로 (결정 D-3) 「지워져서 없는 글」과 「원래 없는 글」이 갈리지 않는다.
+   */
+  @Transactional(readOnly = true)
+  public PostView findPost(Long postId) {
+    AuthoredPost authored =
+        companionPostRepository
+            .findAuthored(postId)
+            .orElseThrow(() -> new BusinessException(PostErrorCode.POST_NOT_FOUND));
+
+    return toView(authored, commentCountsOf(List.of(authored)));
   }
 
   /** 페이지 전체를 한 번에 센다 (CM-12). 모집글마다 부르면 20건이면 쿼리가 20개다. */

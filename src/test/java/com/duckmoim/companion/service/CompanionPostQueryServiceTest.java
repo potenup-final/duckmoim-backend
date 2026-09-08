@@ -3,11 +3,14 @@ package com.duckmoim.companion.service;
 import static com.duckmoim.companion.CommentFixture.aComment;
 import static com.duckmoim.companion.CompanionPostFixture.aCompanionPost;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.duckmoim.common.exception.BusinessException;
 import com.duckmoim.companion.domain.ClosedReason;
 import com.duckmoim.companion.domain.PostCursor;
 import com.duckmoim.companion.domain.PostListQuery;
 import com.duckmoim.companion.domain.PostStatus;
+import com.duckmoim.companion.exception.PostErrorCode;
 import com.duckmoim.identity.domain.LastSeen;
 import java.time.Clock;
 import java.time.LocalDateTime;
@@ -200,6 +203,53 @@ class CompanionPostQueryServiceTest {
 
     assertThat(companionPostQueryService.findPosts(query(null, null, 20)).posts().get(0).capacity())
         .isNull();
+  }
+
+  /** 목록은 잘라 싣지만 상세는 전문이다 (PO-11). 자르는 것은 목록 응답의 일이다. */
+  @DisplayName("상세는 본문 전체를 담는다.")
+  @Test
+  void findPost() {
+    long postId = aCompanionPost().meetAt(MEET_AT).content("가".repeat(500)).insert(jdbc);
+
+    PostView view = companionPostQueryService.findPost(postId);
+
+    assertThat(view.id()).isEqualTo(postId);
+    assertThat(view.content()).hasSize(500);
+  }
+
+  /** 도메인 6장이 CLOSED 의 열람을 「가능」으로 정했다. */
+  @DisplayName("마감된 글의 상세도 읽힌다.")
+  @Test
+  void findPost_isClosed() {
+    long postId =
+        aCompanionPost()
+            .meetAt(MEET_AT)
+            .status(PostStatus.CLOSED)
+            .closedReason(ClosedReason.MANUAL)
+            .insert(jdbc);
+
+    PostView view = companionPostQueryService.findPost(postId);
+
+    assertThat(view.status()).isEqualTo(PostStatus.CLOSED);
+    assertThat(view.closedReason()).isEqualTo(ClosedReason.MANUAL);
+  }
+
+  @DisplayName("상세도 댓글 수를 조회 시점에 세어 담는다.")
+  @Test
+  void findPost_countsComments() {
+    long postId = post(MEET_AT);
+    aComment().postId(postId).insert(jdbc);
+
+    assertThat(companionPostQueryService.findPost(postId).commentCount()).isEqualTo(1);
+  }
+
+  @DisplayName("없는 모집글의 상세는 POST_NOT_FOUND 다.")
+  @Test
+  void findPost_isMissing() {
+    assertThatThrownBy(() -> companionPostQueryService.findPost(404L))
+        .isInstanceOf(BusinessException.class)
+        .extracting(thrown -> ((BusinessException) thrown).getErrorCode())
+        .isEqualTo(PostErrorCode.POST_NOT_FOUND);
   }
 
   private long post(LocalDateTime meetAt) {

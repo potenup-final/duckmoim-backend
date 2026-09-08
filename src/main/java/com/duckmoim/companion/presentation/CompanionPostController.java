@@ -10,6 +10,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -37,6 +38,22 @@ public class CompanionPostController {
   @GetMapping
   public CompanionPostListResponse getPosts(CompanionPostListRequest request) {
     return CompanionPostListResponse.from(companionPostQueryService.findPosts(request.toQuery()));
+  }
+
+  /**
+   * 모집글 한 건을 조회한다 (PO-11).
+   *
+   * <p><b>비인증 요청에도 본문을 포함해 200 이다.</b> 그것이 PO-11 의 검증 기준이고, 요청자를 받지 않는 것이 그 계약을 코드로 못박는다 —
+   * {@code @AuthenticationPrincipal} 을 받아두면 언젠가 그것으로 본문을 가르는 분기가 붙는다.
+   *
+   * <p><b>경로 변수는 숫자 PK 다.</b> 행사와 다르다 — 행사만 외부 식별자로 URL 을 만든다 (API-설계.md 「2-3. 행사 (Catalog)」).
+   *
+   * <p><b>댓글 본문은 여기 없다.</b> 별도 조회다 (CM-06). 댓글 수만 함께 나간다.
+   */
+  @Operation(summary = "모집글 상세 조회", description = "본문 전체와 댓글 수를 함께 준다. 비회원도 볼 수 있다.")
+  @GetMapping("/{postId}")
+  public CompanionPostDetailResponse getPost(@PathVariable Long postId) {
+    return CompanionPostDetailResponse.from(companionPostQueryService.findPost(postId));
   }
 
   /**
