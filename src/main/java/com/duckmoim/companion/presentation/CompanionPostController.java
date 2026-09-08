@@ -2,12 +2,14 @@ package com.duckmoim.companion.presentation;
 
 import com.duckmoim.auth.domain.AuthUser;
 import com.duckmoim.companion.service.CompanionPostCommandService;
+import com.duckmoim.companion.service.CompanionPostQueryService;
 import com.duckmoim.companion.service.WrittenCompanionPost;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -20,6 +22,22 @@ import org.springframework.web.bind.annotation.RestController;
 public class CompanionPostController {
 
   private final CompanionPostCommandService companionPostCommandService;
+  private final CompanionPostQueryService companionPostQueryService;
+
+  /**
+   * 모집글 목록을 조회한다 (PO-08).
+   *
+   * <p>인증이 필요 없다 (API-설계.md 「2-4. 모집글 (Companion)」 · {@code PUBLIC}).
+   *
+   * <p><b>정렬을 파라미터로 받지 않는다.</b> 만남시각 임박순 고정이고, 커서가 그 정렬 키를 담고 있어서 정렬이 바뀌면 이미 발급한 커서가 무의미해진다.
+   *
+   * <p><b>검색은 이 경로에 없다.</b> PO-13 목록 검색은 1차에서 브라우저가 거른다 (API-설계.md 「2-4. 모집글 (Companion)」).
+   */
+  @Operation(summary = "모집글 목록 조회", description = "상태로 거르고 커서로 페이지를 넘긴다. 만남시각 임박순이다.")
+  @GetMapping
+  public CompanionPostListResponse getPosts(CompanionPostListRequest request) {
+    return CompanionPostListResponse.from(companionPostQueryService.findPosts(request.toQuery()));
+  }
 
   /**
    * 모집글을 연다 (PO-01 · PO-02 · PO-03 · PO-05).
