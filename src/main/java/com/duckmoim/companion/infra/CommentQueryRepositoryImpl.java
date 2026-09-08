@@ -8,6 +8,7 @@ import jakarta.persistence.PersistenceContext;
 import jakarta.persistence.TypedQuery;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 /**
@@ -57,6 +58,22 @@ public class CommentQueryRepositoryImpl implements CommentQueryRepository {
 
     // OFFSET 을 쓰지 않는다. 한 건을 더 읽어 다음 페이지 유무를 판정한다.
     return typed.setMaxResults(query.size() + 1).getResultList();
+  }
+
+  /**
+   * 상태 조건이 없다. 관리자는 가시성 매트릭스 밖이고 (도메인-모델링.md 「7. 도메인 규칙」), 지운 댓글이야말로 신고를 판단할 재료다.
+   *
+   * <p>{@code getResultList} 로 받는 이유 — {@code getSingleResult} 는 없을 때 예외를 던진다. 없는 댓글은 404 이지 오류가
+   * 아니라 판정을 호출부에 맡긴다.
+   */
+  @Override
+  public Optional<AuthoredComment> findAuthoredById(Long commentId) {
+    return entityManager
+        .createQuery(SELECT_AUTHORED + " WHERE c.id = :commentId", AuthoredComment.class)
+        .setParameter("commentId", commentId)
+        .getResultList()
+        .stream()
+        .findFirst();
   }
 
   @Override
