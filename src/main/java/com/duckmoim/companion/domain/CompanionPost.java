@@ -197,6 +197,31 @@ public class CompanionPost extends BaseEntity {
   }
 
   /**
+   * 만남시각이 지난 글을 닫는다 (PO-14).
+   *
+   * <p><b>멱등이다.</b> {@code closeByHost} 와 갈리는 유일한 지점이고, 그 javadoc 이 이유를 미리 적어 두었다 — <i>"멱등을 요구하는 것은
+   * 배치(PO-14) 쪽이고, 그것은 사람이 누른 요청이 아니라 재실행되는 작업이라서다."</i> 재실행이 안전해야 배치가 실패한 주기를 다음 주기가 대신 처리할 수 있다.
+   *
+   * <p><b>이미 마감된 글의 사유를 덮지 않는다.</b> 방장이 만남시각 전에 {@code MANUAL} 로 닫은 글은 시간이 지나면 이 메서드의 조건에도 걸린다. 그때
+   * 사유를 덮어쓰면 화면 배지가 「모집 완료」에서 「종료」로 조용히 바뀌어 <b>방장이 모집을 끝냈다는 사실이 지워진다.</b>
+   *
+   * <p><b>「만남시각이 지났는가」의 판정도 여기 있다.</b> 부르는 쪽이 판정하고 이 메서드가 받기만 하면, {@code OPEN} 이지만 아직 지나지 않은 글을 닫는
+   * 호출이 컴파일된다. 상태와 시각 둘 다 이 애그리게이트가 아는 사실이다 (도메인-모델링.md 「3.1 경계와 트랜잭션 범위」).
+   *
+   * @param nowInUtc <b>UTC 기준</b> 현재 시각. {@code meetAt} 이 UTC 로 저장되므로 (도메인-모델링.md 「4. 엔티티 · 값 객체 ·
+   *     식별자」) KST 벽시계를 넣으면 아직 만나지도 않은 아홉 시간 안쪽의 글을 전부 닫는다
+   * @return 이 호출이 실제로 닫았는지. 이미 닫혀 있었거나 만남시각이 남았으면 {@code false}
+   */
+  public boolean closeForMeetTimePassed(LocalDateTime nowInUtc) {
+    if (status != PostStatus.OPEN || !meetAt.isBefore(nowInUtc)) {
+      return false;
+    }
+
+    closeWith(ClosedReason.MEET_TIME_PASSED);
+    return true;
+  }
+
+  /**
    * 전이를 실제로 거는 유일한 자리다.
    *
    * <p>상태와 사유를 <b>함께</b> 옮긴다. 둘을 따로 두면 사유 없는 {@code CLOSED} 나 {@code OPEN} 인데 사유가 있는 상태가 만들어진다 —
