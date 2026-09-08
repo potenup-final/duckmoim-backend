@@ -20,8 +20,10 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * 토큰 무효화와 가입 완료 판정 (AU-03 · AU-04).
  *
- * <p><b>단위 테스트가 아니다.</b> {@code User} 에 생성 팩터리가 없어서 (실제 생성 경로가 AU-01 자동 가입이고 아직 없다) 행을 SQL 로 넣고 읽어야
- * 한다 — {@link com.duckmoim.identity.UserFixture} 에 이유가 있다.
+ * <p><b>대부분이 단위 테스트가 아니다.</b> {@code User.signUp} 은 자동 가입 상태만 만들 수 있어서(AU-01) 「가입을 마친 회원」이나 「무효화
+ * 시각이 찍힌 회원」을 세울 수 없다. 그런 상태는 행을 SQL 로 넣고 읽는다 — {@link com.duckmoim.identity.UserFixture} 에 이유가 있다.
+ *
+ * <p>{@code signUp} 자신을 보는 테스트는 DB 를 쓰지 않는다.
  */
 @SpringBootTest
 @Transactional
@@ -31,6 +33,36 @@ class UserTest {
 
   @Autowired private UserRepository userRepository;
   @Autowired private JdbcTemplate jdbcTemplate;
+
+  /**
+   * AU-01 「최초 로그인 시 자동 가입, 가입 정보 미입력 상태로 진입」.
+   *
+   * <p>카카오에서 받는 것은 회원번호뿐이라(결정 D-2) 나머지 칸은 비어 있어야 한다. 닉네임이 채워져 나오면 사용자가 고를 기회도 없이 I-01(닉네임 유일)과
+   * 부딪힌다.
+   */
+  @Test
+  @DisplayName("자동 가입한 계정은 가입 정보가 비어 있고 아직 활동할 수 없다.")
+  void signUp() {
+    User user = User.signUp(4321L);
+
+    assertThat(user.getKakaoUserId()).isEqualTo(4321L);
+    assertThat(user.isSignupPending()).isTrue();
+    assertThat(user.isSignupCompleted()).isFalse();
+    assertThat(user.getNickname()).isNull();
+    assertThat(user.getBirthYear()).isNull();
+  }
+
+  /** 자동 가입 직후는 「입력 전」이라 {@code completeSignup} 이 통해야 한다. 금지 전이는 아래 두 테스트가 본다. */
+  @Test
+  @DisplayName("자동 가입한 계정은 가입 정보를 입력할 수 있다.")
+  void signUp_thenCompleteSignup() {
+    User user = User.signUp(4322L);
+
+    user.completeSignup(SignupInfo.of("성수팝업러", 2000, 2026));
+
+    assertThat(user.isSignupCompleted()).isTrue();
+    assertThat(user.getNickname()).isEqualTo("성수팝업러");
+  }
 
   @Test
   @DisplayName("무효화 시각이 없으면 어느 시각에 발급된 토큰도 살아 있다.")
