@@ -15,6 +15,17 @@ import org.springframework.data.repository.query.Param;
 public interface UserRepository extends JpaRepository<User, Long> {
 
   /**
+   * 그 닉네임을 쓰는 회원이 있는지 (AU-06 사전 조회).
+   *
+   * <p><b>확정이 아니다.</b> 이 조회와 저장 사이에 남이 같은 닉네임을 넣을 수 있다 — API 설계 2-2 가 <i>"사전 조회. 확정은 아니다"</i> 로 적어
+   * 둔 것이 그 뜻이다. 실제 유일성은 {@code uk_user_nickname} 이 지키고 위반을 409 로 옮긴다 (I-01 의 이중 방어).
+   *
+   * <p><b>탈퇴 회원을 걸러내지 않는다.</b> 탈퇴는 소프트 삭제라 행이 남고 유니크 제약도 그 행을 그대로 센다. 여기서만 걸러내면 「사용 가능」이라고 답한 닉네임이
+   * 저장에서 409 가 되어, <b>사용자가 원인을 알 수 없는 실패</b>를 본다.
+   */
+  boolean existsByNickname(String nickname);
+
+  /**
    * 회원 행을 잠그고 읽는다 ({@code SELECT ... FOR UPDATE}).
    *
    * <p><b>토큰 쓰기 경로의 락 순서를 하나로 만드는 장치다.</b> 발급 · 회전 · 폐기가 모두 {@code refresh_token} 과 {@code user} 둘을
