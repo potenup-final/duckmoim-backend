@@ -1,6 +1,7 @@
 package com.duckmoim.identity.service;
 
 import com.duckmoim.common.exception.BusinessException;
+import com.duckmoim.identity.domain.Profile;
 import com.duckmoim.identity.domain.SignupInfo;
 import com.duckmoim.identity.domain.User;
 import com.duckmoim.identity.exception.UserErrorCode;
@@ -13,10 +14,14 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 가입 정보 입력 (AU-05 · AU-06).
+ * 회원 쓰기 — 가입 정보 입력과 프로필 수정 (AU-05 · AU-06 · AU-08).
  *
  * <p>카카오가 주는 것은 회원번호뿐이라(결정 D-2) 계정은 {@code PENDING_SIGNUP_INFO} 로 태어난다. <b>여기가 그 상태를 벗어나는 유일한
  * 창구다.</b>
+ *
+ * <p><b>프로필 수정을 별도 서비스로 두지 않았다.</b> 계획서 3장이 {@code ProfileService} 를 예상했는데, 그러면 <b>유니크 위반 → 409 변환이
+ * 두 곳에 생긴다.</b> I-01 의 이중 방어에서 실제로 차단하는 것이 DB 제약이고 그 위반을 옮기는 자리가 갈라지면, 한쪽만 고쳐졌을 때 다른 경로가 조용히 500 을
+ * 낸다. 둘 다 {@code user} 표 한 장을 쓰는 유스케이스라 여기 함께 둔다.
  */
 @Service
 @RequiredArgsConstructor
@@ -65,6 +70,51 @@ public class UserService {
     } catch (DataIntegrityViolationException e) {
       throw new BusinessException(UserErrorCode.USER_NICKNAME_DUPLICATED);
     }
+  }
+
+  /**
+   * 닉네임과 한줄소개를 고친다 (AU-08).
+   *
+   * <p><b>닉네임 중복 409 의 두 번째 호출자다.</b> 변환 코드는 {@link #completeSignup} 과 같은 것을 쓴다 — 경로가 하나뿐일 때는 그 변환이
+   * 한 곳인지가 검증되지 않았고, 여기가 붙으면서 드러난다.
+   *
+   * <p><b>닉네임이 그대로면 사전 조회를 건너뛴다.</b> 안 그러면 <b>자기 행</b>이 걸려 409 가 난다 — 프로필 화면이 닉네임을 그대로 두고 한줄소개만 고쳐
+   * 보내는 것이 가장 흔한 요청인데, 그때마다 「이미 사용 중인 닉네임입니다」가 나가고 <b>그 이름을 쓰는 사람이 본인이라 고칠 수가 없다.</b> C 의 PR 리뷰에서
+   * 이중 제출로 실측된 것과 같은 결함이다.
+   *
+   * <p>같은 이유로 저장소에 조회 메서드를 더하지 않았다. {@code existsByNicknameAndIdNot} 을 만들면 되지만, 「안 바뀌었으면 볼 필요가 없다」가
+   * 더 정확하고 {@code UserRepository} javadoc 이 <i>"조회 메서드를 늘리지 않는다"</i> 로 못박아 두었다.
+   *
+   * <p><b>동시에 같은 닉네임으로 바꾸면 하나만 성공한다.</b> 사전 조회는 둘 다 통과하고 {@code uk_user_nickname} 이 차단한다 — 가입 경로와
+   * 같은 모양이라 {@code flush} 도 직접 부른다.
+   *
+   * <p>가입 미완료 계정은 여기 도달하지 않는다 — 등급이 {@code SIGNUP} 이라 관문이 403 으로 끊는다 (AU-07). 그 계정의 수정 경로는 {@code
+   * PUT /users/me/signup-info} 하나다.
+   */
+  @Transactional
+  public void updateProfile(ProfileUpdateCommand command) {
+    User user =
+        userRepository
+            .findByIdForUpdate(command.userId())
+            .filter(found -> !found.isWithdrawn())
+            .orElseThrow(() -> new BusinessException(UserErrorCode.USER_NOT_FOUND));
+
+    if (isNicknameChanged(user, command.nickname())) {
+      requireNicknameAvailable(command.nickname());
+    }
+
+    user.updateProfile(new Profile(command.nickname(), command.bio()));
+
+    try {
+      userRepository.flush();
+    } catch (DataIntegrityViolationException e) {
+      throw new BusinessException(UserErrorCode.USER_NICKNAME_DUPLICATED);
+    }
+  }
+
+  /** 보내지 않았거나({@code null}) 지금 값과 같으면 바뀌는 것이 없다. */
+  private boolean isNicknameChanged(User user, String nickname) {
+    return nickname != null && !nickname.equals(user.getNickname());
   }
 
   /**

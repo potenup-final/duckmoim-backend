@@ -181,6 +181,114 @@ class UserServiceTest {
     cleanUp(second);
   }
 
+  /** AU-08 의 검증 기준 앞 절반 — 저장이 된다. 「공개 프로필 반영」은 {@code UserQueryServiceTest} 가 잇는다. */
+  @Test
+  @DisplayName("프로필을 수정하면 닉네임과 한줄소개가 그대로 저장된다.")
+  void updateProfile() {
+    long userId = aUser().nickname("수정전덕후").profile("전 소개", null).insert(jdbcTemplate);
+
+    userService.updateProfile(new ProfileUpdateCommand(userId, "수정후덕후", "새 소개"));
+
+    User saved = userRepository.findById(userId).orElseThrow();
+    assertThat(saved.getNickname()).isEqualTo("수정후덕후");
+    assertThat(saved.getBio()).isEqualTo("새 소개");
+    cleanUp(userId);
+  }
+
+  /**
+   * <b>가장 흔한 요청이다.</b> 프로필 화면이 닉네임을 그대로 두고 한줄소개만 고쳐 보낸다.
+   *
+   * <p>사전 조회를 그냥 돌리면 <b>자기 행</b>이 걸려 409 가 나고, 그 이름을 쓰는 사람이 본인이라 사용자는 고칠 방법이 없다. C 의 PR 리뷰에서 이중 제출로
+   * 실측된 것과 같은 결함이다.
+   */
+  @Test
+  @DisplayName("자기 닉네임을 그대로 보내도 중복으로 거부되지 않는다.")
+  void updateProfile_sameNickname() {
+    long userId = aUser().nickname("안바꾸는덕후").insert(jdbcTemplate);
+
+    userService.updateProfile(new ProfileUpdateCommand(userId, "안바꾸는덕후", "소개만 고친다"));
+
+    User saved = userRepository.findById(userId).orElseThrow();
+    assertThat(saved.getNickname()).isEqualTo("안바꾸는덕후");
+    assertThat(saved.getBio()).isEqualTo("소개만 고친다");
+    cleanUp(userId);
+  }
+
+  /** AU-08 의 검증 기준 — 중복 닉네임으로 변경 시 409. I-01 의 두 번째 호출자다. */
+  @Test
+  @DisplayName("남이 쓰는 닉네임으로 바꾸면 거부된다.")
+  void updateProfile_duplicatedNickname() {
+    long owner = aUser().nickname("먼저쓴덕후").insert(jdbcTemplate);
+    long userId = aUser().nickname("바꾸려는덕후").insert(jdbcTemplate);
+
+    assertThatThrownBy(
+            () -> userService.updateProfile(new ProfileUpdateCommand(userId, "먼저쓴덕후", null)))
+        .isInstanceOf(BusinessException.class)
+        .hasFieldOrPropertyWithValue("errorCode", UserErrorCode.USER_NICKNAME_DUPLICATED);
+    cleanUp(userId);
+    cleanUp(owner);
+  }
+
+  @Test
+  @DisplayName("탈퇴한 계정의 프로필은 수정할 수 없다.")
+  void updateProfile_withdrawn() {
+    long userId = aUser().status(SignupStatus.WITHDRAWN).insert(jdbcTemplate);
+
+    assertThatThrownBy(
+            () -> userService.updateProfile(new ProfileUpdateCommand(userId, "돌아온덕후", null)))
+        .isInstanceOf(BusinessException.class)
+        .hasFieldOrPropertyWithValue("errorCode", UserErrorCode.USER_NOT_FOUND);
+    cleanUp(userId);
+  }
+
+  /**
+   * <b>I-01 의 이중 방어가 수정 경로에도 걸리는지 본다.</b> 서로 다른 두 회원이 같은 닉네임으로 동시에 바꾼다 — 사전 조회는 둘 다 통과하고 차단은 {@code
+   * uk_user_nickname} 이 한다.
+   *
+   * <p><b>500 이 하나라도 나면 실패다.</b> 가입 경로(AU-06)에서 만든 409 변환이 여기서도 도는지가 이 테스트의 값이다.
+   */
+  @Test
+  @DisplayName("같은 닉네임으로 동시에 수정하면 한 건만 성공하고 나머지는 중복으로 거부된다.")
+  void updateProfile_concurrent() throws Exception {
+    long first = aUser().nickname("경쟁하는덕후1").insert(jdbcTemplate);
+    long second = aUser().nickname("경쟁하는덕후2").insert(jdbcTemplate);
+    String contested = "동시에바꾼이름";
+
+    CountDownLatch start = new CountDownLatch(1);
+    AtomicInteger success = new AtomicInteger();
+    AtomicInteger duplicated = new AtomicInteger();
+    AtomicInteger serverError = new AtomicInteger();
+
+    ExecutorService pool = Executors.newFixedThreadPool(2);
+    for (long userId : new long[] {first, second}) {
+      pool.execute(
+          () -> {
+            try {
+              start.await();
+              userService.updateProfile(new ProfileUpdateCommand(userId, contested, null));
+              success.incrementAndGet();
+            } catch (BusinessException e) {
+              if (e.getErrorCode() == UserErrorCode.USER_NICKNAME_DUPLICATED) {
+                duplicated.incrementAndGet();
+              } else {
+                serverError.incrementAndGet();
+              }
+            } catch (Exception e) {
+              serverError.incrementAndGet();
+            }
+          });
+    }
+    start.countDown();
+    pool.shutdown();
+    assertThat(pool.awaitTermination(30, TimeUnit.SECONDS)).isTrue();
+
+    assertThat(serverError).hasValue(0);
+    assertThat(success).hasValue(1);
+    assertThat(duplicated).hasValue(1);
+    cleanUp(first);
+    cleanUp(second);
+  }
+
   private long pendingUser() {
     return aUser().status(SignupStatus.PENDING_SIGNUP_INFO).insert(jdbcTemplate);
   }
