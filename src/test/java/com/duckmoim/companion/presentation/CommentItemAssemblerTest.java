@@ -29,9 +29,9 @@ import org.springframework.transaction.annotation.Transactional;
  * <p>판정 자체의 전 조합은 {@code CommentVisibilityPolicyTest} 가 60개로 덮고, JSON 키가 사라지는지는 {@link
  * CommentItemResponseTest} 가 본다. 여기서는 <b>둘을 잇는 배선</b>만 본다 — 조립기가 판정을 부르는지, 결과를 어느 필드에 반영하는지.
  *
- * <p><b>단위 테스트가 아닌 이유.</b> 실제 {@code Comment} 가 필요하다. {@code DELETED} · {@code BLINDED} 로 만드는 경로가
- * 아직 없고(삭제는 CM-10, 블라인드는 신고 처리), {@code createdAt} 은 저장 시점에 생긴다. 테스트를 위해 도메인에 생성 경로를 뚫는 것은 프로덕션이 쓰지
- * 않는 문을 만드는 일이라, {@code EventFixture} 와 같이 SQL 로 넣는다.
+ * <p><b>단위 테스트가 아닌 이유.</b> 실제 {@code Comment} 가 필요하고 {@code createdAt} 은 저장 시점에 생긴다. 상태도 SQL 로 넣는다
+ * — {@code DELETED} · {@code BLINDED} 로 가는 전이는 이제 있지만(CM-10 · AD-07), 조립기 검사에 남의 요구사항을 선행으로 달지 않는다.
+ * 테스트를 위해 도메인에 생성 경로를 뚫는 것은 프로덕션이 쓰지 않는 문을 만드는 일이라, {@code EventFixture} 와 같이 SQL 로 넣는다.
  */
 @SpringBootTest
 @Transactional

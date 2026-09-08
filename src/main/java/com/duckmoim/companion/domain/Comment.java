@@ -138,6 +138,30 @@ public class Comment extends BaseEntity {
   }
 
   /**
+   * 신고 처리 결과로 댓글을 가린다 (AD-07).
+   *
+   * <p><b>요청자를 받지 않는다.</b> 이 전이의 유일한 조건은 관리자라는 것이고, 그 판정은 관문 한 곳에 있다 (API-설계.md 「2-7. 백오피스
+   * (Admin)」). {@code deleteBy} 가 요청자를 받는 것은 작성자·방장이라는 판정이 도메인 규칙이라서인데, 여기에는 그런 규칙이 없다 — 인가를 도메인으로
+   * 끌어오면 관문과 두 곳에서 판정하게 된다.
+   *
+   * <p><b>본문을 지우지 않는다.</b> 조회에서 사라지는 것은 {@code CommentVisibilityPolicy} 가 {@code status != ACTIVE}
+   * 를 막기 때문이다. 본문이 남아야 관리자가 CM-17 로 판단 재료를 볼 수 있고, 가려진 뒤에도 신고를 계속 받는다 (STAR-60).
+   *
+   * <p>하위 대댓글이 있으면 목록에 자리표시자로 남는다 (CM-11). 그 판정은 조회 쪽에 있고 {@code DELETED} 와 같은 분기를 탄다.
+   *
+   * <p><b>409 인 이유</b> — {@code requireActive} 의 404 를 쓰지 않는다. 도메인-모델링.md 「6. 라이프사이클」에서 {@code
+   * DELETED} 와 {@code BLINDED} 는 각각 종착이고 둘 사이 전이가 없으므로, 여기 걸리는 것은 <b>종착 전이를 다시 부른 것</b>이다. 부르는 쪽이
+   * 관리자라 그 댓글의 본문까지 읽을 수 있어 「없다」로 답하면 사실과 다르다.
+   */
+  public void blind() {
+    if (status != CommentStatus.ACTIVE) {
+      throw new BusinessException(CommentErrorCode.COMMENT_NOT_ACTIVE);
+    }
+
+    this.status = CommentStatus.BLINDED;
+  }
+
+  /**
    * 살아 있는 댓글만 고치거나 지울 수 있다.
    *
    * <p><b>404 인 이유</b> — API-컨벤션.md 「Status Code 규칙」이 <i>"소프트 삭제된 리소스는 404로 취급한다"</i> 고 정했다.
