@@ -1,7 +1,10 @@
 package com.duckmoim.identity.domain;
 
 import com.duckmoim.common.domain.BaseEntity;
+import com.duckmoim.common.exception.BusinessException;
+import com.duckmoim.identity.exception.UserErrorCode;
 import jakarta.persistence.Column;
+import jakarta.persistence.Embedded;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
@@ -38,8 +41,7 @@ public class User extends BaseEntity {
   @Column(name = "nickname", length = 20, unique = true)
   private String nickname;
 
-  @Column(name = "birth_year")
-  private Integer birthYear;
+  @Embedded private BirthYear birthYear;
 
   /**
    * 한줄소개.
@@ -72,6 +74,29 @@ public class User extends BaseEntity {
    */
   @Column(name = "tokens_invalidated_at")
   private LocalDateTime tokensInvalidatedAt;
+
+  /**
+   * 가입 정보를 채워 활동할 수 있는 계정으로 만든다 (AU-05).
+   *
+   * <p>가입 축의 유일한 전진 전이다 — {@code PENDING_SIGNUP_INFO ──입력──▶ ACTIVE} (도메인 6장).
+   *
+   * <p><b>한 번만 통한다.</b> API 설계 2-2 가 <i>"이미 입력한 유저가 다시 부르면 409 다 — 출생연도는 가입 후 잠기기 때문이다"</i> 로 정했다.
+   * 닉네임만 바꾸는 것은 AU-08 의 {@code PATCH /users/me/profile} 몫이다.
+   *
+   * <p>탈퇴 계정도 이 검사에 걸린다. 다만 그쪽은 관문이 먼저 끊으므로 여기까지 오지 않는다 ({@link #isWithdrawn}).
+   *
+   * @throws BusinessException {@code PENDING_SIGNUP_INFO} 가 아니면 {@code
+   *     USER_SIGNUP_INFO_ALREADY_SET}
+   */
+  public void completeSignup(SignupInfo signupInfo) {
+    if (status != SignupStatus.PENDING_SIGNUP_INFO) {
+      throw new BusinessException(UserErrorCode.USER_SIGNUP_INFO_ALREADY_SET);
+    }
+
+    this.nickname = signupInfo.nickname();
+    this.birthYear = signupInfo.birthYear();
+    this.status = SignupStatus.ACTIVE;
+  }
 
   /** AU-03 재사용 탐지의 「해당 유저 전체 폐기」와 AU-04 로그아웃이 함께 부른다. */
   public void invalidateAllTokens(LocalDateTime now) {
