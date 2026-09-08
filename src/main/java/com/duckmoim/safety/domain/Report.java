@@ -113,4 +113,42 @@ public class Report extends BaseEntity {
 
     return new Report(reporterId, targetType, targetId, reason, detail);
   }
+
+  /**
+   * 관리자가 신고를 처리한다 (AD-03).
+   *
+   * <p><b>되돌리는 전이가 없다</b> (도메인-모델링.md 「6. 라이프사이클」). {@code RESOLVED} 가 종착이고, 이미 처리된 신고를 다시 처리하면 409
+   * 다. {@code PROCESSING} 에서 {@code PENDING} 으로 놓아주는 것도 전이가 아니다 — 잡은 사람이 손을 떼는 경로는 문서에 없다.
+   *
+   * <p><b>{@code PENDING → RESOLVED} 직행은 허용한다.</b> 같은 문서가 <i>"볼 것도 없이 끝나는 건까지 두 번 누르게 할 이유가 없다"</i>
+   * 고 정했다.
+   *
+   * <p><b>{@code PROCESSING} 에는 결과를 남기지 않는다.</b> 그것은 「내가 잡았다」는 표시이지 종결이 아니다 — 관리자가 넷이고 창구가 하나뿐이라 같은
+   * 건을 둘이 동시에 붙잡는 것을 막는 것이 그 상태의 존재 이유다.
+   *
+   * <p><b>요청자를 인가로 쓰지 않는다.</b> 관리자 판정은 관문 한 곳에 있다 (API-설계.md 「2-7」의 조건 2). 여기서 받는 것은 <b>이력</b>이다 —
+   * 누가 처리했는지가 이 애그리게이트에 남아야 한다 (도메인 1.1 각주).
+   *
+   * @param result 종결 사유. {@code RESOLVED} 로 갈 때만 쓰인다
+   * @param memo 관리자가 남기는 판단 맥락. 없어도 된다
+   */
+  public void handle(
+      ReportStatus next, ReportResult result, String memo, Long adminUserId, LocalDateTime now) {
+
+    if (status == ReportStatus.RESOLVED) {
+      throw new BusinessException(ReportErrorCode.REPORT_ALREADY_HANDLED);
+    }
+    if (!status.canMoveTo(next)) {
+      throw new BusinessException(ReportErrorCode.REPORT_TRANSITION_NOT_ALLOWED);
+    }
+
+    this.status = next;
+    this.handledBy = adminUserId;
+    this.handledAt = now;
+
+    if (next == ReportStatus.RESOLVED) {
+      this.result = result;
+      this.memo = memo;
+    }
+  }
 }
