@@ -264,6 +264,8 @@ class AuthServiceTest {
    * StaleStateException} → 500 이 난다. 회전을 {@code DELETE} 의 영향 행 수로 가르면 <b>정확히 하나만</b> 성공하고 나머지는
    * 재사용으로 판정된다.
    *
+   * <p><b>8개로 잡은 이유</b> — 2개는 통과하면서 CI 처럼 느린 러너에서 데드락이 났다. 락 순서를 하나로 만든 뒤라야 이 수가 통과한다.
+   *
    * <p>{@code @Transactional} 을 쓰지 않는 클래스라 별도 스레드가 같은 트랜잭션에 끌려들지 않는다 (테스트 컨벤션 「테스트 데이터 정리」).
    */
   @Test
@@ -272,7 +274,7 @@ class AuthServiceTest {
     long userId = aUser().insert(jdbcTemplate);
     String refreshToken = firstLogin(userId).refreshToken();
 
-    int threads = 2;
+    int threads = 8;
     CountDownLatch start = new CountDownLatch(1);
     AtomicInteger success = new AtomicInteger();
     AtomicInteger rejected = new AtomicInteger();

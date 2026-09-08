@@ -27,9 +27,13 @@ public interface RefreshTokenRepository extends JpaRepository<RefreshToken, Long
    *
    * <p>{@code user_id} 를 조건에 함께 넣는다. 해시가 유니크라 사실상 같은 행이지만, 남의 행을 지울 수 있는 경로를 문법으로 막는다.
    *
+   * <p><b>{@code clearAutomatically} 를 쓰지 않는다.</b> 그것은 벌크 연산 뒤 영속성 컨텍스트를 비우는데, service 가 이 삭제
+   * <b>이전에</b> 잠가 둔 {@code user} 엔티티까지 detach 시켜 그 뒤의 상태 전이가 저장되지 않는다 — 실측했다. 지우는 행을 읽어 두지 않으므로 비울
+   * 것도 없다.
+   *
    * <p><b>부르는 쪽에 트랜잭션이 있어야 한다</b> — service 의 {@code @Transactional} 안에서만 부른다.
    */
-  @Modifying(clearAutomatically = true)
+  @Modifying
   @Query(
       "delete from RefreshToken token"
           + " where token.tokenHash = :tokenHash and token.userId = :userId")

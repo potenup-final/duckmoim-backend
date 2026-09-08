@@ -65,7 +65,7 @@ public class AuthService {
    */
   @Transactional
   public AuthToken createTokens(Long userId) {
-    return createTokens(loadUser(userId, UserErrorCode.USER_NOT_FOUND), now());
+    return createTokens(lockUser(userId, UserErrorCode.USER_NOT_FOUND), now());
   }
 
   /**
@@ -75,6 +75,9 @@ public class AuthService {
    * 검사를 지나고 진 쪽이 {@code StaleStateException} → 500 이 된다 — 탭 둘이 동시에 재발급하는 흔한 상황이다. 영향 행 수가 1인 요청만
    * 회전을 진행하고 0을 받은 쪽은 재사용으로 판정한다.
    *
+   * <p><b>회원 행을 가장 먼저 잠근다.</b> 회전과 폐기가 모두 {@code refresh_token} 과 {@code user} 를 건드려서, 락 순서가 경로마다
+   * 다르면 같은 토큰으로 동시에 재발급할 때 데드락이 난다 — CI 에서 {@code CannotAcquireLockException} 을 실측했다.
+   *
    * <p><b>{@code noRollbackFor} 가 없으면 반대로 돈다.</b> 재사용을 탐지하면 「해당 유저 전체 폐기」를 하고 401 을 던지는데, 기본 설정이면
    * {@code RuntimeException} 에 트랜잭션이 되돌아가 <b>폐기가 취소된다.</b> 응답은 양쪽 다 401 이라 겉으로 구분되지 않는데, 실제로는 훔친 쪽만
    * 살아남는다.
@@ -83,18 +86,18 @@ public class AuthService {
   public AuthToken refresh(String rawRefreshToken) {
     LocalDateTime now = now();
     RefreshTokenClaims claims = tokenProvider.readRefreshToken(rawRefreshToken);
-    Long userId = claims.userId();
+
+    User user = lockUser(claims.userId(), AuthErrorCode.AUTH_REFRESH_TOKEN_INVALID);
 
     int rotated =
         refreshTokenRepository.deleteByTokenHashAndUserId(
-            RefreshToken.hash(rawRefreshToken), userId);
+            RefreshToken.hash(rawRefreshToken), user.getId());
 
     if (rotated == 0) {
-      invalidateAllTokensOnce(userId, claims.issuedAt(), now);
+      invalidateAllTokensOnce(user, claims.issuedAt(), now);
       throw new BusinessException(AuthErrorCode.AUTH_REFRESH_TOKEN_INVALID);
     }
 
-    User user = loadUser(userId, AuthErrorCode.AUTH_REFRESH_TOKEN_INVALID);
     user.updateLastSeenAt(now);
 
     return createTokens(user, now);
@@ -108,7 +111,15 @@ public class AuthService {
    */
   @Transactional
   public void logout(Long userId) {
-    invalidateAllTokens(userId, now());
+    LocalDateTime now = now();
+
+    userRepository
+        .findByIdForUpdate(userId)
+        .ifPresent(
+            user -> {
+              refreshTokenRepository.deleteAllByUserId(userId);
+              user.invalidateAllTokens(now);
+            });
   }
 
   /**
@@ -127,32 +138,25 @@ public class AuthService {
         tokenProvider.createAccessToken(authUser), rawRefreshToken, authUser.signupCompleted());
   }
 
-  /** 그 회원의 로그인 상태를 통째로 끊는다 — AU-03 의 「해당 유저 전체 폐기」와 AU-04 로그아웃이 같은 동작이다. */
-  private void invalidateAllTokens(Long userId, LocalDateTime now) {
-    refreshTokenRepository.deleteAllByUserId(userId);
-
-    userRepository.findById(userId).ifPresent(user -> user.invalidateAllTokens(now));
-  }
-
   /**
    * <b>이미 폐기에 포함된 토큰이면 다시 폐기하지 않는다.</b>
    *
-   * <p>죽은 Refresh 를 쥔 쪽이 이 공개 엔드포인트를 1초에 한 번씩 때리면, 무조건 다시 찍는 구현에서는 무효화 시각이 계속 앞으로 밀린다. 그러면 그 사이에 정상
-   * 재로그인한 사용자의 새 Access 도 {@code iat} 이 초 단위라 매번 그보다 이르게 되어 <b>복구 경로 없는 영구 잠금</b>이 된다.
+   * <p>죽은 Refresh 를 쥔 쪽이 이 공개 엔드포인트를 반복해서 때리면, 무조건 다시 찍는 구현에서는 무효화 시각이 계속 앞으로 밀린다. 그러면 그 사이에 정상
+   * 재로그인한 사용자의 Access 도 {@code iat} 이 초 단위라 매번 그보다 이르게 되어 <b>복구 경로 없는 영구 잠금</b>이 된다.
    *
    * <p>판정은 <b>들고 온 Refresh 의 발급 시각</b>으로 한다 ({@code User.isCoveredByPastInvalidation}). 지난 폐기보다 이른
    * 초에 발급된 토큰이면 그 폐기가 이미 이 토큰을 덮었다는 뜻이라 한 번 더 끊을 것이 없다. 반대로 폐기와 같은 초이거나 그 뒤에 발급된 토큰은 <b>폐기를 살아남은
    * 것</b>일 수 있어, 그 재사용은 새로운 탈취로 보고 정상적으로 탐지한다.
+   *
+   * <p>회원은 이미 잠긴 채로 들어온다 — 부르는 쪽이 {@code findByIdForUpdate} 로 읽었다.
    */
   private void invalidateAllTokensOnce(
-      Long userId, LocalDateTime refreshIssuedAt, LocalDateTime now) {
-    User user = userRepository.findById(userId).orElse(null);
-
-    if (user == null || user.isCoveredByPastInvalidation(refreshIssuedAt)) {
+      User user, LocalDateTime refreshIssuedAt, LocalDateTime now) {
+    if (user.isCoveredByPastInvalidation(refreshIssuedAt)) {
       return;
     }
 
-    refreshTokenRepository.deleteAllByUserId(userId);
+    refreshTokenRepository.deleteAllByUserId(user.getId());
     user.invalidateAllTokens(now);
   }
 
@@ -162,13 +166,15 @@ public class AuthService {
   }
 
   /**
-   * 회원을 읽는다. <b>없을 때의 에러 코드를 부르는 쪽이 정한다.</b>
+   * 회원 행을 <b>잠그고</b> 읽는다. 없을 때의 에러 코드는 부르는 쪽이 정한다.
    *
    * <p>재발급 경로에서는 「다시 로그인」({@code AUTH_REFRESH_TOKEN_INVALID}) 이지만, 로그인 경로에는 Refresh 토큰이 애초에 없어서 그
    * 코드가 거짓이 된다. 카카오 로그인(E)이 {@link #createTokens} 를 부르는 자리가 그렇다.
    */
-  private User loadUser(Long userId, ErrorCode notFound) {
-    return userRepository.findById(userId).orElseThrow(() -> new BusinessException(notFound));
+  private User lockUser(Long userId, ErrorCode notFound) {
+    return userRepository
+        .findByIdForUpdate(userId)
+        .orElseThrow(() -> new BusinessException(notFound));
   }
 
   /**
