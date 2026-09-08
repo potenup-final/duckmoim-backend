@@ -1,0 +1,71 @@
+name: API 문서
+
+# 운영 Swagger 를 열지 않기로 했다 (STAR-26). 대신 스펙을 CI 에서 뽑아 정적 페이지로
+# 배포한다. 문서를 보는 데 서버가 필요 없고, 운영에 문을 열지 않아도 된다.
+#
+# 스펙은 애플리케이션 컨텍스트가 떠야 나온다. bootRun 을 CI 에서 띄우면 DB·포트·종료를
+# 새로 다뤄야 해서, 이미 Testcontainers 가 갖춰진 테스트 쪽에 붙였다
+# (OpenApiSpecWriter).
+#
+# ⚠️ run 블록 안에서 heredoc 을 쓰지 않는다 (commit-message.yml 과 같은 이유).
+
+on:
+  push:
+    branches: [develop]
+  workflow_dispatch:
+
+# 취소하지 않는다. deploy-pages 가 도는 중에 끊기면 github-pages 환경에 in-progress 배포가
+# 남아 다음 배포가 막히고, 푸는 데 손이 든다. GitHub 의 Pages 템플릿이 false 인 이유가 이것이다.
+# 뒤에 들어온 실행이 어차피 최신 develop 을 다시 뽑으므로 기다려도 잃는 것이 없다.
+concurrency:
+  group: api-docs
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: 스펙 추출 및 Pages 배포
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+
+    steps:
+      - name: 체크아웃
+        uses: actions/checkout@v7
+
+      - name: JDK 17 설치
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      # docs 프로파일로 뽑는다. 기본 프로파일은 local 이라(application.yml 의
+      # profiles.default) local 전용 DevTokenController 가 스펙에 섞인다.
+      # 운영에 없는 엔드포인트가 문서에 실리면 읽는 사람이 속는다.
+      - name: 스펙 추출
+        run: ./gradlew apiSpec
+
+      - name: 사이트 조립
+        run: |
+          mkdir -p site
+          cp .github/pages/index.html site/index.html
+          cp build/openapi/openapi.json site/openapi.json
+
+      - name: Pages 설정
+        uses: actions/configure-pages@v5
+
+      - name: 아티팩트 업로드
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: 배포
+        id: deploy
+        uses: actions/deploy-pages@v4

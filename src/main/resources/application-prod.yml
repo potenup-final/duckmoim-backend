@@ -6,6 +6,16 @@ springdoc:
   swagger-ui:
     enabled: false
 
+# ALB 가 앞에 서 있다. TLS 는 ALB 에서 끝나고 안쪽은 평문 HTTP 로 8080 에 들어오므로,
+# 이 설정이 없으면 앱은 자기가 http · 8080 으로 불렸다고 판단한다. 그렇게 만든 주소가
+# 리다이렉트 Location 에 실려 https 밖으로 나가고, 접근 로그의 클라이언트 IP 는 전부
+# ALB 사설 IP 가 된다.
+#
+# prod 에만 둔다. 프록시가 없는 프로파일에서 켜면 클라이언트가 직접 보낸 X-Forwarded-*
+# 를 그대로 믿는다. ALB 는 그 헤더를 자기 것으로 덮어쓴다.
+server:
+  forward-headers-strategy: framework
+
 # 아래 다섯 개는 GitHub Secrets 에 있고 배포 워크플로가 --env-file 로 넘긴다
 # (ci-cd.yml 「환경 파일 전송」).
 #   DB_URL · DB_USERNAME · DB_PASSWORD · JWT_SECRET · CORS_ALLOWED_ORIGINS
