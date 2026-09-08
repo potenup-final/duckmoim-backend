@@ -22,7 +22,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 댓글 작성의 검증 기준 (CM-01 · CM-02 · CM-03).
+ * 댓글 작성의 검증 기준 (CM-01 · CM-02 · CM-03), 그리고 PO-07 의 <i>「처리 후 댓글 작성 시 409」</i>.
  *
  * <p>실제 MySQL 로 돈다. 부모 댓글과 모집글을 저장소에서 읽어야 판정되는 규칙이라 mock 으로는 검증되지 않고, 테스트 컨벤션이 H2 도 금지했다.
  *
@@ -39,7 +39,11 @@ class CommentCommandServiceTest {
   private static final long AUTHOR_ID = 7L;
   private static final long OTHER_AUTHOR_ID = 8L;
 
+  /** {@code CompanionPostFixture} 의 기본 방장이다. 마감을 실제로 태우려면 그 값이어야 도메인의 방장 가드를 지난다. */
+  private static final long FIXTURE_HOST_ID = 1L;
+
   @Autowired private CommentCommandService commentCommandService;
+  @Autowired private CompanionPostCommandService companionPostCommandService;
   @Autowired private CommentRepository commentRepository;
   @Autowired private JdbcTemplate jdbc;
 
@@ -69,6 +73,27 @@ class CommentCommandServiceTest {
     long closedPostId = aCompanionPost().status(PostStatus.CLOSED).insert(jdbc);
 
     assertThatThrownBy(() -> commentCommandService.write(rootCommand(closedPostId, "저 갈게요!")))
+        .isInstanceOf(BusinessException.class)
+        .extracting(thrown -> ((BusinessException) thrown).getErrorCode())
+        .isEqualTo(PostErrorCode.POST_ALREADY_CLOSED);
+  }
+
+  /**
+   * PO-07 의 검증 기준 그 자체다 — <i>「처리 후 댓글 작성 시 409」</i>.
+   *
+   * <p><b>위의 {@code writeToClosedPost} 와 다른 것을 본다.</b> 그쪽은 처음부터 {@code CLOSED} 인 행을 SQL 로 넣어 댓글 경로의
+   * 가드만 확인한다. 여기서는 <b>마감 경로를 실제로 태운다</b> — 방장 마감이 상태를 정말 옮기는지와 댓글 작성이 그것을 읽는지가 이어져야 검증 기준이 성립하고, 둘
+   * 중 하나가 끊기면 이 테스트만 빨간불이 된다.
+   *
+   * <p>같은 트랜잭션 안에서 마감하고 바로 쓴다. 댓글 작성이 모집글 행을 <b>읽기만</b> 하므로 (도메인-모델링.md 「3.1 경계와 트랜잭션 범위」) 커밋을 기다릴
+   * 것이 없다.
+   */
+  @DisplayName("방장이 모집을 완료하면 그 뒤로 댓글을 작성할 수 없다.")
+  @Test
+  void writeAfterHostClosedPost() {
+    companionPostCommandService.close(openPostId, FIXTURE_HOST_ID);
+
+    assertThatThrownBy(() -> commentCommandService.write(rootCommand(openPostId, "저 갈게요!")))
         .isInstanceOf(BusinessException.class)
         .extracting(thrown -> ((BusinessException) thrown).getErrorCode())
         .isEqualTo(PostErrorCode.POST_ALREADY_CLOSED);

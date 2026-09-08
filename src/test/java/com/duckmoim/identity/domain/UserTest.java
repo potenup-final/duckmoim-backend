@@ -20,8 +20,10 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * 토큰 무효화와 가입 완료 판정 (AU-03 · AU-04).
  *
- * <p><b>단위 테스트가 아니다.</b> {@code User} 에 생성 팩터리가 없어서 (실제 생성 경로가 AU-01 자동 가입이고 아직 없다) 행을 SQL 로 넣고 읽어야
- * 한다 — {@link com.duckmoim.identity.UserFixture} 에 이유가 있다.
+ * <p><b>대부분이 단위 테스트가 아니다.</b> {@code User.signUp} 은 자동 가입 상태만 만들 수 있어서(AU-01) 「가입을 마친 회원」이나 「무효화
+ * 시각이 찍힌 회원」을 세울 수 없다. 그런 상태는 행을 SQL 로 넣고 읽는다 — {@link com.duckmoim.identity.UserFixture} 에 이유가 있다.
+ *
+ * <p>{@code signUp} 자신을 보는 테스트는 DB 를 쓰지 않는다.
  */
 @SpringBootTest
 @Transactional
@@ -33,55 +35,33 @@ class UserTest {
   @Autowired private JdbcTemplate jdbcTemplate;
 
   /**
-   * AU-08 의 부분 수정 규칙이다. <b>세 상태가 갈린다</b> — {@code null} 은 안 건드림, 빈 문자열은 비움, 그 밖은 교체.
+   * AU-01 「최초 로그인 시 자동 가입, 가입 정보 미입력 상태로 진입」.
    *
-   * <p>DB 를 쓰지 않는다. 값 객체를 받아 필드를 바꾸는 것이 전부라 단위로 충분하다.
+   * <p>카카오에서 받는 것은 회원번호뿐이라(결정 D-2) 나머지 칸은 비어 있어야 한다. 닉네임이 채워져 나오면 사용자가 고를 기회도 없이 I-01(닉네임 유일)과
+   * 부딪힌다.
    */
   @Test
-  @DisplayName("프로필을 고치면 닉네임과 한줄소개가 그 값으로 바뀐다.")
-  void updateProfile() {
-    User user =
-        load(aUser().nickname("고치기전덕후").profile("전 소개", "/avatar/old.webp").insert(jdbcTemplate));
+  @DisplayName("자동 가입한 계정은 가입 정보가 비어 있고 아직 활동할 수 없다.")
+  void signUp() {
+    User user = User.signUp(4321L);
 
-    user.updateProfile(new Profile("고친덕후", "새 소개"));
-
-    assertThat(user.getNickname()).isEqualTo("고친덕후");
-    assertThat(user.getBio()).isEqualTo("새 소개");
+    assertThat(user.getKakaoUserId()).isEqualTo(4321L);
+    assertThat(user.isSignupPending()).isTrue();
+    assertThat(user.isSignupCompleted()).isFalse();
+    assertThat(user.getNickname()).isNull();
+    assertThat(user.getBirthYear()).isNull();
   }
 
-  /** 프로필 화면이 한줄소개만 고쳐 보내는 것이 가장 흔한 요청이다. 그때 닉네임이 지워지면 안 된다. */
+  /** 자동 가입 직후는 「입력 전」이라 {@code completeSignup} 이 통해야 한다. 금지 전이는 아래 두 테스트가 본다. */
   @Test
-  @DisplayName("보내지 않은 필드는 바뀌지 않는다.")
-  void updateProfile_partial() {
-    User user = load(aUser().nickname("그대로덕후").profile("그대로 소개", null).insert(jdbcTemplate));
+  @DisplayName("자동 가입한 계정은 가입 정보를 입력할 수 있다.")
+  void signUp_thenCompleteSignup() {
+    User user = User.signUp(4322L);
 
-    user.updateProfile(new Profile(null, "새 소개만"));
+    user.completeSignup(SignupInfo.of("성수팝업러", 2000, 2026));
 
-    assertThat(user.getNickname()).isEqualTo("그대로덕후");
-    assertThat(user.getBio()).isEqualTo("새 소개만");
-  }
-
-  /** 「비어 있다」를 표현하는 값이 둘이 되면 조회하는 쪽이 둘 다 검사해야 한다. */
-  @Test
-  @DisplayName("빈 한줄소개를 보내면 값이 비워진다.")
-  void updateProfile_clearsBio() {
-    User user = load(aUser().profile("지울 소개", null).insert(jdbcTemplate));
-
-    user.updateProfile(new Profile(null, ""));
-
-    assertThat(user.getBio()).isNull();
-  }
-
-  /** 출생연도는 가입 후 잠긴다 (AU-08). {@code Profile} 에 필드가 없어서 바꿀 수단 자체가 없다. */
-  @Test
-  @DisplayName("프로필을 고쳐도 출생연도는 그대로다.")
-  void updateProfile_keepsBirthYear() {
-    User user = load(aUser().insert(jdbcTemplate));
-    int before = user.getBirthYear().getValue();
-
-    user.updateProfile(new Profile("연도안바뀜덕후", "소개"));
-
-    assertThat(user.getBirthYear().getValue()).isEqualTo(before);
+    assertThat(user.isSignupCompleted()).isTrue();
+    assertThat(user.getNickname()).isEqualTo("성수팝업러");
   }
 
   @Test

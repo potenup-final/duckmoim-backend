@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.duckmoim.catalog.exception.EventErrorCode;
 import com.duckmoim.common.exception.BusinessException;
+import com.duckmoim.companion.domain.ClosedReason;
 import com.duckmoim.companion.domain.PostStatus;
 import com.duckmoim.companion.exception.PostErrorCode;
 import com.duckmoim.companion.infra.CompanionPostRepository;
@@ -23,11 +24,15 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 모집글 작성의 검증 기준 (PO-01 · PO-02 · PO-03 · PO-05).
+ * 모집글 작성 · 수정 · 마감의 검증 기준 (PO-01 · PO-02 · PO-03 · PO-05 · PO-06 · PO-07).
  *
  * <p>실제 MySQL 로 돈다. 외부 식별자로 행사를 풀어 오는 경로와 정원 체크 제약이 저장소를 지나야 검증되고, 테스트 컨벤션이 H2 도 금지했다.
  *
- * <p>동시성 테스트가 없다. 작성 경로에 유니크 제약도 증가시킬 카운트도 없다 — 정원은 표시용이라 참여 인원을 세지 않는다 (PO-05).
+ * <p>가드 자체는 도메인 단위 테스트가 본다 ({@code CompanionPostTest}). 여기서 보는 것은 <b>저장을 지나야 확인되는 것</b>이다 — 스냅샷이
+ * 실제로 갱신되는지, 마감 사유가 컬럼에 앉는지, 그리고 없는 글·없는 행사의 조회 실패.
+ *
+ * <p>동시성 테스트가 없다. 작성 경로에 유니크 제약도 증가시킬 카운트도 없고 (정원은 표시용이라 참여 인원을 세지 않는다. PO-05), 마감은 도메인-모델링.md 「3.1
+ * 경계와 트랜잭션 범위」가 <i>"닫힌 글도 열람은 되고 사용자가 잃는 것이 없어 막지 않는다"</i> 며 락을 두지 않기로 정했다.
  */
 @SpringBootTest
 @Transactional
@@ -154,6 +159,81 @@ class CompanionPostCommandServiceTest {
         .isEqualTo(PostErrorCode.POST_CAPACITY_OUT_OF_RANGE);
   }
 
+  @DisplayName("방장이 고친 값이 저장된다.")
+  @Test
+  void edit() {
+    Long postId = companionPostCommandService.create(command(null, null, null)).id();
+
+    WrittenCompanionPost edited =
+        companionPostCommandService.edit(editCommand(postId, HOST_ID, null, 4));
+    companionPostRepository.flush();
+
+    assertThat(edited.title()).isEqualTo("에이티즈 팝업 오후에 가실 분");
+    assertThat(edited.capacity()).isEqualTo(4);
+    assertThat(storedString(postId, "title")).isEqualTo("에이티즈 팝업 오후에 가실 분");
+    assertThat(storedLong(postId, "capacity")).isEqualTo(4);
+  }
+
+  @DisplayName("방장이 행사를 붙이면 행사명과 이미지 스냅샷도 함께 저장된다.")
+  @Test
+  void edit_replacesEventSnapshot() {
+    givenEvent("에이티즈 X 애니티즈 팝업", LocalDate.of(2026, 10, 31));
+    Long postId = companionPostCommandService.create(command(null, null, null)).id();
+
+    WrittenCompanionPost edited =
+        companionPostCommandService.edit(editCommand(postId, HOST_ID, EXTERNAL_ID, null));
+    companionPostRepository.flush();
+
+    assertThat(edited.eventId()).isEqualTo(EXTERNAL_ID);
+    assertThat(edited.eventTitle()).isEqualTo("에이티즈 X 애니티즈 팝업");
+    assertThat(storedString(postId, "event_title")).isEqualTo("에이티즈 X 애니티즈 팝업");
+  }
+
+  @DisplayName("없는 모집글은 고칠 수 없다.")
+  @Test
+  void edit_postIsMissing() {
+    assertThatThrownBy(
+            () -> companionPostCommandService.edit(editCommand(404_404L, HOST_ID, null, null)))
+        .isInstanceOf(BusinessException.class)
+        .extracting(thrown -> ((BusinessException) thrown).getErrorCode())
+        .isEqualTo(PostErrorCode.POST_NOT_FOUND);
+  }
+
+  @DisplayName("없는 행사로는 모집글을 고칠 수 없다.")
+  @Test
+  void edit_eventIsMissing() {
+    Long postId = companionPostCommandService.create(command(null, null, null)).id();
+
+    assertThatThrownBy(
+            () -> companionPostCommandService.edit(editCommand(postId, HOST_ID, "pg_없는행사", null)))
+        .isInstanceOf(BusinessException.class)
+        .extracting(thrown -> ((BusinessException) thrown).getErrorCode())
+        .isEqualTo(EventErrorCode.EVENT_NOT_FOUND);
+  }
+
+  @DisplayName("방장이 마감하면 저장된 상태와 사유가 바뀐다.")
+  @Test
+  void close() {
+    Long postId = companionPostCommandService.create(command(null, null, null)).id();
+
+    ClosedCompanionPost closed = companionPostCommandService.close(postId, HOST_ID);
+    companionPostRepository.flush();
+
+    assertThat(closed.status()).isEqualTo(PostStatus.CLOSED);
+    assertThat(closed.closedReason()).isEqualTo(ClosedReason.MANUAL);
+    assertThat(storedString(postId, "status")).isEqualTo("CLOSED");
+    assertThat(storedString(postId, "closed_reason")).isEqualTo("MANUAL");
+  }
+
+  @DisplayName("없는 모집글은 마감할 수 없다.")
+  @Test
+  void close_postIsMissing() {
+    assertThatThrownBy(() -> companionPostCommandService.close(404_404L, HOST_ID))
+        .isInstanceOf(BusinessException.class)
+        .extracting(thrown -> ((BusinessException) thrown).getErrorCode())
+        .isEqualTo(PostErrorCode.POST_NOT_FOUND);
+  }
+
   /** 시작일을 함께 옮긴다. {@code ck_event_period} 가 종료일이 시작일보다 앞서는 행을 막는다. */
   private void givenEvent(String title, LocalDate endsOn) {
     anEvent()
@@ -177,6 +257,22 @@ class CompanionPostCommandServiceTest {
         eventExternalId,
         meetAt == null ? OffsetDateTime.parse("2026-10-01T09:00:00+09:00") : meetAt,
         "더현대 서울 지하 1층 팝업 아이코닉",
+        LAT,
+        LNG,
+        capacity);
+  }
+
+  private static CompanionPostEditCommand editCommand(
+      Long postId, Long requesterId, String eventExternalId, Integer capacity) {
+
+    return new CompanionPostEditCommand(
+        postId,
+        requesterId,
+        "에이티즈 팝업 오후에 가실 분",
+        "오전이 막혀서 시간을 옮겼어요",
+        eventExternalId,
+        OffsetDateTime.parse("2026-10-01T15:00:00+09:00"),
+        "여의도역 3번 출구",
         LAT,
         LNG,
         capacity);

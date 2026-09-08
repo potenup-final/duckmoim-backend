@@ -76,6 +76,23 @@ public class User extends BaseEntity {
   private LocalDateTime tokensInvalidatedAt;
 
   /**
+   * 카카오 회원번호만으로 계정을 만든다 — 「최초 로그인 시 자동 가입」 (AU-01).
+   *
+   * <p><b>여기서 태어난 계정은 아직 아무것도 쓸 수 없다.</b> {@code PENDING_SIGNUP_INFO} 로 시작하고 닉네임 · 출생연도가 비어 있다.
+   * 요구사항이 <i>"최초 로그인 시 자동 가입, 가입 정보 미입력 상태로 진입"</i> 이라고 정한 상태가 이것이고, {@link #completeSignup} 이 그 다음
+   * 칸을 채운다.
+   *
+   * <p><b>카카오에서 받는 것은 회원번호뿐이다</b> (결정 D-2). 닉네임을 카카오 것으로 채우지 않는다 — 채우면 I-01(닉네임 유일)이 사용자가 고를 기회도 없이
+   * 남의 닉네임과 부딪히고, 동의항목에서 프로필을 빼는 선택지도 사라진다.
+   */
+  public static User signUp(Long kakaoUserId) {
+    User user = new User();
+    user.kakaoUserId = kakaoUserId;
+    user.status = SignupStatus.PENDING_SIGNUP_INFO;
+    return user;
+  }
+
+  /**
    * 가입 정보를 채워 활동할 수 있는 계정으로 만든다 (AU-05).
    *
    * <p>가입 축의 유일한 전진 전이다 — {@code PENDING_SIGNUP_INFO ──입력──▶ ACTIVE} (도메인 6장).
