@@ -1,0 +1,23 @@
+-- 내 댓글 내역 조회(CM-16)가 쓰는 인덱스.
+--
+-- V33 이 붙인 (post_id, parent_id, created_at, id) 는 선두 컬럼이 post_id 라
+-- 「내가 쓴 댓글 전부」에 쓸 수 없다. 모집글을 가로질러 읽는 첫 경로다.
+--
+--   WHERE author_id = ? AND status = 'ACTIVE'
+--         AND (created_at, id) < (?, ?)
+--   ORDER BY created_at DESC, id DESC
+--
+-- status 를 선두 쪽에 함께 넣은 이유 — 등호 조건이라 인덱스 앞자리에 두면 뒤의
+-- created_at 이 그대로 정렬에 쓰인다. 뒤로 밀면 author_id 로 훑은 뒤 걸러야 해서
+-- 지운 댓글이 많은 유저에게서 읽는 행이 늘어난다.
+--
+-- 삭제·블라인드를 조건에 두는 근거는 도메인 7.1 이다 — 그 본문은 작성자 본인에게도
+-- 막혀 있어서, 목록에 남겨도 본문 없는 껍데기만 뜬다.
+--
+-- id 를 뒤에 붙인 이유는 V33 · V4 와 같다. created_at 은 중복이 생기고, 같은 시각의
+-- 댓글이 페이지 경계에 걸리면 정렬이 불안정해져 누락·중복이 난다.
+--
+-- 정렬이 DESC 인데 인덱스를 ASC 로 두는 것은 MySQL 이 역방향 스캔을 하기 때문이다.
+-- 두 컬럼이 같은 방향으로 함께 뒤집히므로 DESC 인덱스가 필요하지 않다.
+CREATE INDEX ix_comment_author_status_created_id
+    ON comment (author_id, status, created_at, id);
