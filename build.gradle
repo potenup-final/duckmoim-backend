@@ -33,6 +33,14 @@ dependencies {
 	// SecurityConfig 가 세션 생성 경로를 전부 닫는다.
 	implementation 'org.springframework.boot:spring-boot-starter-security'
 
+	// 프로필 이미지는 브라우저가 S3 로 직접 올린다 (AU-08). 서버는 서명만 하므로
+	// 파일이 힙을 지나지 않고, 그래서 멀티파트 설정도 필요하지 않다.
+	//
+	// BOM 으로 버전을 한 곳에서 맞춘다 — s3 와 s3-presigner 가 어긋나면 서명 방식이
+	// 갈려서 컴파일은 되고 런타임에 403 이 난다.
+	implementation platform('software.amazon.awssdk:bom:2.29.52')
+	implementation 'software.amazon.awssdk:s3'
+
 	// jjwt 는 API 와 구현이 분리돼 있다. 컴파일은 api 에만 붙이고 impl·jackson 은
 	// 런타임에만 있으면 된다 — 구현체를 직접 import 하지 못하게 막는 배치다.
 	implementation 'io.jsonwebtoken:jjwt-api:0.12.6'
