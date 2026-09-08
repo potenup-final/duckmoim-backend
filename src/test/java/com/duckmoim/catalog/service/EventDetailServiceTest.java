@@ -5,7 +5,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.duckmoim.catalog.domain.EventKind;
-import com.duckmoim.catalog.domain.EventQuery;
 import com.duckmoim.catalog.domain.PlaceKind;
 import com.duckmoim.catalog.exception.EventErrorCode;
 import com.duckmoim.common.exception.BusinessException;
@@ -64,10 +63,10 @@ class EventDetailServiceTest {
     seongsu = jdbc.queryForObject("SELECT id FROM region WHERE code = ?", Long.class, "seongsu");
   }
 
-  private EventSlice allEvents() {
-    return eventQueryService.findEvents(new EventQuery(null, null, null, null, null, null, 20));
-  }
-
+  /**
+   * 어제 끝난 행사다. 목록은 이것을 빼고 ({@link EventQueryServiceTest} 「이미 끝난 행사는 목록에 나오지 않는다」) 상세는 준다 — 그 갈림이
+   * EV-07 의 검증 기준이다.
+   */
   @DisplayName("목록에 없는 끝난 행사도 외부 식별자로 상세를 얻는다.")
   @Test
   void findsEndedEventThatListOmits() {
@@ -78,7 +77,6 @@ class EventDetailServiceTest {
         .endsOn(LocalDate.of(2026, 9, 3))
         .insert(jdbc);
 
-    assertThat(allEvents().events()).isEmpty();
     assertThat(eventQueryService.findEvent("pg_8709").externalId()).isEqualTo("pg_8709");
   }
 
@@ -97,7 +95,7 @@ class EventDetailServiceTest {
 
   @DisplayName("없는 외부 식별자로 조회하면 EVENT_NOT_FOUND 다.")
   @Test
-  void rejectsUnknownExternalId() {
+  void findEvent_externalIdIsUnknown() {
     assertThatThrownBy(() -> eventQueryService.findEvent("pg_0000"))
         .isInstanceOf(BusinessException.class)
         .extracting(e -> ((BusinessException) e).getErrorCode())
