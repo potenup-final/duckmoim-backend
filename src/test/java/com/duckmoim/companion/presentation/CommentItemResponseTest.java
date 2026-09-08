@@ -2,13 +2,16 @@ package com.duckmoim.companion.presentation;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.duckmoim.companion.domain.CommentAvailableAction;
 import com.duckmoim.companion.domain.CommentStatus;
+import com.duckmoim.identity.domain.LastSeen;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -82,6 +85,8 @@ class CommentItemResponseTest {
         CommentStatus.ACTIVE,
         content,
         CommentItemResponse.toKst(WRITTEN_AT_UTC),
-        new CommentAuthorResponse(3L, "밤샘예매", "/avatar/a2.webp"));
+        new CommentAuthorResponse(3L, "밤샘예매", "/avatar/a2.webp", LastSeen.WITHIN_WEEK),
+        List.of(CommentAvailableAction.REPLY),
+        List.of());
   }
 }
