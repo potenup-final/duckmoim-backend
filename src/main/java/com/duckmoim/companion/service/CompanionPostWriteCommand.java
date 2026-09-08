@@ -23,9 +23,4 @@ public record CompanionPostWriteCommand(
     String meetPlace,
     BigDecimal meetLat,
     BigDecimal meetLng,
-    Integer capacity) {
-
-  public boolean hasEvent() {
-    return eventExternalId != null && !eventExternalId.isBlank();
-  }
-}
+    Integer capacity) {}
