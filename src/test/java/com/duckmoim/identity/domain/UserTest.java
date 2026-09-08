@@ -2,7 +2,10 @@ package com.duckmoim.identity.domain;
 
 import static com.duckmoim.identity.UserFixture.aUser;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.duckmoim.common.exception.BusinessException;
+import com.duckmoim.identity.exception.UserErrorCode;
 import com.duckmoim.identity.infra.UserRepository;
 import java.time.LocalDateTime;
 import org.junit.jupiter.api.DisplayName;
@@ -126,6 +129,52 @@ class UserTest {
     User user = load(aUser().status(status).insert(jdbcTemplate));
 
     assertThat(user.isSignupCompleted()).isEqualTo(expected);
+  }
+
+  /**
+   * 가입 축의 유일한 전진 전이 (AU-05 · 도메인 6장).
+   *
+   * <p>AU-05 의 검증 기준 <b>「저장 후 재조회 시 동일 값」</b>이라 실제로 다시 읽어 확인한다.
+   */
+  @Test
+  @DisplayName("가입 정보를 입력하면 활성 상태가 되고 값이 그대로 남는다.")
+  void completeSignup() {
+    long userId = aUser().status(SignupStatus.PENDING_SIGNUP_INFO).insert(jdbcTemplate);
+    User user = load(userId);
+
+    user.completeSignup(SignupInfo.of("성수덕후", 2000, 2026));
+    userRepository.flush();
+
+    User reloaded = load(userId);
+    assertThat(reloaded.getNickname()).isEqualTo("성수덕후");
+    assertThat(reloaded.getBirthYear().getValue()).isEqualTo(2000);
+    assertThat(reloaded.isSignupCompleted()).isTrue();
+  }
+
+  /**
+   * 금지된 전이다 — API 설계 2-2 가 <i>"이미 입력한 유저가 다시 부르면 409"</i> 로 정했다.
+   *
+   * <p><b>출생연도가 가입 후 잠기기 때문이다.</b> 닉네임만 바꾸는 길은 AU-08 이 따로 낸다.
+   */
+  @Test
+  @DisplayName("가입을 마친 계정이 가입 정보를 다시 입력하면 거부된다.")
+  void completeSignup_alreadyActive() {
+    User user = load(aUser().status(SignupStatus.ACTIVE).insert(jdbcTemplate));
+
+    assertThatThrownBy(() -> user.completeSignup(SignupInfo.of("다른덕후", 2000, 2026)))
+        .isInstanceOf(BusinessException.class)
+        .hasFieldOrPropertyWithValue("errorCode", UserErrorCode.USER_SIGNUP_INFO_ALREADY_SET);
+  }
+
+  /** 탈퇴 계정도 금지된 전이다. 관문이 먼저 끊지만 도메인도 스스로 막는다. */
+  @Test
+  @DisplayName("탈퇴한 계정이 가입 정보를 입력하면 거부된다.")
+  void completeSignup_withdrawn() {
+    User user = load(aUser().status(SignupStatus.WITHDRAWN).insert(jdbcTemplate));
+
+    assertThatThrownBy(() -> user.completeSignup(SignupInfo.of("돌아온덕후", 2000, 2026)))
+        .isInstanceOf(BusinessException.class)
+        .hasFieldOrPropertyWithValue("errorCode", UserErrorCode.USER_SIGNUP_INFO_ALREADY_SET);
   }
 
   private User load(long userId) {
