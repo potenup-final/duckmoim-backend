@@ -6,6 +6,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 
 import com.duckmoim.auth.domain.AuthUser;
 import com.duckmoim.auth.domain.TokenProvider;
+import com.duckmoim.identity.domain.SignupStatus;
 import java.util.List;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.DisplayName;
@@ -43,6 +44,11 @@ class EndpointGradeTest {
     AUTH,
     SIGNUP,
     ADMIN
+  }
+
+  /** 등급 조합의 {@code signupCompleted} 를 회원 행의 가입 축 상태로 옮긴다 (도메인 6장). */
+  private static SignupStatus statusOf(AuthUser authUser) {
+    return authUser.signupCompleted() ? SignupStatus.ACTIVE : SignupStatus.PENDING_SIGNUP_INFO;
   }
 
   private record Endpoint(HttpMethod method, String path, Grade grade) {
@@ -221,13 +227,19 @@ class EndpointGradeTest {
    *
    * <p><b>회원을 매번 새로 만든다.</b> 위 상수 셋은 이제 회원번호가 아니라 <b>등급 조합</b>만 뜻한다. 같은 회원을 돌려쓰면 명령을 실행하는 엔드포인트 하나가
    * 그 회원의 상태를 바꿔 뒤따르는 검사를 오염시킨다.
+   *
+   * <p><b>가입 상태를 DB 에도 맞춘다.</b> 관문이 가입 완료 여부를 토큰이 아니라 회원 행에서 읽게 됐다 (I-02 · AU-07) — 토큰에 무엇을 담아도 DB
+   * 가 이긴다. 상수의 {@code signupCompleted} 를 회원 행의 {@code status} 로 옮겨야 이 표가 뜻하는 것을 실제로 검사한다.
    */
   private int statusOf(Endpoint endpoint, AuthUser authUser) throws Exception {
     HttpHeaders headers = new HttpHeaders();
 
     if (authUser != null) {
       AuthUser freshUser =
-          new AuthUser(aUser().insert(jdbcTemplate), authUser.signupCompleted(), authUser.admin());
+          new AuthUser(
+              aUser().status(statusOf(authUser)).insert(jdbcTemplate),
+              authUser.signupCompleted(),
+              authUser.admin());
 
       headers.setBearerAuth(tokenProvider.createAccessToken(freshUser));
     }

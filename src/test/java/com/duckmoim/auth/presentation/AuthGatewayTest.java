@@ -12,6 +12,7 @@ import com.duckmoim.auth.domain.AuthUser;
 import com.duckmoim.auth.domain.TokenProvider;
 import com.duckmoim.auth.infra.JwtProvider;
 import com.duckmoim.auth.service.AuthService;
+import com.duckmoim.identity.domain.SignupStatus;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
@@ -38,7 +39,12 @@ class AuthGatewayTest {
   private static final String OTHER_SECRET = "someone-elses-secret-key-32-bytes-or-longer-here";
   private static final Duration REFRESH_TTL = Duration.ofDays(14);
 
-  private static final AuthUser SIGNUP_INCOMPLETE = new AuthUser(1L, false, false);
+  /**
+   * V11 시드의 1번·2번은 둘 다 {@code ACTIVE} 다.
+   *
+   * <p><b>가입 미완료 상수를 두지 않는다.</b> 관문이 가입 완료 여부를 토큰이 아니라 회원 행에서 읽게 됐다 (I-02 · AU-07) — 토큰에 {@code
+   * false} 를 담아도 DB 가 {@code ACTIVE} 면 통과한다. 미완료를 검증하는 테스트는 <b>회원을 그 상태로 만들어</b> 쓴다.
+   */
   private static final AuthUser SIGNUP_COMPLETED = new AuthUser(2L, true, false);
 
   @Autowired private MockMvc mockMvc;
@@ -109,10 +115,14 @@ class AuthGatewayTest {
   @Test
   @DisplayName("가입 미완료로 막히면 가입 정보를 입력하라는 에러 코드가 나간다.")
   void forbiddenBySignupIncomplete() throws Exception {
+    long userId = pendingUser();
+
     mockMvc
-        .perform(post("/api/v1/posts").headers(bearer(SIGNUP_INCOMPLETE)))
+        .perform(post("/api/v1/posts").headers(bearer(new AuthUser(userId, false, false))))
         .andExpect(status().isForbidden())
         .andExpect(jsonPath("$.code").value("USER_SIGNUP_INFO_REQUIRED"));
+
+    cleanUp(userId);
   }
 
   @Test
@@ -128,10 +138,14 @@ class AuthGatewayTest {
   @Test
   @DisplayName("가입 미완료 계정이 관리자 경로에서 막혀도 가입 안내가 아니라 권한 없음이 나간다.")
   void forbiddenByNotAdmin_signupIncomplete() throws Exception {
+    long pending = pendingUser();
+
     mockMvc
-        .perform(get("/api/v1/admin/reports").headers(bearer(SIGNUP_INCOMPLETE)))
+        .perform(get("/api/v1/admin/reports").headers(bearer(new AuthUser(pending, false, false))))
         .andExpect(status().isForbidden())
         .andExpect(jsonPath("$.code").value("AUTH_FORBIDDEN"));
+
+    cleanUp(pending);
   }
 
   @Test
@@ -195,6 +209,10 @@ class AuthGatewayTest {
 
     assertThat(status).isNotEqualTo(401);
     cleanUp(userId);
+  }
+
+  private long pendingUser() {
+    return aUser().status(SignupStatus.PENDING_SIGNUP_INFO).insert(jdbcTemplate);
   }
 
   private void cleanUp(long userId) {

@@ -41,6 +41,9 @@ public class AuthenticationService {
    *
    * <p><b>토큰은 한 번만 파싱한다.</b> 인증 주체와 발급 시각을 따로 읽으면 그 사이에 만료가 걸려, 뒤 파싱만 {@code ExpiredJwtException} 이
    * 나면서 「재발급하라」가 「다시 로그인하라」로 바뀐다.
+   *
+   * <p><b>가입 완료 여부는 토큰이 아니라 회원 행에서 읽는다</b> (I-02 · AU-07). 토큰의 클레임은 발급 시점의 사진이라 최대 30분 낡는다 — 가입 정보를
+   * 방금 입력한 사용자가 <b>재발급 전까지 계속 「가입 정보를 먼저 입력해 주세요」로 막혔다.</b> 회원은 위에서 이미 읽었으므로 조회가 늘지 않는다.
    */
   @Transactional(readOnly = true)
   public AuthUser authenticate(String accessToken) {
@@ -56,6 +59,19 @@ public class AuthenticationService {
       throw new BusinessException(AuthErrorCode.AUTH_ACCESS_TOKEN_INVALID);
     }
 
-    return claims.authUser();
+    return authUserOf(user, claims.authUser());
+  }
+
+  /**
+   * 관문이 쓸 인증 주체를 만든다.
+   *
+   * <p><b>{@code signupCompleted} 만 회원 행에서 덮는다.</b> 관리자 여부는 아직 클레임을 그대로 쓴다 — 화이트리스트 조회가 별도 표라 조회가
+   * 하나 늘고, 그 자리를 관리자 경로로 좁힐지가 따로 판단할 일이다 (AD-06).
+   *
+   * <p>회원번호도 회원 행에서 가져온다. 클레임의 {@code sub} 로 찾은 행이라 같은 값이지만, <b>판정에 쓰는 값의 출처를 하나로</b> 두면 다음 사람이 어디를
+   * 믿어야 하는지 묻지 않는다.
+   */
+  private AuthUser authUserOf(User user, AuthUser fromToken) {
+    return new AuthUser(user.getId(), user.isSignupCompleted(), fromToken.admin());
   }
 }
