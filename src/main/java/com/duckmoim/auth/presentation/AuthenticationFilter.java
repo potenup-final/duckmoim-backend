@@ -1,7 +1,7 @@
 package com.duckmoim.auth.presentation;
 
 import com.duckmoim.auth.domain.AuthUser;
-import com.duckmoim.auth.domain.TokenProvider;
+import com.duckmoim.auth.service.AuthenticationService;
 import com.duckmoim.common.exception.BusinessException;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -25,7 +25,7 @@ public class AuthenticationFilter extends OncePerRequestFilter {
   private static final String HEADER = "Authorization";
   private static final String PREFIX = "Bearer ";
 
-  private final TokenProvider tokenProvider;
+  private final AuthenticationService authenticationService;
 
   @Override
   protected void doFilterInternal(
@@ -36,7 +36,7 @@ public class AuthenticationFilter extends OncePerRequestFilter {
 
     if (accessToken != null) {
       try {
-        AuthUser authUser = tokenProvider.readAccessToken(accessToken);
+        AuthUser authUser = authenticationService.authenticate(accessToken);
         SecurityContextHolder.getContext().setAuthentication(authenticationOf(authUser));
       } catch (BusinessException e) {
         request.setAttribute(ERROR_CODE, e.getErrorCode());
