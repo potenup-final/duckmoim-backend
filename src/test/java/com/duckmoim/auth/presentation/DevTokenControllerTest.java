@@ -55,7 +55,8 @@ class DevTokenControllerTest {
 
     String accessToken = objectMapper.readValue(response, DevTokenResponse.class).accessToken();
 
-    assertThat(tokenProvider.readAccessToken(accessToken)).isEqualTo(new AuthUser(7L, true, true));
+    assertThat(tokenProvider.readAccessToken(accessToken).authUser())
+        .isEqualTo(new AuthUser(7L, true, true));
   }
 
   @Test

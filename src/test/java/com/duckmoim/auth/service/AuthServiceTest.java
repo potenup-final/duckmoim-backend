@@ -11,9 +11,15 @@ import com.duckmoim.auth.exception.AuthErrorCode;
 import com.duckmoim.auth.infra.RefreshTokenRepository;
 import com.duckmoim.common.exception.BusinessException;
 import com.duckmoim.identity.domain.SignupStatus;
+import com.duckmoim.identity.exception.UserErrorCode;
 import com.duckmoim.identity.infra.UserRepository;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -42,10 +48,10 @@ class AuthServiceTest {
     long userId = aUser().insert(jdbcTemplate);
     AuthToken authToken = firstLogin(userId);
 
-    AuthToken refreshd = authService.refresh(authToken.refreshToken());
+    AuthToken refreshed = authService.refresh(authToken.refreshToken());
 
-    assertThat(refreshd.accessToken()).isNotBlank();
-    assertThat(refreshd.refreshToken()).isNotEqualTo(authToken.refreshToken());
+    assertThat(refreshed.accessToken()).isNotBlank();
+    assertThat(refreshed.refreshToken()).isNotEqualTo(authToken.refreshToken());
     cleanUp(userId);
   }
 
@@ -165,9 +171,9 @@ class AuthServiceTest {
     AuthToken authToken = firstLogin(userId);
     jdbcTemplate.update("UPDATE user SET status = 'ACTIVE' WHERE id = ?", userId);
 
-    AuthToken refreshd = authService.refresh(authToken.refreshToken());
+    AuthToken refreshed = authService.refresh(authToken.refreshToken());
 
-    assertThat(tokenProvider.readAccessToken(refreshd.accessToken()))
+    assertThat(tokenProvider.readAccessToken(refreshed.accessToken()).authUser())
         .isEqualTo(new AuthUser(userId, true, false));
     cleanUp(userId);
   }
@@ -198,6 +204,112 @@ class AuthServiceTest {
         .isInstanceOf(BusinessException.class)
         .hasFieldOrPropertyWithValue("errorCode", AuthErrorCode.AUTH_REFRESH_TOKEN_INVALID);
     cleanUp(userId);
+  }
+
+  /**
+   * <b>리뷰 1 — 재사용 탐지가 영구 잠금으로 번지지 않는다.</b>
+   *
+   * <p>죽은 Refresh 를 쥔 쪽이 공개 엔드포인트를 반복해서 때리는 상황이다. 폐기를 매번 다시 찍으면 무효화 시각이 앞으로 밀려, 그 사이에 정상 재로그인한 사용자의
+   * 토큰까지 계속 끊긴다 — <b>복구 경로가 없어진다.</b>
+   *
+   * <p><b>초 경계를 한 번 넘긴다.</b> 훔친 토큰이 폐기보다 <b>이른 초</b>에 발급됐다는 것이 멱등 판정의 조건이고, 실제 탈취는 늘 그렇다(발급과 재사용
+   * 사이에 분·시간이 흐른다). 테스트는 전부 같은 밀리초에 벌어져서 그 조건을 손으로 만들어야 한다.
+   */
+  @Test
+  @DisplayName("이미 폐기된 리프레시 토큰을 다시 재사용해도 그 뒤 재로그인한 토큰은 살아 있다.")
+  void refresh_reusedTwiceKeepsLaterLogin() throws InterruptedException {
+    long userId = aUser().insert(jdbcTemplate);
+    AuthToken stolen = firstLogin(userId);
+    authService.refresh(stolen.refreshToken());
+    Thread.sleep(1_050);
+
+    assertThatThrownBy(() -> authService.refresh(stolen.refreshToken()))
+        .isInstanceOf(BusinessException.class);
+
+    AuthToken afterRelogin = authService.createTokens(userId);
+
+    assertThatThrownBy(() -> authService.refresh(stolen.refreshToken()))
+        .isInstanceOf(BusinessException.class);
+
+    assertThat(authService.refresh(afterRelogin.refreshToken()).accessToken()).isNotBlank();
+    cleanUp(userId);
+  }
+
+  /** 두 번째 폐기를 건너뛴다고 해서 <b>새로 훔친</b> 토큰의 재사용까지 놓치면 안 된다. */
+  @Test
+  @DisplayName("폐기 뒤에 발급된 토큰을 재사용하면 그때는 다시 폐기된다.")
+  void refresh_reusedAfterInvalidationIsDetectedAgain() {
+    long userId = aUser().insert(jdbcTemplate);
+    AuthToken stolen = firstLogin(userId);
+    authService.refresh(stolen.refreshToken());
+    assertThatThrownBy(() -> authService.refresh(stolen.refreshToken()))
+        .isInstanceOf(BusinessException.class);
+
+    AuthToken fresh = authService.createTokens(userId);
+    AuthToken rotated = authService.refresh(fresh.refreshToken());
+
+    assertThatThrownBy(() -> authService.refresh(fresh.refreshToken()))
+        .isInstanceOf(BusinessException.class);
+
+    assertThatThrownBy(() -> authService.refresh(rotated.refreshToken()))
+        .isInstanceOf(BusinessException.class)
+        .hasFieldOrPropertyWithValue("errorCode", AuthErrorCode.AUTH_REFRESH_TOKEN_INVALID);
+    cleanUp(userId);
+  }
+
+  /**
+   * <b>리뷰 2 — 같은 토큰으로 동시에 들어와도 500 이 나지 않는다.</b>
+   *
+   * <p>탭 둘이 동시에 재발급하는 흔한 상황이다. 「읽어서 있으면 지운다」로 짜면 둘 다 존재 검사를 지나고 진 쪽의 DELETE 가 0행이 되어 {@code
+   * StaleStateException} → 500 이 난다. 회전을 {@code DELETE} 의 영향 행 수로 가르면 <b>정확히 하나만</b> 성공하고 나머지는
+   * 재사용으로 판정된다.
+   *
+   * <p>{@code @Transactional} 을 쓰지 않는 클래스라 별도 스레드가 같은 트랜잭션에 끌려들지 않는다 (테스트 컨벤션 「테스트 데이터 정리」).
+   */
+  @Test
+  @DisplayName("같은 리프레시 토큰으로 동시에 재발급하면 한 건만 성공하고 서버 오류가 없다.")
+  void refresh_concurrent() throws Exception {
+    long userId = aUser().insert(jdbcTemplate);
+    String refreshToken = firstLogin(userId).refreshToken();
+
+    int threads = 2;
+    CountDownLatch start = new CountDownLatch(1);
+    AtomicInteger success = new AtomicInteger();
+    AtomicInteger rejected = new AtomicInteger();
+    AtomicInteger serverError = new AtomicInteger();
+
+    ExecutorService pool = Executors.newFixedThreadPool(threads);
+    for (int i = 0; i < threads; i++) {
+      pool.execute(
+          () -> {
+            try {
+              start.await();
+              authService.refresh(refreshToken);
+              success.incrementAndGet();
+            } catch (BusinessException e) {
+              rejected.incrementAndGet();
+            } catch (Exception e) {
+              serverError.incrementAndGet();
+            }
+          });
+    }
+    start.countDown();
+    pool.shutdown();
+    assertThat(pool.awaitTermination(30, TimeUnit.SECONDS)).isTrue();
+
+    assertThat(serverError).hasValue(0);
+    assertThat(success).hasValue(1);
+    assertThat(rejected).hasValue(threads - 1);
+    cleanUp(userId);
+  }
+
+  /** <b>리뷰 5</b> — 로그인 경로에는 Refresh 토큰이 없어서 「다시 로그인」 코드가 거짓이 된다. */
+  @Test
+  @DisplayName("없는 회원으로 토큰을 발급하려 하면 회원을 찾을 수 없다고 알린다.")
+  void createTokens_userNotFound() {
+    assertThatThrownBy(() -> authService.createTokens(-1L))
+        .isInstanceOf(BusinessException.class)
+        .hasFieldOrPropertyWithValue("errorCode", UserErrorCode.USER_NOT_FOUND);
   }
 
   /**

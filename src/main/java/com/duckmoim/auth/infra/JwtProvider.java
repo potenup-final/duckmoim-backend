@@ -1,6 +1,8 @@
 package com.duckmoim.auth.infra;
 
+import com.duckmoim.auth.domain.AccessTokenClaims;
 import com.duckmoim.auth.domain.AuthUser;
+import com.duckmoim.auth.domain.RefreshTokenClaims;
 import com.duckmoim.auth.domain.TokenProvider;
 import com.duckmoim.auth.exception.AuthErrorCode;
 import com.duckmoim.common.exception.BusinessException;
@@ -59,37 +61,11 @@ public class JwtProvider implements TokenProvider {
         .compact();
   }
 
-  @Override
-  public AuthUser readAccessToken(String accessToken) {
-    try {
-      Claims claims =
-          Jwts.parser().verifyWith(key).build().parseSignedClaims(accessToken).getPayload();
-
-      if (!ACCESS.equals(claims.get(CLAIM_TOKEN_TYPE, String.class))) {
-        throw new BusinessException(AuthErrorCode.AUTH_ACCESS_TOKEN_INVALID);
-      }
-
-      return new AuthUser(
-          Long.valueOf(claims.getSubject()),
-          Boolean.TRUE.equals(claims.get(CLAIM_SIGNUP_COMPLETED, Boolean.class)),
-          Boolean.TRUE.equals(claims.get(CLAIM_ADMIN, Boolean.class)));
-    } catch (ExpiredJwtException e) {
-      throw new BusinessException(AuthErrorCode.AUTH_ACCESS_TOKEN_EXPIRED);
-    } catch (JwtException | IllegalArgumentException e) {
-      throw new BusinessException(AuthErrorCode.AUTH_ACCESS_TOKEN_INVALID);
-    }
-  }
-
   /**
-   * 액세스 토큰의 발급 시각 (AU-04).
-   *
-   * <p>무효화 시각과 견주려면 저장 형식과 같아야 한다 — {@code BaseEntity} 가 찍는 UTC {@code LocalDateTime} 이다.
-   *
-   * <p>이름이 「액세스 토큰의」라고 말하므로 용도도 스스로 본다. {@link #readAccessToken} 이 먼저 걸러 주는 자리에서만 쓰이지만, 포트 메서드 하나는
-   * 그것만으로 옳아야 다음 사람이 순서를 바꿔도 안전하다.
+   * 만료를 먼저 잡는다. {@code ExpiredJwtException} 이 {@code JwtException} 의 하위라 순서가 뒤집히면 「재발급하라」가 사라진다.
    */
   @Override
-  public LocalDateTime readAccessTokenIssuedAt(String accessToken) {
+  public AccessTokenClaims readAccessToken(String accessToken) {
     try {
       Claims claims =
           Jwts.parser().verifyWith(key).build().parseSignedClaims(accessToken).getPayload();
@@ -98,7 +74,15 @@ public class JwtProvider implements TokenProvider {
         throw new BusinessException(AuthErrorCode.AUTH_ACCESS_TOKEN_INVALID);
       }
 
-      return LocalDateTime.ofInstant(claims.getIssuedAt().toInstant(), ZoneOffset.UTC);
+      AuthUser authUser =
+          new AuthUser(
+              Long.valueOf(claims.getSubject()),
+              Boolean.TRUE.equals(claims.get(CLAIM_SIGNUP_COMPLETED, Boolean.class)),
+              Boolean.TRUE.equals(claims.get(CLAIM_ADMIN, Boolean.class)));
+
+      return new AccessTokenClaims(authUser, issuedAtOf(claims));
+    } catch (ExpiredJwtException e) {
+      throw new BusinessException(AuthErrorCode.AUTH_ACCESS_TOKEN_EXPIRED);
     } catch (JwtException | IllegalArgumentException | NullPointerException e) {
       throw new BusinessException(AuthErrorCode.AUTH_ACCESS_TOKEN_INVALID);
     }
@@ -128,7 +112,7 @@ public class JwtProvider implements TokenProvider {
    * Refresh 로 할 수 있는 일이 「다시 로그인」 하나뿐이라 위조와 같은 안내가 맞다. Access 는 「재발급하라」와 「다시 로그인하라」가 갈리므로 거기서만 구분한다.
    */
   @Override
-  public Long readRefreshToken(String refreshToken) {
+  public RefreshTokenClaims readRefreshToken(String refreshToken) {
     try {
       Claims claims =
           Jwts.parser().verifyWith(key).build().parseSignedClaims(refreshToken).getPayload();
@@ -137,9 +121,14 @@ public class JwtProvider implements TokenProvider {
         throw new BusinessException(AuthErrorCode.AUTH_REFRESH_TOKEN_INVALID);
       }
 
-      return Long.valueOf(claims.getSubject());
-    } catch (JwtException | IllegalArgumentException e) {
+      return new RefreshTokenClaims(Long.valueOf(claims.getSubject()), issuedAtOf(claims));
+    } catch (JwtException | IllegalArgumentException | NullPointerException e) {
       throw new BusinessException(AuthErrorCode.AUTH_REFRESH_TOKEN_INVALID);
     }
+  }
+
+  /** 무효화 시각과 견주려면 저장 형식과 같아야 한다 — {@code BaseEntity} 가 찍는 UTC {@code LocalDateTime} 이다. */
+  private LocalDateTime issuedAtOf(Claims claims) {
+    return LocalDateTime.ofInstant(claims.getIssuedAt().toInstant(), ZoneOffset.UTC);
   }
 }

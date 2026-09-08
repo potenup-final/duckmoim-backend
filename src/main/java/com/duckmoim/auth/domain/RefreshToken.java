@@ -48,6 +48,11 @@ public class RefreshToken extends BaseEntity {
   @Column(name = "token_hash", nullable = false, length = 64)
   private String tokenHash;
 
+  /**
+   * <b>읽는 코드가 없다.</b> 만료 판정은 Refresh JWT 의 {@code exp} 가 하고({@code readRefreshToken} 이 거절한다), 소유자
+   * 판정은 회전 {@code DELETE} 의 {@code user_id} 조건이 한다. 이 컬럼은 <b>서버가 가진 사망 시각의 기록</b>이고, 만료된 행을 지우는 정리
+   * 배치가 쓸 자리다 (계획서 「남겨둔 것」).
+   */
   @Column(name = "expires_at", nullable = false)
   private LocalDateTime expiresAt;
 
@@ -77,14 +82,5 @@ public class RefreshToken extends BaseEntity {
     } catch (NoSuchAlgorithmException e) {
       throw new IllegalStateException(ALGORITHM + " 를 쓸 수 없는 런타임이다.", e);
     }
-  }
-
-  /** 만료된 행을 지우는 배치가 없으므로 재발급 때 여기서 판정한다. */
-  public boolean isExpired(LocalDateTime now) {
-    return !expiresAt.isAfter(now);
-  }
-
-  public boolean belongsTo(Long userId) {
-    return this.userId.equals(userId);
   }
 }

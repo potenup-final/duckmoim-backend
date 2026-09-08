@@ -10,6 +10,7 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -80,11 +81,32 @@ public class User extends BaseEntity {
    * 이 발급 시각의 토큰이 무효화됐는지 본다. 인증 필터가 매 요청에서 부른다.
    *
    * <p><b>더 이른 발급만 죽인다({@code isBefore}).</b> JWT 의 {@code iat} 은 초 단위로 내려가고 무효화 시각은 마이크로초까지 남으므로,
-   * 같은 초에 로그아웃하면 그 초에 발급된 토큰도 걸린다. 대가는 로그아웃한 뒤 <b>1초 안에</b> 다시 로그인하면 새 토큰이 한 번 거절되는 것이다 — 사람이 그 속도로
-   * 다시 로그인하지 않고, 걸려도 다음 초에 풀린다. 반대로 여는 쪽에 두면 로그아웃 직전에 발급된 토큰이 30분을 더 살아서, 그쪽이 훨씬 나쁘다.
+   * 같은 초에 로그아웃하면 그 초에 발급된 토큰도 걸린다. 여는 쪽에 두면 로그아웃 직전에 발급된 토큰이 30분을 더 살아서, 그쪽이 훨씬 나쁘다.
+   *
+   * <p><b>대가를 정확히 적는다 — 무효화와 같은 초에 발급된 토큰은 그 토큰의 수명 30분 내내 거절된다.</b> {@code iat} 이 이미 고정된 값이라 시간이
+   * 흐른다고 풀리지 않는다. 「다음 초에 풀린다」는 <b>그때 새로 발급받는 토큰</b> 이야기이고, 이미 손에 든 토큰은 버려야 한다. 클라이언트는 {@code
+   * AUTH_ACCESS_TOKEN_INVALID} 를 받으므로 재로그인으로 빠져나온다.
+   *
+   * <p>그래서 <b>무효화를 반복해서 찍으면 안 된다</b> — 매초 앞으로 밀리면 재로그인해서 받은 토큰도 매번 걸려 빠져나올 방법이 없어진다. {@code
+   * AuthService} 가 재사용 탐지에서 멱등하게 처리하는 이유다.
    */
   public boolean isTokenInvalidated(LocalDateTime issuedAt) {
     return tokensInvalidatedAt != null && issuedAt.isBefore(tokensInvalidatedAt);
+  }
+
+  /**
+   * 그 발급 시각의 토큰이 <b>지난 무효화에 이미 덮였는지</b> 본다 (AU-03 재사용 탐지의 멱등 판정).
+   *
+   * <p><b>{@link #isTokenInvalidated} 와 초 단위 처리가 반대다.</b> 저쪽은 「이 요청을 통과시킬까」라 경계를 닫는 쪽에 두고, 이쪽은 「폐기를
+   * 한 번 더 실행할까」라 <b>여는 쪽</b>에 둔다. 무효화 시각을 초로 내려 비교하므로, 무효화와 <b>같은 초에 발급된</b> 토큰은 「덮이지 않았다」로 본다 — 그
+   * 토큰은 무효화 직후에 발급된 것일 수 있어서 재사용이면 탐지해야 한다.
+   *
+   * <p>더 이른 초에 발급된 토큰은 그 무효화가 이미 행을 지우고 Access 를 끊었으므로, 다시 폐기해도 새로 끊을 것이 없다. 그때 또 찍으면 무효화 시각이 앞으로
+   * 밀려 <b>그 사이 재로그인한 사용자까지 계속 끊긴다.</b>
+   */
+  public boolean isCoveredByPastInvalidation(LocalDateTime issuedAt) {
+    return tokensInvalidatedAt != null
+        && issuedAt.isBefore(tokensInvalidatedAt.truncatedTo(ChronoUnit.SECONDS));
   }
 
   /**

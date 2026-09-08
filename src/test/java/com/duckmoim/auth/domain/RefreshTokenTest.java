@@ -35,39 +35,4 @@ class RefreshTokenTest {
 
     assertThat(hashed).isNotEqualTo(RefreshToken.hash(RAW + "x"));
   }
-
-  @Test
-  @DisplayName("만료 시각이 지나면 만료된 것으로 본다.")
-  void isExpired_afterExpiresAt() {
-    RefreshToken refreshToken = RefreshToken.create(1L, RAW, NOW);
-
-    assertThat(refreshToken.isExpired(NOW.plusSeconds(1))).isTrue();
-  }
-
-  /** 경계를 열어두면 만료된 토큰이 그 순간 한 번 통과한다. */
-  @Test
-  @DisplayName("만료 시각과 같은 순간은 이미 만료된 것으로 본다.")
-  void isExpired_atExpiresAt() {
-    RefreshToken refreshToken = RefreshToken.create(1L, RAW, NOW);
-
-    assertThat(refreshToken.isExpired(NOW)).isTrue();
-  }
-
-  @Test
-  @DisplayName("만료 시각 전에는 만료되지 않았다.")
-  void isExpired_beforeExpiresAt() {
-    RefreshToken refreshToken = RefreshToken.create(1L, RAW, NOW.plusDays(14));
-
-    assertThat(refreshToken.isExpired(NOW)).isFalse();
-  }
-
-  /** AU-03 의 재사용 탐지는 「남의 토큰으로 재발급」도 막아야 한다. */
-  @Test
-  @DisplayName("발급받은 회원의 것인지 판정한다.")
-  void belongsTo() {
-    RefreshToken refreshToken = RefreshToken.create(1L, RAW, NOW.plusDays(14));
-
-    assertThat(refreshToken.belongsTo(1L)).isTrue();
-    assertThat(refreshToken.belongsTo(2L)).isFalse();
-  }
 }

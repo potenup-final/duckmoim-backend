@@ -1,12 +1,12 @@
 package com.duckmoim.auth.service;
 
+import com.duckmoim.auth.domain.AccessTokenClaims;
 import com.duckmoim.auth.domain.AuthUser;
 import com.duckmoim.auth.domain.TokenProvider;
 import com.duckmoim.auth.exception.AuthErrorCode;
 import com.duckmoim.common.exception.BusinessException;
 import com.duckmoim.identity.domain.User;
 import com.duckmoim.identity.infra.UserRepository;
-import java.time.LocalDateTime;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -34,21 +34,23 @@ public class AuthenticationService {
    * Refresh 행도 함께 지워져 재발급이 반드시 실패한다. 「로그인이 필요합니다」로 보내야 한 번에 끝난다.
    *
    * <p><b>탈퇴·삭제된 회원도 여기서 걸린다.</b> 토큰은 살아 있는데 행이 없는 경우다.
+   *
+   * <p><b>토큰은 한 번만 파싱한다.</b> 인증 주체와 발급 시각을 따로 읽으면 그 사이에 만료가 걸려, 뒤 파싱만 {@code ExpiredJwtException} 이
+   * 나면서 「재발급하라」가 「다시 로그인하라」로 바뀐다.
    */
   @Transactional(readOnly = true)
   public AuthUser authenticate(String accessToken) {
-    AuthUser authUser = tokenProvider.readAccessToken(accessToken);
-    LocalDateTime issuedAt = tokenProvider.readAccessTokenIssuedAt(accessToken);
+    AccessTokenClaims claims = tokenProvider.readAccessToken(accessToken);
 
     User user =
         userRepository
-            .findById(authUser.userId())
+            .findById(claims.authUser().userId())
             .orElseThrow(() -> new BusinessException(AuthErrorCode.AUTH_ACCESS_TOKEN_INVALID));
 
-    if (user.isTokenInvalidated(issuedAt)) {
+    if (user.isTokenInvalidated(claims.issuedAt())) {
       throw new BusinessException(AuthErrorCode.AUTH_ACCESS_TOKEN_INVALID);
     }
 
-    return authUser;
+    return claims.authUser();
   }
 }

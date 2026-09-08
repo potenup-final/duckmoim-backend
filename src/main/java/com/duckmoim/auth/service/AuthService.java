@@ -3,16 +3,18 @@ package com.duckmoim.auth.service;
 import com.duckmoim.admin.infra.AdminAccountRepository;
 import com.duckmoim.auth.domain.AuthUser;
 import com.duckmoim.auth.domain.RefreshToken;
+import com.duckmoim.auth.domain.RefreshTokenClaims;
 import com.duckmoim.auth.domain.TokenProvider;
 import com.duckmoim.auth.exception.AuthErrorCode;
 import com.duckmoim.auth.infra.RefreshTokenRepository;
 import com.duckmoim.common.exception.BusinessException;
+import com.duckmoim.common.exception.ErrorCode;
 import com.duckmoim.identity.domain.User;
+import com.duckmoim.identity.exception.UserErrorCode;
 import com.duckmoim.identity.infra.UserRepository;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
-import java.util.Optional;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -63,39 +65,36 @@ public class AuthService {
    */
   @Transactional
   public AuthToken createTokens(Long userId) {
-    return createTokens(loadUser(userId), now());
+    return createTokens(loadUser(userId, UserErrorCode.USER_NOT_FOUND), now());
   }
 
   /**
    * Refresh 토큰을 회전해 새 토큰 쌍을 준다 (AU-03).
    *
-   * <p><b>{@code noRollbackFor} 가 이 메서드의 핵심이다.</b> 재사용을 탐지하면 「해당 유저 전체 폐기」를 하고 401 을 던지는데, 기본 설정이면
-   * {@code RuntimeException} 에 트랜잭션이 되돌아가 <b>폐기가 취소된다.</b> 그러면 훔친 Refresh 를 쥔 쪽이 계속 재발급을 받는다 —
-   * 요구사항이 정확히 막으라고 한 것이 되돌아간다.
+   * <p><b>회전과 재사용 판정을 {@code DELETE} 한 번이 가른다.</b> 「읽어서 있으면 지운다」로 짜면 같은 토큰으로 동시에 두 요청이 들어올 때 둘 다 존재
+   * 검사를 지나고 진 쪽이 {@code StaleStateException} → 500 이 된다 — 탭 둘이 동시에 재발급하는 흔한 상황이다. 영향 행 수가 1인 요청만
+   * 회전을 진행하고 0을 받은 쪽은 재사용으로 판정한다.
    *
-   * <p>행이 없다는 것이 곧 재사용이다. 서명은 멀쩡하니 진짜 우리가 발급한 토큰인데, 회전 때 지워졌으므로 누군가 이미 썼다는 뜻이다.
+   * <p><b>{@code noRollbackFor} 가 없으면 반대로 돈다.</b> 재사용을 탐지하면 「해당 유저 전체 폐기」를 하고 401 을 던지는데, 기본 설정이면
+   * {@code RuntimeException} 에 트랜잭션이 되돌아가 <b>폐기가 취소된다.</b> 응답은 양쪽 다 401 이라 겉으로 구분되지 않는데, 실제로는 훔친 쪽만
+   * 살아남는다.
    */
   @Transactional(noRollbackFor = BusinessException.class)
   public AuthToken refresh(String rawRefreshToken) {
     LocalDateTime now = now();
-    Long userId = tokenProvider.readRefreshToken(rawRefreshToken);
+    RefreshTokenClaims claims = tokenProvider.readRefreshToken(rawRefreshToken);
+    Long userId = claims.userId();
 
-    Optional<RefreshToken> stored =
-        refreshTokenRepository.findByTokenHash(RefreshToken.hash(rawRefreshToken));
+    int rotated =
+        refreshTokenRepository.deleteByTokenHashAndUserId(
+            RefreshToken.hash(rawRefreshToken), userId);
 
-    if (stored.isEmpty()) {
-      invalidateAllTokens(userId, now);
+    if (rotated == 0) {
+      invalidateAllTokensOnce(userId, claims.issuedAt(), now);
       throw new BusinessException(AuthErrorCode.AUTH_REFRESH_TOKEN_INVALID);
     }
 
-    RefreshToken rotated = stored.get();
-    if (!rotated.belongsTo(userId) || rotated.isExpired(now)) {
-      throw new BusinessException(AuthErrorCode.AUTH_REFRESH_TOKEN_INVALID);
-    }
-
-    refreshTokenRepository.delete(rotated);
-
-    User user = loadUser(userId);
+    User user = loadUser(userId, AuthErrorCode.AUTH_REFRESH_TOKEN_INVALID);
     user.updateLastSeenAt(now);
 
     return createTokens(user, now);
@@ -135,15 +134,41 @@ public class AuthService {
     userRepository.findById(userId).ifPresent(user -> user.invalidateAllTokens(now));
   }
 
+  /**
+   * <b>이미 폐기에 포함된 토큰이면 다시 폐기하지 않는다.</b>
+   *
+   * <p>죽은 Refresh 를 쥔 쪽이 이 공개 엔드포인트를 1초에 한 번씩 때리면, 무조건 다시 찍는 구현에서는 무효화 시각이 계속 앞으로 밀린다. 그러면 그 사이에 정상
+   * 재로그인한 사용자의 새 Access 도 {@code iat} 이 초 단위라 매번 그보다 이르게 되어 <b>복구 경로 없는 영구 잠금</b>이 된다.
+   *
+   * <p>판정은 <b>들고 온 Refresh 의 발급 시각</b>으로 한다 ({@code User.isCoveredByPastInvalidation}). 지난 폐기보다 이른
+   * 초에 발급된 토큰이면 그 폐기가 이미 이 토큰을 덮었다는 뜻이라 한 번 더 끊을 것이 없다. 반대로 폐기와 같은 초이거나 그 뒤에 발급된 토큰은 <b>폐기를 살아남은
+   * 것</b>일 수 있어, 그 재사용은 새로운 탈취로 보고 정상적으로 탐지한다.
+   */
+  private void invalidateAllTokensOnce(
+      Long userId, LocalDateTime refreshIssuedAt, LocalDateTime now) {
+    User user = userRepository.findById(userId).orElse(null);
+
+    if (user == null || user.isCoveredByPastInvalidation(refreshIssuedAt)) {
+      return;
+    }
+
+    refreshTokenRepository.deleteAllByUserId(userId);
+    user.invalidateAllTokens(now);
+  }
+
   /** 관리자 판정은 화이트리스트 등록 여부다 (0003-관리자-인가-방식.md 「선택」). {@code User} 에는 관리자 플래그가 없다. */
   private boolean isAdmin(User user) {
     return adminAccountRepository.existsByKakaoUserId(user.getKakaoUserId());
   }
 
-  private User loadUser(Long userId) {
-    return userRepository
-        .findById(userId)
-        .orElseThrow(() -> new BusinessException(AuthErrorCode.AUTH_REFRESH_TOKEN_INVALID));
+  /**
+   * 회원을 읽는다. <b>없을 때의 에러 코드를 부르는 쪽이 정한다.</b>
+   *
+   * <p>재발급 경로에서는 「다시 로그인」({@code AUTH_REFRESH_TOKEN_INVALID}) 이지만, 로그인 경로에는 Refresh 토큰이 애초에 없어서 그
+   * 코드가 거짓이 된다. 카카오 로그인(E)이 {@link #createTokens} 를 부르는 자리가 그렇다.
+   */
+  private User loadUser(Long userId, ErrorCode notFound) {
+    return userRepository.findById(userId).orElseThrow(() -> new BusinessException(notFound));
   }
 
   /**

@@ -87,6 +87,38 @@ class UserTest {
     assertThat(user.getLastSeenAt()).isEqualTo(LOGOUT);
   }
 
+  /**
+   * 재사용 탐지의 멱등 판정 (AU-03).
+   *
+   * <p>{@link User#isTokenInvalidated} 와 <b>초 단위 처리가 반대다</b> — 저쪽은 요청을 통과시킬지라 닫는 쪽, 이쪽은 폐기를 한 번 더
+   * 실행할지라 여는 쪽이다. 같은 초에 발급된 토큰을 「덮였다」로 보면 폐기 직후에 발급된 토큰의 재사용을 놓친다.
+   */
+  @Test
+  @DisplayName("무효화보다 이른 초에 발급된 토큰은 지난 무효화에 이미 덮였다.")
+  void isCoveredByPastInvalidation_earlierSecond() {
+    User user =
+        load(aUser().tokensInvalidatedAt(LOGOUT.withNano(700_000_000)).insert(jdbcTemplate));
+
+    assertThat(user.isCoveredByPastInvalidation(LOGOUT.minusSeconds(1))).isTrue();
+  }
+
+  @Test
+  @DisplayName("무효화와 같은 초에 발급된 토큰은 덮인 것으로 보지 않는다.")
+  void isCoveredByPastInvalidation_sameSecond() {
+    User user =
+        load(aUser().tokensInvalidatedAt(LOGOUT.withNano(700_000_000)).insert(jdbcTemplate));
+
+    assertThat(user.isCoveredByPastInvalidation(LOGOUT)).isFalse();
+  }
+
+  @Test
+  @DisplayName("무효화한 적이 없으면 어느 토큰도 덮이지 않았다.")
+  void isCoveredByPastInvalidation_neverInvalidated() {
+    User user = load(aUser().insert(jdbcTemplate));
+
+    assertThat(user.isCoveredByPastInvalidation(LOGOUT.minusYears(1))).isFalse();
+  }
+
   @ParameterizedTest
   @CsvSource({"ACTIVE, true", "PENDING_SIGNUP_INFO, false", "WITHDRAWN, false"})
   @DisplayName("가입 완료는 활성 상태에서만 참이다.")

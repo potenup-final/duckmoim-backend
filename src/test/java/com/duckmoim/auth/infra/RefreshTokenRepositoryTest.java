@@ -39,7 +39,7 @@ class RefreshTokenRepositoryTest {
     assertThat(refreshTokenRepository.findByTokenHash(RefreshToken.hash("raw-1")))
         .isPresent()
         .get()
-        .satisfies(found -> assertThat(found.belongsTo(USER_ID)).isTrue());
+        .satisfies(found -> assertThat(found.getUserId()).isEqualTo(USER_ID));
   }
 
   @Test

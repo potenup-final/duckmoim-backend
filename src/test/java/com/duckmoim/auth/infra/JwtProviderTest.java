@@ -2,6 +2,7 @@ package com.duckmoim.auth.infra;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.within;
 
 import com.duckmoim.auth.domain.AuthUser;
 import com.duckmoim.auth.exception.AuthErrorCode;
@@ -11,6 +12,9 @@ import io.jsonwebtoken.security.Keys;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.util.Date;
 import javax.crypto.SecretKey;
 import org.junit.jupiter.api.DisplayName;
@@ -33,9 +37,7 @@ class JwtProviderTest {
   void createAndReadAccessToken() {
     String accessToken = jwtProvider.createAccessToken(AUTH_USER);
 
-    AuthUser read = jwtProvider.readAccessToken(accessToken);
-
-    assertThat(read).isEqualTo(AUTH_USER);
+    assertThat(jwtProvider.readAccessToken(accessToken).authUser()).isEqualTo(AUTH_USER);
   }
 
   @Test
@@ -105,7 +107,7 @@ class JwtProviderTest {
   void createAndReadRefreshToken() {
     String refreshToken = jwtProvider.createRefreshToken(7L);
 
-    assertThat(jwtProvider.readRefreshToken(refreshToken)).isEqualTo(7L);
+    assertThat(jwtProvider.readRefreshToken(refreshToken).userId()).isEqualTo(7L);
   }
 
   @Test
@@ -136,25 +138,22 @@ class JwtProviderTest {
   }
 
   @Test
-  @DisplayName("발급 시각을 읽으면 토큰에 찍힌 시각이 나온다.")
-  void readAccessTokenIssuedAt() {
+  @DisplayName("액세스 토큰을 읽으면 발급 시각이 함께 나온다.")
+  void readAccessToken_carriesIssuedAt() {
     String accessToken = jwtProvider.createAccessToken(AUTH_USER);
 
-    assertThat(jwtProvider.readAccessTokenIssuedAt(accessToken))
-        .isCloseTo(
-            java.time.LocalDateTime.now(java.time.ZoneOffset.UTC),
-            org.assertj.core.api.Assertions.within(5, java.time.temporal.ChronoUnit.SECONDS));
+    assertThat(jwtProvider.readAccessToken(accessToken).issuedAt())
+        .isCloseTo(LocalDateTime.now(ZoneOffset.UTC), within(5, ChronoUnit.SECONDS));
   }
 
-  /** 이름이 「액세스 토큰의」라고 말하니 리프레시를 넣으면 거절해야 한다. */
+  /** 재사용 탐지의 멱등 판정이 이 값으로 돈다 — 없으면 폐기가 매번 다시 찍혀 영구 잠금이 된다. */
   @Test
-  @DisplayName("리프레시 토큰의 발급 시각을 읽으려 하면 거절한다.")
-  void readAccessTokenIssuedAt_refreshToken() {
+  @DisplayName("리프레시 토큰을 읽으면 발급 시각이 함께 나온다.")
+  void readRefreshToken_carriesIssuedAt() {
     String refreshToken = jwtProvider.createRefreshToken(7L);
 
-    assertThatThrownBy(() -> jwtProvider.readAccessTokenIssuedAt(refreshToken))
-        .isInstanceOf(BusinessException.class)
-        .hasFieldOrPropertyWithValue("errorCode", AuthErrorCode.AUTH_ACCESS_TOKEN_INVALID);
+    assertThat(jwtProvider.readRefreshToken(refreshToken).issuedAt())
+        .isCloseTo(LocalDateTime.now(ZoneOffset.UTC), within(5, ChronoUnit.SECONDS));
   }
 
   /** 반대 방향의 교차 사용이다. 액세스 토큰이 리프레시로 통하면 30분마다 갱신되는 열쇠가 재발급 창구를 연다. */
