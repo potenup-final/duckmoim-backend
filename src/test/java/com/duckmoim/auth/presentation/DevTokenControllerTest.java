@@ -42,7 +42,7 @@ class DevTokenControllerTest {
 
   @Test
   @DisplayName("발급한 개발용 토큰은 요청한 회원과 등급을 그대로 담는다.")
-  void issuedTokenCarriesRequestedUser() throws Exception {
+  void authTokenTokenCarriesRequestedUser() throws Exception {
     String response =
         mockMvc
             .perform(
@@ -55,7 +55,8 @@ class DevTokenControllerTest {
 
     String accessToken = objectMapper.readValue(response, DevTokenResponse.class).accessToken();
 
-    assertThat(tokenProvider.readAccessToken(accessToken)).isEqualTo(new AuthUser(7L, true, true));
+    assertThat(tokenProvider.readAccessToken(accessToken).authUser())
+        .isEqualTo(new AuthUser(7L, true, true));
   }
 
   @Test

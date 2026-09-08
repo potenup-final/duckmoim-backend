@@ -228,7 +228,7 @@ class CompanionPostControllerTest {
 
   private HttpHeaders bearer() {
     HttpHeaders headers = new HttpHeaders();
-    headers.setBearerAuth(tokenProvider.issueAccessToken(REQUESTER));
+    headers.setBearerAuth(tokenProvider.createAccessToken(REQUESTER));
     return headers;
   }
 }
