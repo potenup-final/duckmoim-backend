@@ -6,11 +6,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.duckmoim.companion.domain.CommentCursor;
 import com.duckmoim.companion.domain.CommentListQuery;
+import com.duckmoim.companion.domain.CommentStatus;
 import java.time.LocalDateTime;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -140,6 +143,54 @@ class CommentQueryRepositoryTest {
     assertThat(found.comment().getAuthorId()).isEqualTo(AUTHOR_ID);
     assertThat(found.nickname()).isEqualTo("댓글덕후");
     assertThat(found.lastSeenAt()).isNotNull();
+  }
+
+  @DisplayName("댓글 한 건을 작성자와 함께 읽는다.")
+  @Test
+  void findAuthoredById() {
+    long commentId = root(BASE);
+
+    AuthoredComment found = commentRepository.findAuthoredById(commentId).orElseThrow();
+
+    assertThat(found.comment().getId()).isEqualTo(commentId);
+    assertThat(found.nickname()).isEqualTo("댓글덕후");
+  }
+
+  @DisplayName("비밀 댓글도 본문을 그대로 읽는다.")
+  @Test
+  void findAuthoredById_readsSecret() {
+    long commentId =
+        aComment().postId(postId).authorId(AUTHOR_ID).secret(true).createdAt(BASE).insert(jdbc);
+
+    AuthoredComment found = commentRepository.findAuthoredById(commentId).orElseThrow();
+
+    assertThat(found.comment().isSecret()).isTrue();
+    assertThat(found.comment().getContent()).isNotBlank();
+  }
+
+  /**
+   * 지운 댓글을 못 읽으면 신고당한 사람이 지우는 것으로 판정을 막을 수 있다 (API-설계.md 「2-5. 댓글 (Companion)」). 일반 조회 경로의 404 는
+   * 그대로다.
+   */
+  @DisplayName("소프트 삭제·블라인드된 댓글도 읽는다.")
+  @ParameterizedTest
+  @EnumSource(
+      value = CommentStatus.class,
+      names = {"DELETED", "BLINDED"})
+  void findAuthoredById_readsInactive(CommentStatus status) {
+    long commentId =
+        aComment().postId(postId).authorId(AUTHOR_ID).status(status).createdAt(BASE).insert(jdbc);
+
+    AuthoredComment found = commentRepository.findAuthoredById(commentId).orElseThrow();
+
+    assertThat(found.comment().getStatus()).isEqualTo(status);
+    assertThat(found.comment().getContent()).isNotBlank();
+  }
+
+  @DisplayName("없는 댓글은 비어서 돌아온다.")
+  @Test
+  void findAuthoredById_hasNoComment() {
+    assertThat(commentRepository.findAuthoredById(-1L)).isEmpty();
   }
 
   private long root(LocalDateTime createdAt) {

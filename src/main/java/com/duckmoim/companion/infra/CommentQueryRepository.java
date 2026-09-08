@@ -3,6 +3,7 @@ package com.duckmoim.companion.infra;
 import com.duckmoim.companion.domain.CommentListQuery;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * 댓글 목록의 조회 (CM-06 · CM-07).
@@ -30,6 +31,17 @@ public interface CommentQueryRepository {
    * 탐색과 정렬이 한 번에 끝난다. 대댓글은 부모와 같은 모집글에 속하므로 조건이 늘어도 결과가 달라지지 않는다.
    */
   List<AuthoredComment> findRepliesOf(Long postId, List<Long> parentIds);
+
+  /**
+   * 댓글 한 건을 작성자와 함께 읽는다 (CM-17).
+   *
+   * <p><b>{@code status} 를 보지 않는다.</b> 소프트 삭제·블라인드된 댓글도 그대로 돌려준다. 지운 댓글을 404 로 만들면 신고당한 사람이 댓글을 지우는
+   * 것으로 판정을 막을 수 있어서다 — API-설계.md 「2-5. 댓글 (Companion)」이 <i>"본문은 소프트 삭제라 남아 있어 백오피스가 CM-17 로 판단할
+   * 재료가 된다"</i> 고 정했다. <b>일반 조회 경로의 404 는 그대로다</b> (API-컨벤션.md 「Status Code 규칙」).
+   *
+   * <p>{@code findById} 가 아닌 이유는 응답에 작성자 닉네임과 아바타가 필요하기 때문이다. 목록과 같은 조인을 쓴다.
+   */
+  Optional<AuthoredComment> findAuthoredById(Long commentId);
 
   /**
    * 모집글별 댓글 수를 센다 (CM-12 · I-11).
