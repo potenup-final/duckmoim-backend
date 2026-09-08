@@ -78,7 +78,10 @@ class EndpointGradeTest {
           new Endpoint(HttpMethod.POST, "/api/v1/posts", Grade.SIGNUP),
           new Endpoint(HttpMethod.GET, "/api/v1/posts/1", Grade.PUBLIC),
           new Endpoint(HttpMethod.PATCH, "/api/v1/posts/1", Grade.SIGNUP),
-          new Endpoint(HttpMethod.POST, "/api/v1/posts/1/close", Grade.SIGNUP),
+          // 없는 글 번호다. 클래스 각주가 말한 「진짜 명령을 실행한다」에 걸리는 경로여서 그렇게 두었다 —
+          // 시드에 있는 글을 찌르면 방장이 아닌 요청자에게 도메인이 403 을 내고, 관문의 403 과 구분되지 않는다.
+          // 없는 번호면 404 라 관문 통과 여부만 남는다. PATCH 는 본문이 없어 400 으로 끝나 이 문제가 없다.
+          new Endpoint(HttpMethod.POST, "/api/v1/posts/404404/close", Grade.SIGNUP),
           // 2-5 댓글
           new Endpoint(HttpMethod.GET, "/api/v1/posts/1/comments", Grade.PUBLIC),
           new Endpoint(HttpMethod.POST, "/api/v1/posts/1/comments", Grade.SIGNUP),
