@@ -26,6 +26,17 @@ public interface UserRepository extends JpaRepository<User, Long> {
   boolean existsByNickname(String nickname);
 
   /**
+   * 카카오 회원번호로 계정을 찾는다 (AU-01 「최초 로그인 시 자동 가입」).
+   *
+   * <p>없으면 만들고 있으면 그 계정에 붙는다. 카카오 로그인이 우리 로그인의 전부라 <b>이 조회가 재방문 판정 그 자체다.</b>
+   *
+   * <p><b>탈퇴 회원을 걸러내지 않는다.</b> 걸러내면 「없으니 새로 만들자」로 흘러 {@code uk_user_kakao_user_id} 에 걸린다 — 탈퇴가 소프트
+   * 삭제라 행이 남고 유니크 제약도 그 행을 그대로 센다. 찾아서 넘기면 {@code AuthService.lockUser} 가 {@code USER_NOT_FOUND} 로
+   * 끊는다.
+   */
+  Optional<User> findByKakaoUserId(Long kakaoUserId);
+
+  /**
    * 회원 행을 잠그고 읽는다 ({@code SELECT ... FOR UPDATE}).
    *
    * <p><b>토큰 쓰기 경로의 락 순서를 하나로 만드는 장치다.</b> 발급 · 회전 · 폐기가 모두 {@code refresh_token} 과 {@code user} 둘을
