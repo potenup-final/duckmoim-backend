@@ -26,8 +26,8 @@ import org.springframework.transaction.annotation.Transactional;
  * <p>판정 자체는 {@code CommentTest} 가 단위로 덮는다. 여기서는 <b>저장소를 지나야 성립하는 것</b>을 본다 — 방장이 누구인지를 모집글에서 읽어오는
  * 흐름, 그리고 저장값이 실제로 바뀌는지.
  *
- * <p><b>BLINDED 가 여기 있는 이유</b> — 블라인드로 가는 전이가 신고 처리(AD-07) 소관이라 아직 없다. 단위 테스트로는 그 상태를 만들 수 없어 SQL
- * 픽스처로 넣는다.
+ * <p><b>BLINDED 를 SQL 픽스처로 넣는 이유</b> — 그 전이는 AD-07 이 열었지만 관리자 경로를 지나야 한다. 수정·삭제 검사에 백오피스 인가를 끌어들이지
+ * 않으려고 상태만 직접 넣는다. 전이 자체는 {@code CommentTest} 와 {@code AdminCommentCommandServiceTest} 가 본다.
  *
  * <p>{@code CompanionPostFixture} 가 방장을 1 로 넣는다 (V11 시드의 방장덕후).
  */

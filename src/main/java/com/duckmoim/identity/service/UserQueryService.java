@@ -50,4 +50,31 @@ public class UserQueryService {
 
     return MyProfile.of(user, sanctionReader.read(userId), clock);
   }
+
+  /**
+   * 남의 프로필을 읽는다 (AU-09).
+   *
+   * <p><b>등급이 {@code PUBLIC} 이다.</b> 비회원이 부른다 — 만나기 전에 상대를 확인하는 화면이라 로그인을 요구하면 그 확인이 막힌다.
+   *
+   * <p><b>활동할 수 있는 계정만 보인다.</b> 탈퇴와 가입 미완료는 둘 다 404 다.
+   *
+   * <ul>
+   *   <li><b>탈퇴</b> — API 컨벤션이 <i>"소프트 삭제된 리소스는 404로 취급한다"</i> 로 못박았다. 행이 남아 있어 존재 여부만으로는 걸러지지 않는다
+   *   <li><b>가입 미완료</b> — 닉네임이 {@code null} 이라 노출 항목 넷 중 하나가 빈다. 그 계정은 쓰기가 전부 막혀 있어(AU-07) 남이 그
+   *       프로필에 도달할 경로 자체가 없고, 주소를 직접 치면 이름 없는 프로필이 뜬다
+   * </ul>
+   *
+   * <p>둘을 한 판정({@code isSignupCompleted})으로 묶은 것은 <b>H(탈퇴)가 이 판정을 따르게</b> 하려는 것이다. 뒤에서 정하면 앞의 응답을
+   * 고쳐야 한다.
+   */
+  @Transactional(readOnly = true)
+  public PublicProfile findPublicProfile(Long userId) {
+    User user =
+        userRepository
+            .findById(userId)
+            .filter(User::isSignupCompleted)
+            .orElseThrow(() -> new BusinessException(UserErrorCode.USER_NOT_FOUND));
+
+    return PublicProfile.of(user, clock);
+  }
 }
