@@ -1,0 +1,216 @@
+package com.duckmoim.companion.service;
+
+import static com.duckmoim.companion.CommentFixture.aComment;
+import static com.duckmoim.companion.CompanionPostFixture.aCompanionPost;
+import static org.assertj.core.api.Assertions.assertThat;
+
+import com.duckmoim.companion.domain.ClosedReason;
+import com.duckmoim.companion.domain.PostCursor;
+import com.duckmoim.companion.domain.PostListQuery;
+import com.duckmoim.companion.domain.PostStatus;
+import com.duckmoim.identity.domain.LastSeen;
+import java.time.Clock;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.util.List;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Primary;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.annotation.Transactional;
+
+/**
+ * 목록 조회의 검증 기준 (PO-08).
+ *
+ * <p>실제 MySQL 로 돈다. 커서 경계는 정렬과 튜플 비교가 개입해서 mock 으로는 검증되지 않고, 테스트 컨벤션이 H2 도 금지했다.
+ *
+ * <p><b>시계를 고정한다.</b> 방장의 최근 접속을 구간으로 줄이는 계산이 현재 시각을 쓴다 (도메인-모델링.md 「7.2 최근 접속일 노출」) — 놓아두면 같은 데이터가
+ * 오늘과 내일 다른 구간으로 나온다.
+ *
+ * <p>매 테스트가 시드(V21)를 지우고 자기 데이터만 넣는다. {@code @Transactional} 롤백이 시드를 되돌린다.
+ */
+@SpringBootTest
+@Transactional
+class CompanionPostQueryServiceTest {
+
+  private static final ZoneId KST = ZoneId.of("Asia/Seoul");
+  private static final LocalDateTime NOW = LocalDateTime.of(2026, 9, 8, 12, 0);
+  private static final LocalDateTime MEET_AT = LocalDateTime.of(2026, 10, 1, 0, 0);
+
+  private static final long HOST_ID = 1L;
+
+  @TestConfiguration
+  static class FixedClockConfig {
+
+    @Bean
+    @Primary
+    Clock fixedClock() {
+      return Clock.fixed(NOW.atZone(KST).toInstant(), KST);
+    }
+  }
+
+  @Autowired private CompanionPostQueryService companionPostQueryService;
+  @Autowired private JdbcTemplate jdbc;
+
+  @BeforeEach
+  void setUp() {
+    jdbc.update("DELETE FROM comment");
+    jdbc.update("DELETE FROM companion_post");
+  }
+
+  @DisplayName("목록은 만남시각 임박순으로 나온다.")
+  @Test
+  void findPosts() {
+    long second = post(MEET_AT.plusDays(2));
+    long first = post(MEET_AT.plusDays(1));
+
+    PostSlice slice = companionPostQueryService.findPosts(query(null, null, 20));
+
+    assertThat(idsOf(slice)).containsExactly(first, second);
+  }
+
+  /** 더 읽은 한 건은 다음 페이지 유무를 판정하는 데만 쓰고 응답에서 잘라낸다. */
+  @DisplayName("한 페이지에 size 만큼만 담고 다음 페이지가 있음을 알린다.")
+  @Test
+  void findPosts_hasNext() {
+    long first = post(MEET_AT.plusDays(1));
+    post(MEET_AT.plusDays(2));
+
+    PostSlice slice = companionPostQueryService.findPosts(query(null, null, 1));
+
+    assertThat(idsOf(slice)).containsExactly(first);
+    assertThat(slice.hasNext()).isTrue();
+    assertThat(slice.nextCursor()).isEqualTo(new PostCursor(MEET_AT.plusDays(1), first));
+  }
+
+  @DisplayName("마지막 페이지는 다음 커서를 주지 않는다.")
+  @Test
+  void findPosts_isLastPage() {
+    post(MEET_AT);
+
+    PostSlice slice = companionPostQueryService.findPosts(query(null, null, 20));
+
+    assertThat(slice.hasNext()).isFalse();
+    assertThat(slice.nextCursor()).isNull();
+  }
+
+  @DisplayName("빈 목록도 커서 없이 정상이다.")
+  @Test
+  void findPosts_isEmpty() {
+    PostSlice slice = companionPostQueryService.findPosts(query(null, null, 20));
+
+    assertThat(slice.posts()).isEmpty();
+    assertThat(slice.hasNext()).isFalse();
+    assertThat(slice.nextCursor()).isNull();
+  }
+
+  /** 목록은 본문을 그대로 싣지 않는다. 자르는 것은 목록 응답의 일이고 여기는 본문 전체를 담는다. */
+  @DisplayName("목록도 본문 전체를 들고 나온다.")
+  @Test
+  void findPosts_hasFullContent() {
+    aCompanionPost().meetAt(MEET_AT).content("가".repeat(500)).insert(jdbc);
+
+    PostSlice slice = companionPostQueryService.findPosts(query(null, null, 20));
+
+    assertThat(slice.posts().get(0).content()).hasSize(500);
+  }
+
+  @DisplayName("행사를 고르지 않은 글은 행사명과 이미지가 없다.")
+  @Test
+  void findPosts_hasNoEvent() {
+    post(MEET_AT);
+
+    PostView view = companionPostQueryService.findPosts(query(null, null, 20)).posts().get(0);
+
+    assertThat(view.eventId()).isNull();
+    assertThat(view.eventTitle()).isNull();
+    assertThat(view.eventImageUrl()).isNull();
+  }
+
+  /** 원본 시각을 그대로 내리면 특정인의 활동 패턴이 추적된다 (도메인 7.2). */
+  @DisplayName("방장의 최근 접속은 구간 값으로만 나온다.")
+  @Test
+  void findPosts_reducesLastSeen() {
+    jdbc.update("UPDATE user SET last_seen_at = ? WHERE id = ?", NOW.minusDays(2), HOST_ID);
+    post(MEET_AT);
+
+    PostView view = companionPostQueryService.findPosts(query(null, null, 20)).posts().get(0);
+
+    assertThat(view.lastSeen()).isEqualTo(LastSeen.WITHIN_3_DAYS);
+  }
+
+  @DisplayName("한 번도 관측되지 않은 방장은 최근 접속이 없다.")
+  @Test
+  void findPosts_hasNoLastSeen() {
+    jdbc.update("UPDATE user SET last_seen_at = NULL WHERE id = ?", HOST_ID);
+    post(MEET_AT);
+
+    PostView view = companionPostQueryService.findPosts(query(null, null, 20)).posts().get(0);
+
+    assertThat(view.lastSeen()).isNull();
+  }
+
+  @DisplayName("댓글 수를 조회 시점에 세어 함께 내린다.")
+  @Test
+  void findPosts_countsComments() {
+    long postId = post(MEET_AT);
+    long rootId = aComment().postId(postId).insert(jdbc);
+    aComment().postId(postId).parentId(rootId).secret(true).insert(jdbc);
+
+    PostView view = companionPostQueryService.findPosts(query(null, null, 20)).posts().get(0);
+
+    assertThat(view.commentCount()).isEqualTo(2);
+  }
+
+  @DisplayName("댓글이 없는 글의 댓글 수는 0 이다.")
+  @Test
+  void findPosts_hasNoComment() {
+    post(MEET_AT);
+
+    PostView view = companionPostQueryService.findPosts(query(null, null, 20)).posts().get(0);
+
+    assertThat(view.commentCount()).isZero();
+  }
+
+  /** status 만 받으면 「모집 완료」와 「종료」를 구분할 수 없다 (화면 계약). */
+  @DisplayName("마감된 글은 마감 사유를 함께 내린다.")
+  @Test
+  void findPosts_hasClosedReason() {
+    aCompanionPost()
+        .meetAt(MEET_AT)
+        .status(PostStatus.CLOSED)
+        .closedReason(ClosedReason.MEET_TIME_PASSED)
+        .insert(jdbc);
+
+    PostView view = companionPostQueryService.findPosts(query(null, null, 20)).posts().get(0);
+
+    assertThat(view.status()).isEqualTo(PostStatus.CLOSED);
+    assertThat(view.closedReason()).isEqualTo(ClosedReason.MEET_TIME_PASSED);
+  }
+
+  @DisplayName("정원을 넣지 않은 글은 정원이 없다.")
+  @Test
+  void findPosts_hasNoCapacity() {
+    post(MEET_AT);
+
+    assertThat(companionPostQueryService.findPosts(query(null, null, 20)).posts().get(0).capacity())
+        .isNull();
+  }
+
+  private long post(LocalDateTime meetAt) {
+    return aCompanionPost().meetAt(meetAt).hostId(HOST_ID).insert(jdbc);
+  }
+
+  private static PostListQuery query(PostStatus status, PostCursor cursor, int size) {
+    return new PostListQuery(status, cursor, size);
+  }
+
+  private static List<Long> idsOf(PostSlice slice) {
+    return slice.posts().stream().map(PostView::id).toList();
+  }
+}
