@@ -9,8 +9,13 @@ import org.springframework.jdbc.core.JdbcTemplate;
 /**
  * 모집글 행을 직접 넣는 테스트 전용 빌더.
  *
- * <p>작성 팩터리({@code CompanionPost.open})가 있지만 여기서 쓰지 않는다. 마감된 글을 만드는 경로가 아직 없고 (PO-07 · PO-14 소관),
- * 커서 경계 검증에 필요한 <b>정렬 키가 같은 글</b>은 만남시각을 손으로 박아야 만들어진다. {@code EventFixture} 와 같은 이유로 SQL 로 넣는다.
+ * <p>작성 팩터리({@code CompanionPost.open})가 있지만 여기서 쓰지 않는다. 커서 경계 검증에 필요한 <b>정렬 키가 같은 글</b>은 만남시각을 손으로
+ * 박아야 만들어지고, {@code MEET_TIME_PASSED} 로 마감된 글은 아직 만들 경로가 없다 (PO-14 소관). {@code EventFixture} 와 같은
+ * 이유로 SQL 로 넣는다.
+ *
+ * <p><b>{@code MANUAL} 로 마감된 글은 이제 {@code CompanionPostCommandService.close} 로도 만들 수 있다</b>
+ * (PO-07). 마감 <i>경로</i>가 도는지를 보는 테스트는 그쪽을 쓴다 — 여기서 {@code status} 를 박는 것은 마감된 <i>상태</i>를 전제로 삼는
+ * 테스트용이다.
  *
  * <p>조회에 쓰이지 않는 값은 기본값으로 숨긴다. 테스트 본문에는 <b>그 테스트가 무엇으로 거르는지</b>만 남는다.
  */
