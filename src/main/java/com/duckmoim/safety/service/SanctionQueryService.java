@@ -38,6 +38,9 @@ public class SanctionQueryService {
    *
    * <p><b>여러 건이면 가장 최근 것을 고른다.</b> 활성 제재는 한 유저에 최대 하나라는 것이 이 티켓의 판단이지만 (도메인 6장 상태 축이 {@code NONE}
    * 에서만 출발한다), 규칙이 깨진 날 조용히 아무거나 고르지 않도록 순서를 정해 둔다.
+   *
+   * <p><b>{@link #canWrite} 와 갈리는 지점이다.</b> 안내는 하나만 보여주면 되지만 차단은 전량을 봐야 한다 — 한 건만 보면 나중에 걸린 경고가 앞선
+   * 정지를 가린다.
    */
   @Transactional(readOnly = true)
   public Optional<ActiveSanction> findActive(Long userId) {
@@ -54,14 +57,27 @@ public class SanctionQueryService {
   public boolean canWrite(Long userId) {
     LocalDateTime now = nowInUtc();
 
-    return POLICY.canWrite(activeAt(userId, now).orElse(null), now);
+    return POLICY.canWrite(activeAllAt(userId, now), now);
   }
 
-  private Optional<Sanction> activeAt(Long userId, LocalDateTime now) {
-    List<Sanction> candidates =
-        sanctionRepository.findByUserIdAndReleasedAtIsNullOrderByIssuedAtDesc(userId);
+  /**
+   * 지금 유효한 제재 <b>전량</b>.
+   *
+   * <p><b>차단 판정은 한 건만 보면 안 된다.</b> 정지와 경고가 함께 활성이면 {@code issuedAt DESC} 상 나중에 걸린 경고가 먼저 잡히고, 그 한
+   * 건만 넘기면 정지 중인 유저가 통과한다. 저장소가 목록을 돌려주는 이유가 이것이다.
+   *
+   * <p>지금은 활성 제재가 최대 하나다 — {@code SanctionCommandService#sanction} 이 회원 행을 잠그고 중복을 막는다. 그래도 전량을 넘기는
+   * 것은, 그 잠금이 옮겨지거나 새 생성 경로가 생겼을 때 <b>결과가 안전한 쪽으로 떨어지게</b> 하기 위해서다.
+   */
+  private List<Sanction> activeAllAt(Long userId, LocalDateTime now) {
+    return sanctionRepository.findByUserIdAndReleasedAtIsNullOrderByIssuedAtDesc(userId).stream()
+        .filter(sanction -> sanction.isActiveAt(now))
+        .toList();
+  }
 
-    return candidates.stream().filter(sanction -> sanction.isActiveAt(now)).findFirst();
+  /** 안내에 쓸 한 건. 여럿이면 가장 최근 것이다 ({@link #findActive}). */
+  private Optional<Sanction> activeAt(Long userId, LocalDateTime now) {
+    return activeAllAt(userId, now).stream().findFirst();
   }
 
   private static ActiveSanction view(Sanction sanction) {

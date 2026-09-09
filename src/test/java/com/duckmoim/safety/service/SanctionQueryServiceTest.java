@@ -118,6 +118,28 @@ class SanctionQueryServiceTest {
     assertThat(sanctionQueryService.canWrite(USER_ID)).isTrue();
   }
 
+  /**
+   * 활성 제재가 여럿일 때 차단이 이긴다.
+   *
+   * <p><b>서비스로는 이 상태를 만들 수 없다</b> — {@code SanctionCommandService#sanction} 이 회원 행을 잠그고 중복을 막는다.
+   * 그래서 픽스처가 SQL 로 직접 넣는다. 그 잠금이 옮겨지거나 새 생성 경로가 생겼을 때 <b>결과가 안전한 쪽으로 떨어지는지</b>를 보는 자리다.
+   *
+   * <p>경고를 정지보다 <b>나중에</b> 건다. 저장소가 {@code issuedAt DESC} 로 주므로 한 건만 보는 구현에서는 경고가 먼저 잡혀 통과한다.
+   */
+  @DisplayName("정지와 경고가 함께 활성이면 쓸 수 없다.")
+  @Test
+  void canWrite_hasBlockingSanctionAmongMany() {
+    aSanction()
+        .userId(USER_ID)
+        .kind(SanctionKind.SUSPENDED)
+        .issuedAt(nowUtc().minusDays(1))
+        .until(nowUtc().plusDays(3))
+        .insert(jdbc);
+    aSanction().userId(USER_ID).kind(SanctionKind.WARNED).issuedAt(nowUtc()).insert(jdbc);
+
+    assertThat(sanctionQueryService.canWrite(USER_ID)).isFalse();
+  }
+
   private LocalDateTime nowUtc() {
     return LocalDateTime.ofInstant(clock.instant(), ZoneOffset.UTC);
   }
