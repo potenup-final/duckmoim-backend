@@ -30,6 +30,7 @@ import org.springframework.transaction.annotation.Transactional;
 class UserTest {
 
   private static final LocalDateTime LOGOUT = LocalDateTime.of(2026, 9, 7, 12, 0, 0);
+  private static final LocalDateTime WITHDRAWN_AT = LocalDateTime.of(2026, 9, 9, 3, 0, 0);
 
   @Autowired private UserRepository userRepository;
   @Autowired private JdbcTemplate jdbcTemplate;
@@ -114,6 +115,73 @@ class UserTest {
     user.updateProfile(new Profile("연도안바뀜덕후", "소개"));
 
     assertThat(user.getBirthYear().getValue()).isEqualTo(before);
+  }
+
+  /**
+   * AU-11 의 상태 전이다 — {@code ACTIVE ──탈퇴──▶ WITHDRAWN} (도메인 6장).
+   *
+   * <p><b>판정의 정본은 {@code status} 이고 {@code withdrawnAt} 은 언제였는지의 기록이다.</b> 하나만 찍으면 그 기록이 사라진다.
+   */
+  @Test
+  @DisplayName("탈퇴하면 상태가 바뀌고 탈퇴 시각이 남는다.")
+  void withdraw() {
+    User user = load(aUser().insert(jdbcTemplate));
+
+    user.withdraw(WITHDRAWN_AT);
+
+    assertThat(user.isWithdrawn()).isTrue();
+    assertThat(user.isSignupCompleted()).isFalse();
+    assertThat(user.getWithdrawnAt()).isEqualTo(WITHDRAWN_AT);
+  }
+
+  /**
+   * <b>익명화가 닉네임 하나로 끝나지 않는다.</b> 작성자 블록에 나가는 값이 닉네임과 프로필 이미지 둘이라, 이름만 지우고 사진을 남기면 익명화의 목적이 성립하지
+   * 않는다.
+   */
+  @Test
+  @DisplayName("탈퇴하면 닉네임과 프로필 이미지가 비워진다.")
+  void withdraw_anonymizes() {
+    User user =
+        load(aUser().nickname("떠나는덕후").profile("소개", "/avatar/mine.webp").insert(jdbcTemplate));
+
+    user.withdraw(WITHDRAWN_AT);
+
+    assertThat(user.getNickname()).isNull();
+    assertThat(user.getProfileImageUrl()).isNull();
+  }
+
+  /** 파기 범위는 처리방침이 정할 일이라 이 전이에서 넓히지 않는다. 둘 다 탈퇴 후 어느 응답에도 나가지 않는다. */
+  @Test
+  @DisplayName("탈퇴해도 한줄소개와 출생연도는 남는다.")
+  void withdraw_keepsBioAndBirthYear() {
+    User user = load(aUser().profile("남는 소개", null).insert(jdbcTemplate));
+
+    user.withdraw(WITHDRAWN_AT);
+
+    assertThat(user.getBio()).isEqualTo("남는 소개");
+    assertThat(user.getBirthYear()).isNotNull();
+  }
+
+  /** 되돌리는 전이가 없다 (도메인 6장). 두 번째 탈퇴는 「없는 계정」이다. */
+  @Test
+  @DisplayName("이미 탈퇴한 계정은 다시 탈퇴할 수 없다.")
+  void withdraw_alreadyWithdrawn() {
+    User user = load(aUser().status(SignupStatus.WITHDRAWN).insert(jdbcTemplate));
+
+    assertThatThrownBy(() -> user.withdraw(WITHDRAWN_AT))
+        .isInstanceOf(BusinessException.class)
+        .hasFieldOrPropertyWithValue("errorCode", UserErrorCode.USER_NOT_FOUND);
+  }
+
+  /** 가입 미완료 계정은 관문이 403 으로 끊어 여기 도달하지 않는다. 도메인이 다시 막는 것은 방어의 두 번째 겹이다. */
+  @Test
+  @DisplayName("가입을 마치지 않은 계정은 탈퇴할 수 없다.")
+  void withdraw_signupIncomplete() {
+    User user = load(aUser().status(SignupStatus.PENDING_SIGNUP_INFO).insert(jdbcTemplate));
+
+    assertThatThrownBy(() -> user.withdraw(WITHDRAWN_AT))
+        .isInstanceOf(BusinessException.class)
+        .hasFieldOrPropertyWithValue("errorCode", UserErrorCode.USER_NOT_FOUND);
   }
 
   @Test

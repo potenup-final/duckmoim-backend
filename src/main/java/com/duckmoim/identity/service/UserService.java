@@ -1,5 +1,6 @@
 package com.duckmoim.identity.service;
 
+import com.duckmoim.auth.service.AuthService;
 import com.duckmoim.common.exception.BusinessException;
 import com.duckmoim.identity.domain.Profile;
 import com.duckmoim.identity.domain.SignupInfo;
@@ -8,13 +9,15 @@ import com.duckmoim.identity.exception.UserErrorCode;
 import com.duckmoim.identity.infra.UserRepository;
 import java.time.Clock;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 회원 쓰기 — 가입 정보 입력과 프로필 수정 (AU-05 · AU-06 · AU-08).
+ * 회원 쓰기 — 가입 정보 입력 · 프로필 수정 · 탈퇴 (AU-05 · AU-06 · AU-08 · AU-11).
  *
  * <p>카카오가 주는 것은 회원번호뿐이라(결정 D-2) 계정은 {@code PENDING_SIGNUP_INFO} 로 태어난다. <b>여기가 그 상태를 벗어나는 유일한
  * 창구다.</b>
@@ -28,6 +31,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class UserService {
 
   private final UserRepository userRepository;
+  private final AuthService authService;
   private final Clock clock;
 
   /**
@@ -115,6 +119,44 @@ public class UserService {
   /** 보내지 않았거나({@code null}) 지금 값과 같으면 바뀌는 것이 없다. */
   private boolean isNicknameChanged(User user, String nickname) {
     return nickname != null && !nickname.equals(user.getNickname());
+  }
+
+  /**
+   * 계정을 탈퇴 처리한다 (AU-11).
+   *
+   * <p><b>토큰 정리까지 한 트랜잭션이다.</b> {@code AuthService.logout} 을 이어 부르고, 그쪽이 {@code @Transactional} 이라
+   * 이 트랜잭션에 합류한다 — 뒤가 실패하면 탈퇴도 함께 롤백되므로 <b>「탈퇴는 됐는데 토큰이 남은」 중간 상태가 없다.</b> 사용자는 500 을 받고 다시 부르면
+   * 처음부터 실행된다.
+   *
+   * <p><b>{@code identity.service → auth.service} 를 여기서 허용한다.</b> 두 컨텍스트는 이미 {@code user} 행 한 장을
+   * 공유한다 — {@code logout} 이 지우는 것은 {@code refresh_token} 이지만 잔여 Access 를 끊는 {@code
+   * tokensInvalidatedAt} 은 {@code User} 의 컬럼이고, 그 전이({@code invalidateAllTokens})도 {@code User} 의
+   * 메서드다. 사이에 포트를 끼워도 그 공유가 없어지지 않으므로 우회 없이 직접 부른다 (PR #84 리뷰).
+   *
+   * <p><b>순서를 이렇게 두는 이유.</b> 탈퇴 전이를 먼저 실행해 <b>락과 탈퇴 검사를 한 곳에 모은다.</b> {@code logout} 은 탈퇴 여부를 보지 않고
+   * {@code ifPresent} 로만 동작해서, 먼저 부르면 이미 탈퇴한 계정에도 무효화 시각을 다시 찍는다 — {@code User} 가 <i>"무효화를 반복해서 찍으면
+   * 안 된다"</i> 고 적어 둔 그 자리다.
+   *
+   * <p><b>{@code flush} 를 부르지 않는다.</b> 닉네임을 <b>비우는</b> 것이라 유니크 제약을 위반할 수가 없다 — 제약 위반을 409 로 옮기는
+   * {@code completeSignup} · {@code updateProfile} 과 다른 자리다.
+   *
+   * <p>회원 행을 잠그고 읽는다. B 티켓의 토큰 경로와 같은 락 순서라 데드락이 생기지 않는다.
+   *
+   * <p><b>주입된 {@code Clock} 을 쓰지 않는다.</b> 그 빈은 {@code Asia/Seoul} 이고(행사 종료일 판정이 KST 여야 해서 그렇게 정해졌다)
+   * {@code withdrawn_at} 은 다른 타임스탬프와 같은 UTC 컬럼이다. 같은 이유를 {@code AuthService.now} 가 이미 적어 두었다. 이
+   * 서비스의 {@code Clock} 은 「올해」를 KST 로 읽어야 하는 {@code currentYear} 전용이다.
+   */
+  @Transactional
+  public void withdraw(Long userId) {
+    User user =
+        userRepository
+            .findByIdForUpdate(userId)
+            .filter(found -> !found.isWithdrawn())
+            .orElseThrow(() -> new BusinessException(UserErrorCode.USER_NOT_FOUND));
+
+    user.withdraw(LocalDateTime.now(ZoneOffset.UTC));
+
+    authService.logout(userId);
   }
 
   /**
