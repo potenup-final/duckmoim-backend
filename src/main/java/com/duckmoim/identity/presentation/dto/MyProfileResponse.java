@@ -26,8 +26,10 @@ public record MyProfileResponse(
   /**
    * 제재 상태 (AU-12 · 화면-계약.md 「제재 상태」).
    *
-   * <p>{@code Sanction} 애그리게이트가 아직 없어 {@code kind} 가 늘 {@code NONE} 이다. <b>키를 빼지 않는 이유</b> — 정본이 이미
-   * 계약으로 적어 두었고, 빼면 클라이언트가 키가 생기는 날 코드를 고쳐야 한다.
+   * <p>제재가 없으면 {@code kind} 가 {@code NONE} 이다. <b>키를 빼지 않는 이유</b> — 정본이 이미 계약으로 적어 두었고, 빼면 클라이언트가
+   * 제재 상태에 따라 키가 생겼다 없어졌다 하는 응답을 다뤄야 한다.
+   *
+   * <p>값은 {@code SanctionReader} 포트로 들어온다. 한때 「제재 없음」 고정이었고 STAR-80 이 실구현을 꽂았다.
    */
   public record Sanction(
       String kind, String reason, OffsetDateTime until, OffsetDateTime issuedAt) {
