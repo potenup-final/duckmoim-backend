@@ -6,7 +6,7 @@ import java.time.Duration;
 import java.util.Optional;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.stereotype.Component;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
@@ -31,7 +31,7 @@ import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignReques
  */
 @Slf4j
 @Component
-@ConditionalOnProperty(name = "duckmoim.s3.bucket")
+@ConditionalOnExpression("'${duckmoim.s3.bucket:}' != ''")
 public class S3ProfileImageStorage implements ProfileImageStorage {
 
   private final S3Client s3Client;

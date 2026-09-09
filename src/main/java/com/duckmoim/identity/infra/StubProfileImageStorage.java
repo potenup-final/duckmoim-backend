@@ -22,11 +22,16 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 public class StubProfileImageStorage {
 
+  /**
+   * <b>메서드 이름을 클래스 이름과 다르게 둔다.</b> 같으면 이 설정 클래스 자신의 빈 이름({@code stubProfileImageStorage})과 부딪혀
+   * {@code BeanDefinitionOverrideException} 으로 기동이 실패한다. 조건이 잘못돼 이 {@code @Bean} 이 한 번도 등록되지 않던
+   * 동안에는 그 충돌이 드러나지 않았다 — PR #89 리뷰의 조건 수정이 같이 꺼낸 결함이다.
+   */
   @Bean
   @ConditionalOnMissingBean(ProfileImageStorage.class)
-  public ProfileImageStorage stubProfileImageStorage() {
+  public ProfileImageStorage disabledProfileImageStorage() {
     log.warn(
-        "[StubProfileImageStorage.stubProfileImageStorage] Bucket is not configured."
+        "[StubProfileImageStorage.disabledProfileImageStorage] Bucket is not configured."
             + " Profile image upload is disabled.");
 
     return new ProfileImageStorage() {
