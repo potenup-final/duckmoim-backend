@@ -3,9 +3,13 @@ package com.duckmoim.identity.presentation;
 import com.duckmoim.auth.domain.AuthUser;
 import com.duckmoim.identity.presentation.dto.MyProfileResponse;
 import com.duckmoim.identity.presentation.dto.NicknameAvailabilityResponse;
+import com.duckmoim.identity.presentation.dto.ProfileImageConfirmRequest;
+import com.duckmoim.identity.presentation.dto.ProfileImageUploadRequest;
+import com.duckmoim.identity.presentation.dto.ProfileImageUploadResponse;
 import com.duckmoim.identity.presentation.dto.ProfileUpdateRequest;
 import com.duckmoim.identity.presentation.dto.PublicProfileResponse;
 import com.duckmoim.identity.presentation.dto.SignupInfoRequest;
+import com.duckmoim.identity.service.ProfileImageService;
 import com.duckmoim.identity.service.UserQueryService;
 import com.duckmoim.identity.service.UserService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -15,16 +19,18 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-@Tag(name = "회원", description = "가입 정보 입력 · 내 정보 · 프로필 수정 · 공개 프로필")
+@Tag(name = "회원", description = "가입 정보 입력 · 내 정보 · 프로필 수정 · 공개 프로필 · 이미지 업로드 · 탈퇴")
 @RestController
 @RequestMapping("/api/v1/users")
 @RequiredArgsConstructor
@@ -32,6 +38,7 @@ public class UserController {
 
   private final UserService userService;
   private final UserQueryService userQueryService;
+  private final ProfileImageService profileImageService;
 
   /**
    * 닉네임을 쓸 수 있는지 미리 본다 (AU-06).
@@ -124,5 +131,67 @@ public class UserController {
   @GetMapping("/{userId}")
   public PublicProfileResponse findPublicProfile(@PathVariable Long userId) {
     return PublicProfileResponse.from(userQueryService.findPublicProfile(userId));
+  }
+
+  /**
+   * 프로필 이미지를 올릴 서명된 주소를 받는다 (AU-08).
+   *
+   * <p><b>파일을 여기로 보내지 않는다.</b> 형식과 크기를 <b>선언</b>하면 서버가 S3 로 올릴 수 있는 서명된 주소를 준다. 브라우저는 그 주소로 직접 올리므로
+   * 파일이 우리 서버를 지나지 않는다.
+   *
+   * <p><b>여기가 「용량·MIME 위반 400」이 나는 자리다.</b> 정책을 벗어난 선언에는 서명을 만들지 않는다 — 올리기 전에 막는 것이 올린 뒤 버리는 것보다
+   * 낫다.
+   *
+   * <p>업로드가 끝나면 {@code PUT} 으로 확정해야 프로필에 박힌다. 확정 전에는 {@code profileImageUrl} 이 그대로다.
+   */
+  @Operation(
+      summary = "프로필 이미지 업로드 주소 발급",
+      description = "형식과 크기를 선언하면 S3 로 직접 올릴 서명된 주소를 준다. 올린 뒤 PUT 으로 확정해야 반영된다.")
+  @PostMapping("/me/profile-image")
+  public ProfileImageUploadResponse issueProfileImageUpload(
+      @AuthenticationPrincipal AuthUser authUser,
+      @Valid @RequestBody ProfileImageUploadRequest request) {
+
+    return ProfileImageUploadResponse.from(
+        profileImageService.issueUpload(request.toCommand(authUser.userId())));
+  }
+
+  /**
+   * 올린 이미지를 프로필에 반영한다 (AU-08).
+   *
+   * <p><b>이 경로가 API 설계 2-2 에 없다.</b> 그 표는 멀티파트 업로드 하나를 전제로 `POST` 한 줄만 적어 두었는데, Presigned 는 서버가 파일을
+   * 받지 않아 <b>올라간 것을 확인하는 단계</b>가 따로 필요하다. 위키를 고쳐야 한다 — PR 에 적었다.
+   *
+   * <p><b>미리 박지 않는 이유</b> — 발급 시점에 최종 주소를 이미 알지만 그때 박으면 사용자가 취소했을 때 없는 객체를 가리키는 주소가 남는다. 그것은 {@code
+   * null} 도 아니고 유효한 값도 아니라 아바타가 깨진 채로 굳고, 삭제 엔드포인트가 계약에 없어 되돌릴 수도 없다.
+   *
+   * <p>성공은 본문 없는 200 이다. 바뀐 값은 {@code GET /users/me} 나 공개 프로필로 읽는다.
+   */
+  @Operation(summary = "프로필 이미지 확정", description = "올라간 객체를 확인하고 프로필에 반영한다. 올라간 것이 없으면 400 이다.")
+  @PutMapping("/me/profile-image")
+  public void confirmProfileImage(
+      @AuthenticationPrincipal AuthUser authUser,
+      @Valid @RequestBody ProfileImageConfirmRequest request) {
+
+    profileImageService.confirm(authUser.userId(), request.objectKey());
+  }
+
+  /**
+   * 계정을 탈퇴 처리한다 (AU-11).
+   *
+   * <p><b>되돌릴 수 없다.</b> 같은 카카오 계정으로 다시 로그인해도 404 다 — 소프트 삭제라 행이 남고 {@code kakao_user_id} 가 UNIQUE 라
+   * 새 계정을 만들 수도 없다. 「탈퇴 후 재가입」은 요구사항이 없어 열지 않았다.
+   *
+   * <p><b>조립을 여기서 하지 않는다.</b> 탈퇴와 토큰 정리를 컨트롤러가 차례로 부르면 <b>트랜잭션이 갈라져</b> 뒤가 실패했을 때 「탈퇴는 됐는데 토큰이 남은」
+   * 상태로 굳는다. {@code UserService.withdraw} 안에서 한 트랜잭션으로 묶었다 — 근거는 그 javadoc 에 있다 (PR #84 리뷰).
+   *
+   * <p>등급이 {@code SIGNUP} 이다 (API 설계 2-2). <b>가입 미완료 계정은 이 경로로 탈퇴할 수 없다</b> — 관문이 403 으로 끊는다.
+   *
+   * <p>성공은 본문 없는 200 이다 (컨벤션의 상태 코드 표에 204 가 없다). 로그아웃과 같은 모양이다.
+   */
+  @Operation(summary = "회원 탈퇴", description = "되돌릴 수 없다. 닉네임과 프로필 이미지가 비워지고 쓴 글과 댓글은 남는다.")
+  @DeleteMapping("/me")
+  public void withdraw(@AuthenticationPrincipal AuthUser authUser) {
+    userService.withdraw(authUser.userId());
   }
 }

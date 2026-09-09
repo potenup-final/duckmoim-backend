@@ -1,6 +1,7 @@
 package com.duckmoim.identity.presentation;
 
 import static com.duckmoim.identity.UserFixture.aUser;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
@@ -426,6 +427,47 @@ class UserControllerTest {
   @DisplayName("회원번호가 숫자가 아니면 400 이다.")
   void findPublicProfile_malformedUserId() throws Exception {
     mockMvc.perform(get("/api/v1/users/abc")).andExpect(status().isBadRequest());
+  }
+
+  /** 로그아웃과 같은 모양이다 — 컨벤션의 상태 코드 표에 204 가 없다. */
+  @Test
+  @DisplayName("탈퇴하면 본문 없이 200 이다.")
+  void withdraw() throws Exception {
+    long userId = aUser().nickname("탈퇴계약덕후").insert(jdbcTemplate);
+
+    mockMvc
+        .perform(delete("/api/v1/users/me").headers(bearer(userId, true)))
+        .andExpect(status().isOk())
+        .andExpect(
+            result ->
+                org.assertj.core.api.Assertions.assertThat(
+                        result.getResponse().getContentAsString())
+                    .isEmpty());
+
+    cleanUp(userId);
+  }
+
+  /** 탈퇴는 토큰까지 정리한다. 접근 차단은 관문이 이미 하지만 남는 행을 두지 않는다. */
+  @Test
+  @DisplayName("탈퇴하면 리프레시 토큰 행이 남지 않는다.")
+  void withdraw_clearsRefreshTokens() throws Exception {
+    long userId = aUser().nickname("토큰정리덕후").insert(jdbcTemplate);
+    jdbcTemplate.update(
+        "INSERT INTO refresh_token (user_id, token_hash, expires_at, created_at, updated_at)"
+            + " VALUES (?, 'withdraw-test-hash', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6),"
+            + " UTC_TIMESTAMP(6))",
+        userId);
+
+    mockMvc
+        .perform(delete("/api/v1/users/me").headers(bearer(userId, true)))
+        .andExpect(status().isOk());
+
+    Integer left =
+        jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM refresh_token WHERE user_id = ?", Integer.class, userId);
+    org.assertj.core.api.Assertions.assertThat(left).isZero();
+
+    cleanUp(userId);
   }
 
   private HttpHeaders bearer(long userId, boolean signupCompleted) {

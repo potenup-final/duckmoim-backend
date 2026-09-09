@@ -138,6 +138,57 @@ public class User extends BaseEntity {
     }
   }
 
+  /**
+   * 프로필 이미지 주소를 박는다 (AU-08 · I 티켓).
+   *
+   * <p><b>{@link #updateProfile} 이 이 값을 받지 않는 이유와 짝이다.</b> 그쪽은 클라이언트가 준 문자열을 그대로 저장할 수 없다 — 임의 URL
+   * 을 박을 수 있고, 그 순간 결정 D-2(서버가 기본 이미지 URL 을 만들지 않는다)가 의미를 잃는다. 여기 오는 값은 <b>서버가 만든 객체 키로 조립한
+   * 주소</b>다.
+   *
+   * <p><b>업로드가 확인된 뒤에만 불린다.</b> 발급 시점에 박으면 사용자가 취소했을 때 없는 객체를 가리키는 주소가 남고, 그것은 {@code null} 도 아니고
+   * 유효한 값도 아니다 — 아바타가 깨진 채로 굳는다.
+   */
+  public void updateProfileImage(String profileImageUrl) {
+    this.profileImageUrl = profileImageUrl;
+  }
+
+  /**
+   * 계정을 탈퇴 처리한다 (AU-11).
+   *
+   * <p>가입 축의 마지막 전이다 — {@code ACTIVE ──탈퇴──▶ WITHDRAWN} (도메인 6장). 되돌리는 전이가 없다.
+   *
+   * <p><b>소프트 삭제다.</b> 행을 지우지 않는다 — 탈퇴한 사람이 쓴 댓글·모집글이 목록에 남아야 하고(AU-11 「작성 댓글은 자리표시자 유지」 · CM-11 의
+   * 고아 방지와 같은 이유), 작성자 블록이 {@code user} 행을 내부 조인으로 읽으므로 행이 사라지면 그 댓글들이 목록에서 통째로 빠진다.
+   *
+   * <p><b>{@code status} 와 {@code withdrawnAt} 을 함께 찍는다.</b> 판정의 정본은 {@code status} 이고({@link
+   * #isWithdrawn}) {@code withdrawnAt} 은 <b>언제였는지</b>의 기록이다. 하나만 찍으면 그 기록이 사라진다.
+   *
+   * <p><b>익명화가 닉네임 하나로 끝나지 않는다.</b> 작성자 블록에 나가는 값이 <b>닉네임과 프로필 이미지 둘</b>이다 — 이름만 지우고 사진을 남기면 익명화의
+   * 목적이 성립하지 않는다. 사진이 이름보다 더 식별적이다.
+   *
+   * <p><b>닉네임을 고정 문자열로 바꾸지 않고 비운다.</b> {@code uk_user_nickname} 이 UNIQUE 라 {@code "탈퇴한 회원"} 같은 값을
+   * 넣으면 <b>두 번째 탈퇴자에서 제약 위반</b>이다. MySQL 유니크는 NULL 중복을 허용한다. 그리고 익명 문구는 <b>화면 문구</b>다 — DB 에 박으면
+   * 문구가 바뀔 때 마이그레이션이 필요해진다 (결정 D-2 가 기본 아바타에 대해 내린 판단과 같다).
+   *
+   * <p><b>비우면 그 닉네임이 풀린다.</b> 남이 다시 쓸 수 있다 — 유니크 제약이 NULL 을 세지 않기 때문이고, 탈퇴한 사람이 이름을 영구히 점유하지 않는 것이
+   * 맞다.
+   *
+   * <p>{@code bio} 와 {@code birthYear} 는 건드리지 않는다. 탈퇴 후 어느 응답에도 나가지 않아서다 — 파기 범위는 처리방침이 정할 일이라 이
+   * 메서드에서 넓히지 않는다.
+   *
+   * @throws BusinessException 활동할 수 있는 계정이 아니면 {@code USER_NOT_FOUND}
+   */
+  public void withdraw(LocalDateTime now) {
+    if (!isSignupCompleted()) {
+      throw new BusinessException(UserErrorCode.USER_NOT_FOUND);
+    }
+
+    this.status = SignupStatus.WITHDRAWN;
+    this.withdrawnAt = now;
+    this.nickname = null;
+    this.profileImageUrl = null;
+  }
+
   /** AU-03 재사용 탐지의 「해당 유저 전체 폐기」와 AU-04 로그아웃이 함께 부른다. */
   public void invalidateAllTokens(LocalDateTime now) {
     this.tokensInvalidatedAt = now;

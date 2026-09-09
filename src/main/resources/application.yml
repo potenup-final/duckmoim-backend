@@ -82,3 +82,25 @@ duckmoim:
     # 트랜잭션 밖이지만 톰캣 스레드는 그대로 잡는다.
     connect-timeout: 3s
     read-timeout: 5s
+
+  # 프로필 이미지 업로드 (AU-08). 브라우저가 S3 로 직접 올리고 서버는 서명만 한다.
+  #
+  # 버킷 이름이 비어 있으면 S3 구현 대신 대역이 뜬다 — 프로파일로 가르지 않는 이유는
+  # 자격증명을 가진 개발자가 로컬에서 실물을 확인할 길을 막지 않으려는 것이다.
+  # prod 는 기본값이 없다 (application-prod.yml).
+  #
+  # 자격증명을 여기 두지 않는다. EC2 인스턴스 역할을 SDK 기본 공급자가 읽는다 —
+  # ci-cd.yml 이 ECR 로그인을 같은 방식으로 한다.
+  s3:
+    bucket: ${S3_BUCKET:}
+    region: ${AWS_REGION:ap-northeast-2}
+    # 저장되는 profile_image_url 의 앞부분. CloudFront 를 앞에 세우면 이 값만 바뀐다 —
+    # 코드에 박으면 이미 저장된 값 전부가 마이그레이션 대상이 된다.
+    public-base-url: ${S3_PUBLIC_BASE_URL:}
+    # 서명의 유효 시간. 사용자가 파일을 고르고 올리는 데 걸리는 시간이라 짧게 둔다.
+    presign-ttl: 5m
+
+  profile-image:
+    # 위키에 값이 없어 정했다. 아바타라 큰 파일을 받을 이유가 없다.
+    max-bytes: 5242880
+    allowed-content-types: image/jpeg,image/png,image/webp
