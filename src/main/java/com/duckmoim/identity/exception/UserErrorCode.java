@@ -35,7 +35,17 @@ public enum UserErrorCode implements ErrorCode {
    *
    * <p><b>남의 키를 들고 온 경우도 이 코드다.</b> 「그 키는 남의 것이다」로 답하면 <b>남의 객체가 존재한다는 사실</b>을 알려준다.
    */
-  USER_PROFILE_IMAGE_NOT_UPLOADED(HttpStatus.BAD_REQUEST, "업로드된 이미지를 찾을 수 없습니다. 다시 시도해 주세요.");
+  USER_PROFILE_IMAGE_NOT_UPLOADED(HttpStatus.BAD_REQUEST, "업로드된 이미지를 찾을 수 없습니다. 다시 시도해 주세요."),
+
+  /**
+   * 제재 중인 회원이 쓰기를 시도했다 (I-14).
+   *
+   * <p><b>여기 적힌 문구는 사유를 모를 때의 것이다.</b> API-설계.md 「4. 에러 코드」가 <i>"{@code USER_SANCTIONED} 의 {@code
+   * message} 에 제재 사유를 담는다"</i> 고 정했고, 실제 응답에는 그 회원에게 걸린 사유가 실린다 (AD-04 · AU-12).
+   *
+   * <p><b>정본에 있는데 코드에 없던 값이다.</b> 던질 자리가 AD-04 소관이라 STAR-80 이 만들면서 넣었다.
+   */
+  USER_SANCTIONED(HttpStatus.FORBIDDEN, "제재 중에는 글을 쓸 수 없습니다.");
 
   private final HttpStatus status;
   private final String message;
