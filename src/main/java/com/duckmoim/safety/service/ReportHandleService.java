@@ -33,6 +33,9 @@ public class ReportHandleService {
    *
    * <p>전이 규칙과 거부는 도메인이 판정한다 ({@code Report.handle}). 여기서는 읽고 시각을 주는 일만 한다.
    *
+   * <p><b>행을 잠그고 읽는다.</b> {@code findById} 로는 관리자 둘이 같은 신고를 동시에 잡을 때 둘 다 {@code PENDING} 을 보고 둘 다
+   * 통과한다 — {@code PROCESSING} 이 막으려던 것이 정확히 그 상황이다. 락은 판정을 대신하지 않고 <b>도메인이 최신 상태를 보게</b> 만든다.
+   *
    * <p><b>돌려주는 것이 없다.</b> 목록 응답({@code ReportView})을 여기서 만들려면 대상 표시명과 신고자 닉네임을 다시 조인해야 하는데, 명령 경로가
    * 조회 쿼리를 한 번 더 도는 셈이다. 처리하고 나면 그 건이 상태 필터 밖으로 나가 화면이 어차피 목록을 다시 읽는다. {@code deleteComment} ·
    * {@code blindComment} 와 같은 판단이다.
@@ -41,7 +44,7 @@ public class ReportHandleService {
   public void handle(ReportHandleCommand command) {
     Report report =
         reportRepository
-            .findById(command.reportId())
+            .findByIdForUpdate(command.reportId())
             .orElseThrow(() -> new BusinessException(ReportErrorCode.REPORT_NOT_FOUND));
 
     report.handle(
