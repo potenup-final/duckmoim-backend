@@ -8,22 +8,34 @@ import com.duckmoim.catalog.infra.EventRepository;
 import com.duckmoim.catalog.infra.RegionRepository;
 import com.duckmoim.common.exception.BusinessException;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
-import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /** 행사 조회 — 목록(EV-05 · EV-06)과 상세(EV-07). */
 @Service
-@RequiredArgsConstructor
 public class EventQueryService {
 
   private final EventRepository eventRepository;
   private final RegionRepository regionRepository;
   private final Clock clock;
+  private final Duration staleAfter;
+
+  public EventQueryService(
+      EventRepository eventRepository,
+      RegionRepository regionRepository,
+      Clock clock,
+      @Value("${duckmoim.catalog.stale-after}") Duration staleAfter) {
+    this.eventRepository = eventRepository;
+    this.regionRepository = regionRepository;
+    this.clock = clock;
+    this.staleAfter = staleAfter;
+  }
 
   /**
    * 조건에 맞는 행사 한 페이지를 읽는다.
@@ -32,11 +44,14 @@ public class EventQueryService {
    * 실패하고, 그것이 엔티티가 presentation 으로 새는 것을 막는 두 번째 방어다.
    *
    * <p>오늘 날짜를 여기서 한 번 정해 저장소로 내려보낸다. 저장소가 스스로 시계를 읽으면 같은 요청 안에서 자정을 넘길 때 조건과 커서가 다른 날을 보게 된다.
+   *
+   * <p><b>원본에서 사라진 행사도 함께 거른다</b> (D-7). 기준은 「크롤러가 마지막으로 본 시각」이고, 그것이 {@code staleAfter} 보다 오래되면
+   * 목록에서 빠진다. 상세 조회는 이 조건을 걸지 않는다 — 이미 발급된 링크가 죽으면 안 되고, 즐겨찾기도 그 주소로 돌아온다 (EV-07 · EV-11).
    */
   @Transactional(readOnly = true)
   public EventSlice findEvents(EventQuery query) {
     LocalDate today = LocalDate.now(clock);
-    List<Event> found = eventRepository.findSlice(query, today);
+    List<Event> found = eventRepository.findSlice(query, today, clock.instant().minus(staleAfter));
 
     return EventSlice.of(found, query.size(), districtByRegionId());
   }

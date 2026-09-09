@@ -9,6 +9,7 @@ import jakarta.persistence.criteria.CriteriaBuilder;
 import jakarta.persistence.criteria.CriteriaQuery;
 import jakarta.persistence.criteria.Predicate;
 import jakarta.persistence.criteria.Root;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
@@ -21,14 +22,14 @@ public class EventQueryRepositoryImpl implements EventQueryRepository {
   @PersistenceContext private EntityManager entityManager;
 
   @Override
-  public List<Event> findSlice(EventQuery query, LocalDate today) {
+  public List<Event> findSlice(EventQuery query, LocalDate today, Instant staleBefore) {
     CriteriaBuilder builder = entityManager.getCriteriaBuilder();
     CriteriaQuery<Event> criteria = builder.createQuery(Event.class);
     Root<Event> event = criteria.from(Event.class);
 
     criteria
         .select(event)
-        .where(toPredicates(builder, event, query, today))
+        .where(toPredicates(builder, event, query, today, staleBefore))
         // 커서 키와 같은 순서여야 한다. 어긋나면 페이지 경계에서 누락이 생긴다 (EV-06).
         .orderBy(builder.asc(event.get("endsOn")), builder.asc(event.get("id")));
 
@@ -40,12 +41,24 @@ public class EventQueryRepositoryImpl implements EventQueryRepository {
   }
 
   private Predicate[] toPredicates(
-      CriteriaBuilder builder, Root<Event> event, EventQuery query, LocalDate today) {
+      CriteriaBuilder builder,
+      Root<Event> event,
+      EventQuery query,
+      LocalDate today,
+      Instant staleBefore) {
     List<Predicate> predicates = new ArrayList<>();
 
     // 끝난 행사는 목록에 넣지 않는다. 사용자가 끌 수 있는 필터가 아니라 목록의 성질이다
     // (화면-계약.md 「정렬」 — "지난 정보는 없는 정보보다 나쁘다").
     predicates.add(builder.greaterThanOrEqualTo(event.get("endsOn"), today));
+
+    // 원본에서 사라진 행사도 넣지 않는다 (D-7). upsert 는 사라짐을 알려주지 않고
+    // 요청에 실려 오지 않을 뿐이라, 갱신이 멈춘 것이 그 유일한 신호다.
+    //
+    // 이 조건은 idx_event_ends_on_id 를 타지 못한다 — 선두가 ends_on 이고 이 컬럼은
+    // 인덱스에 없어서, 범위 스캔으로 좁힌 뒤 행을 걸러낸다. 인덱스를 늘리지 않은 이유는
+    // 좁힌 결과가 수백 행이고 그 표가 수천으로 커질 성질이 아니어서다 (ISR 계획 4-3).
+    predicates.add(builder.greaterThanOrEqualTo(event.get("lastCrawledAt"), staleBefore));
 
     if (query.kind() != null) {
       predicates.add(builder.equal(event.get("kind"), query.kind()));

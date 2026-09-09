@@ -18,6 +18,9 @@ import org.springframework.test.web.servlet.MockMvc;
       // prod 는 카카오 열쇠에 기본값을 두지 않는다. 없으면 기동이 실패하고,
       // 그 실패가 이 테스트를 「문서가 닫혔는지」와 무관한 이유로 빨갛게 만든다.
       "duckmoim.kakao.client-id=prod-profile-test-dummy-rest-api-key",
+      // 적재 키도 같다 (D-11). 기본값을 두면 개발용 키로 운영이 떠서, 누구나 가짜
+      // 행사를 밀어 넣을 수 있다.
+      "duckmoim.ingest.key=prod-profile-test-dummy-ingest-key",
       // prod 는 S3 버킷에도 기본값을 두지 않는다. 버킷 이름이 있으면 S3 구현이 뜨는데
       // 자격증명이 없어도 빈 생성 자체는 되므로 컨텍스트가 올라간다 — 실제 호출만 실패한다.
       "duckmoim.s3.bucket=prod-profile-test-dummy-bucket",

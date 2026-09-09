@@ -1,12 +1,15 @@
 package com.duckmoim.auth.config;
 
 import static com.duckmoim.auth.presentation.AuthAuthority.ADMIN;
+import static com.duckmoim.auth.presentation.AuthAuthority.MACHINE;
 import static com.duckmoim.auth.presentation.AuthAuthority.SIGNUP;
 
 import com.duckmoim.auth.presentation.AuthenticationFilter;
+import com.duckmoim.auth.presentation.IngestKeyFilter;
 import com.duckmoim.auth.presentation.RestAccessDeniedHandler;
 import com.duckmoim.auth.presentation.RestAuthenticationEntryPoint;
 import com.duckmoim.auth.service.AuthenticationService;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
@@ -53,10 +56,19 @@ public class SecurityConfig {
   private static final String MY_PAGE = "/api/v1/users/me/**";
   private static final String ADMIN_ALL = "/api/v1/admin/**";
 
+  // 사람이 아니라 기계가 부르는 경로 (API-설계 「2-8. 적재 (Ingest)」 · D-11).
+  //
+  // ADMIN_ALL 아래에 두지 않은 이유 — 저 줄은 hasAuthority(ADMIN) 하나로 백오피스
+  // 전체를 덮고 있고 그것이 지켜야 하는 성질이다. 적재를 그 아래 두면 정적 키를 위한
+  // 예외를 저 줄 앞에 끼워야 하는데, 경로 규칙은 순서 의존이라 나중에 순서가 바뀌면
+  // 백오피스가 열린다 — 그 문 안에 비밀 댓글 본문이 있다 (CM-17).
+  private static final String INGEST_ALL = IngestKeyFilter.PATH_PREFIX + "**";
+
   @Bean
   public SecurityFilterChain securityFilterChain(
       HttpSecurity http,
       AuthenticationService authenticationService,
+      @Value("${duckmoim.ingest.key}") String ingestKey,
       RestAuthenticationEntryPoint authenticationEntryPoint,
       RestAccessDeniedHandler accessDeniedHandler)
       throws Exception {
@@ -86,6 +98,7 @@ public class SecurityConfig {
               registry.requestMatchers(HttpMethod.DELETE, SIGNUP_WRITE).hasAuthority(SIGNUP);
 
               registry.requestMatchers(ADMIN_ALL).hasAuthority(ADMIN);
+              registry.requestMatchers(INGEST_ALL).hasAuthority(MACHINE);
               registry.anyRequest().authenticated();
             })
         .exceptionHandling(
@@ -96,6 +109,7 @@ public class SecurityConfig {
         .addFilterBefore(
             new AuthenticationFilter(authenticationService),
             UsernamePasswordAuthenticationFilter.class)
+        .addFilterBefore(new IngestKeyFilter(ingestKey), UsernamePasswordAuthenticationFilter.class)
         .build();
   }
 }

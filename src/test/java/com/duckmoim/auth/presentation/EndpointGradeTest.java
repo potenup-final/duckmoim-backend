@@ -14,6 +14,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.HttpHeaders;
@@ -43,7 +44,8 @@ class EndpointGradeTest {
     PUBLIC,
     AUTH,
     SIGNUP,
-    ADMIN
+    ADMIN,
+    MACHINE
   }
 
   /**
@@ -120,7 +122,9 @@ class EndpointGradeTest {
           new Endpoint(HttpMethod.POST, "/api/v1/admin/comments/1/blind", Grade.ADMIN),
           new Endpoint(HttpMethod.POST, "/api/v1/admin/users/9/sanctions", Grade.ADMIN),
           new Endpoint(HttpMethod.DELETE, "/api/v1/admin/users/9/sanctions/1", Grade.ADMIN),
-          new Endpoint(HttpMethod.GET, "/api/v1/admin/audit-logs", Grade.ADMIN));
+          new Endpoint(HttpMethod.GET, "/api/v1/admin/audit-logs", Grade.ADMIN),
+          // 2-8 적재
+          new Endpoint(HttpMethod.POST, "/api/v1/ingest/events/bulk", Grade.MACHINE));
 
   private static final AuthUser SIGNUP_INCOMPLETE = new AuthUser(1L, false, false);
   private static final AuthUser SIGNUP_COMPLETED = new AuthUser(2L, true, false);
@@ -129,6 +133,9 @@ class EndpointGradeTest {
   @Autowired private MockMvc mockMvc;
   @Autowired private TokenProvider tokenProvider;
   @Autowired private JdbcTemplate jdbcTemplate;
+
+  @Value("${duckmoim.ingest.key}")
+  private String ingestKey;
 
   private static Stream<Endpoint> publicEndpoints() {
     return endpointsOf(Grade.PUBLIC);
@@ -144,6 +151,16 @@ class EndpointGradeTest {
 
   private static Stream<Endpoint> adminEndpoints() {
     return endpointsOf(Grade.ADMIN);
+  }
+
+  private static Stream<Endpoint> machineEndpoints() {
+    return endpointsOf(Grade.MACHINE);
+  }
+
+  /** 적재 등급이 아닌데 인가를 요구하는 경로 전부. 즉 적재 키가 절대 통하면 안 되는 자리다. */
+  private static Stream<Endpoint> nonMachineProtectedEndpoints() {
+    return MATRIX.stream()
+        .filter(endpoint -> endpoint.grade() != Grade.MACHINE && endpoint.grade() != Grade.PUBLIC);
   }
 
   private static Stream<Endpoint> endpointsOf(Grade grade) {
@@ -211,6 +228,72 @@ class EndpointGradeTest {
   @DisplayName("ADMIN 경로는 관리자가 인가를 통과한다.")
   void adminPassesAdministrator(Endpoint endpoint) throws Exception {
     assertThat(statusOf(endpoint, ADMINISTRATOR)).isNotIn(401, 403);
+  }
+
+  /**
+   * 적재 경로의 인가 조합 (D-11).
+   *
+   * <p>다른 등급과 달리 <b>토큰이 아니라 정적 키로 판정한다.</b> 그래서 {@link #statusOf} 를 쓰지 않고 헤더를 직접 붙인다 — 크롤러에게는 카카오
+   * 회원번호가 없다.
+   *
+   * <p>넷을 모두 본다. 사람 토큰이 막히는 줄이 <b>{@code /admin} 과 인가가 실제로 갈렸는지</b>를 증명하는 자리다 — 두 등급이 섞여 있으면 관리자
+   * 토큰으로 적재가 통과한다.
+   */
+  @ParameterizedTest(name = "{0}")
+  @MethodSource("machineEndpoints")
+  @DisplayName("적재 경로는 키가 없으면 401 이다.")
+  void machineRejectsAnonymous(Endpoint endpoint) throws Exception {
+    assertThat(statusOf(endpoint, null)).isEqualTo(401);
+  }
+
+  @ParameterizedTest(name = "{0}")
+  @MethodSource("machineEndpoints")
+  @DisplayName("적재 경로는 틀린 키를 401 로 막는다.")
+  void machineRejectsWrongKey(Endpoint endpoint) throws Exception {
+    assertThat(statusOfWithKey(endpoint, "wrong-key")).isEqualTo(401);
+  }
+
+  @ParameterizedTest(name = "{0}")
+  @MethodSource("machineEndpoints")
+  @DisplayName("적재 경로는 관리자 토큰도 403 으로 막는다.")
+  void machineRejectsAdministrator(Endpoint endpoint) throws Exception {
+    assertThat(statusOf(endpoint, ADMINISTRATOR)).isEqualTo(403);
+  }
+
+  @ParameterizedTest(name = "{0}")
+  @MethodSource("machineEndpoints")
+  @DisplayName("적재 경로는 키가 맞으면 인가를 통과한다.")
+  void machinePassesWithKey(Endpoint endpoint) throws Exception {
+    assertThat(statusOfWithKey(endpoint, ingestKey)).isNotIn(401, 403);
+  }
+
+  /**
+   * 적재 키만 붙여 요청 하나를 보낸다.
+   *
+   * <p>본문을 싣지 않으므로 인가를 통과하면 400 이 난다. 이 표가 보는 것은 <b>막혔는가</b>뿐이라 그걸로 충분하다.
+   */
+  private int statusOfWithKey(Endpoint endpoint, String key) throws Exception {
+    return mockMvc
+        .perform(request(endpoint.method(), endpoint.path()).header("X-Ingest-Key", key))
+        .andReturn()
+        .getResponse()
+        .getStatus();
+  }
+
+  /**
+   * 적재 키가 적재 경로 밖에서는 아무 힘이 없는지 본다.
+   *
+   * <p>위 넷은 적재 경로 <b>위에서만</b> 보므로, 키를 검사하는 필터가 경로를 가리지 않아도 전부 초록불이 난다. 실측했다 — 키만 붙인 {@code GET
+   * /users/nickname-availability} 가 200 이었다. 필터가 {@code MACHINE} 을 붙이고 {@code
+   * anyRequest().authenticated()} 가 그것을 사람으로 받아들여서다.
+   *
+   * <p>키가 노출되면 적재 하나가 아니라 API 전체가 열리는 문제라, 등급 표와 별도로 못박는다.
+   */
+  @ParameterizedTest(name = "{0}")
+  @MethodSource("nonMachineProtectedEndpoints")
+  @DisplayName("적재 키는 적재 경로 밖에서는 401 이다.")
+  void ingestKeyDoesNotPassOtherGrades(Endpoint endpoint) throws Exception {
+    assertThat(statusOfWithKey(endpoint, ingestKey)).isEqualTo(401);
   }
 
   /**

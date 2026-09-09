@@ -2,6 +2,8 @@ package com.duckmoim.catalog;
 
 import com.duckmoim.catalog.domain.EventKind;
 import com.duckmoim.catalog.domain.PlaceKind;
+import java.sql.Timestamp;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -21,10 +23,10 @@ public final class EventFixture {
       INSERT INTO event (external_id, source, kind, subject_type, trust, subject, title,
                          starts_on, ends_on, starts_at, source_url, image_url,
                          place_name, place_address, place_lat, place_lng, place_kind, region_id,
-                         created_at, updated_at)
+                         last_crawled_at, created_at, updated_at)
       VALUES (?, 'POPGA', ?, 'IDOL', 'PARSED', ?, ?, ?, ?, ?, 'https://example.test/1', ?,
               '테스트 장소', '서울 성동구 1', 37.5, 127.0, ?, ?,
-              UTC_TIMESTAMP(6), UTC_TIMESTAMP(6))
+              ?, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6))
       """;
 
   private String externalId;
@@ -37,6 +39,14 @@ public final class EventFixture {
   private String imageUrl;
   private PlaceKind placeKind = PlaceKind.POPUP_VENUE;
   private long regionId;
+
+  /**
+   * 크롤러가 마지막으로 본 시각 (D-7).
+   *
+   * <p>기본값이 「방금」이다. 이 값을 지정하지 않은 테스트는 숨김 조건을 신경 쓰지 않는 테스트이고, 그런 테스트가 유령 판정에 걸려 조용히 0건을 보게 되면 원인이
+   * 엉뚱한 곳에서 찾인다.
+   */
+  private Instant lastCrawledAt = Instant.now();
 
   private EventFixture() {}
 
@@ -96,6 +106,12 @@ public final class EventFixture {
     return this;
   }
 
+  /** 오래 안 잡혀 목록에서 빠지는 행사를 만들 때 쓴다 (D-7). */
+  public EventFixture lastCrawledAt(Instant lastCrawledAt) {
+    this.lastCrawledAt = lastCrawledAt;
+    return this;
+  }
+
   /** 넣은 행의 id 를 준다. 커서 경계 검증이 id 순서를 알아야 해서 돌려준다. */
   public long insert(JdbcTemplate jdbc) {
     jdbc.update(
@@ -109,7 +125,8 @@ public final class EventFixture {
         startsAt,
         imageUrl,
         placeKind.name(),
-        regionId);
+        regionId,
+        Timestamp.from(lastCrawledAt));
 
     return jdbc.queryForObject(
         "SELECT id FROM event WHERE external_id = ?", Long.class, externalId);
