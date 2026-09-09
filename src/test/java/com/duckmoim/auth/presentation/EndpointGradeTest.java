@@ -155,6 +155,12 @@ class EndpointGradeTest {
     return endpointsOf(Grade.MACHINE);
   }
 
+  /** 적재 등급이 아닌데 인가를 요구하는 경로 전부. 즉 적재 키가 절대 통하면 안 되는 자리다. */
+  private static Stream<Endpoint> nonMachineProtectedEndpoints() {
+    return MATRIX.stream()
+        .filter(endpoint -> endpoint.grade() != Grade.MACHINE && endpoint.grade() != Grade.PUBLIC);
+  }
+
   private static Stream<Endpoint> endpointsOf(Grade grade) {
     return MATRIX.stream().filter(endpoint -> endpoint.grade() == grade);
   }
@@ -270,6 +276,22 @@ class EndpointGradeTest {
         .andReturn()
         .getResponse()
         .getStatus();
+  }
+
+  /**
+   * 적재 키가 적재 경로 밖에서는 아무 힘이 없는지 본다.
+   *
+   * <p>위 넷은 적재 경로 <b>위에서만</b> 보므로, 키를 검사하는 필터가 경로를 가리지 않아도 전부 초록불이 난다. 실측했다 — 키만 붙인 {@code GET
+   * /users/nickname-availability} 가 200 이었다. 필터가 {@code MACHINE} 을 붙이고 {@code
+   * anyRequest().authenticated()} 가 그것을 사람으로 받아들여서다.
+   *
+   * <p>키가 노출되면 적재 하나가 아니라 API 전체가 열리는 문제라, 등급 표와 별도로 못박는다.
+   */
+  @ParameterizedTest(name = "{0}")
+  @MethodSource("nonMachineProtectedEndpoints")
+  @DisplayName("적재 키는 적재 경로 밖에서는 401 이다.")
+  void ingestKeyDoesNotPassOtherGrades(Endpoint endpoint) throws Exception {
+    assertThat(statusOfWithKey(endpoint, ingestKey)).isEqualTo(401);
   }
 
   /**

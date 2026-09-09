@@ -62,7 +62,7 @@ public class SecurityConfig {
   // 전체를 덮고 있고 그것이 지켜야 하는 성질이다. 적재를 그 아래 두면 정적 키를 위한
   // 예외를 저 줄 앞에 끼워야 하는데, 경로 규칙은 순서 의존이라 나중에 순서가 바뀌면
   // 백오피스가 열린다 — 그 문 안에 비밀 댓글 본문이 있다 (CM-17).
-  private static final String INGEST_ALL = "/api/v1/ingest/**";
+  private static final String INGEST_ALL = IngestKeyFilter.PATH_PREFIX + "**";
 
   @Bean
   public SecurityFilterChain securityFilterChain(
