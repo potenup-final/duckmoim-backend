@@ -271,6 +271,84 @@ class CompanionPostTest {
         .isEqualTo(PostErrorCode.POST_ALREADY_CLOSED);
   }
 
+  @DisplayName("만남시각이 지난 모집글을 닫으면 사유가 만남시각 경과로 남는다.")
+  @Test
+  void closeForMeetTimePassed() {
+    CompanionPost post = open(kst("2026-09-14T09:00:00+09:00"), null);
+
+    boolean closed = post.closeForMeetTimePassed(utc("2026-09-14T00:00:01"));
+
+    assertThat(closed).isTrue();
+    assertThat(post.getStatus()).isEqualTo(PostStatus.CLOSED);
+    assertThat(post.getClosedReason()).isEqualTo(ClosedReason.MEET_TIME_PASSED);
+  }
+
+  @DisplayName("만남시각이 남은 모집글은 닫지 않는다.")
+  @Test
+  void closeForMeetTimePassed_meetAtHasNotPassed() {
+    CompanionPost post = open(kst("2026-09-14T09:00:00+09:00"), null);
+
+    boolean closed = post.closeForMeetTimePassed(utc("2026-09-13T23:59:59"));
+
+    assertThat(closed).isFalse();
+    assertThat(post.getStatus()).isEqualTo(PostStatus.OPEN);
+    assertThat(post.getClosedReason()).isNull();
+  }
+
+  /**
+   * 만남시각이 UTC 로 저장된다는 사실이 이 판정에 직접 걸린다.
+   *
+   * <p>KST 9월 14일 오전 9시에 만나는 글은 UTC 로 같은 날 0시다. 배치가 KST 벽시계(9시 5분)를 넣으면 <b>만나기 네 시간 전에 닫힌다</b> — 그
+   * 시각의 UTC 는 0시 5분이라 조건이 성립해 버린다. 매 실행마다 아홉 시간 안쪽의 글이 조용히 사라진다.
+   */
+  @DisplayName("만남시각 판정은 UTC 로 한다 — KST 벽시계로는 만나기 전에 닫힌다.")
+  @Test
+  void closeForMeetTimePassed_comparesInUtc() {
+    CompanionPost post = open(kst("2026-09-14T09:00:00+09:00"), null);
+
+    assertThat(post.closeForMeetTimePassed(utc("2026-09-13T23:00:00")))
+        .as("KST 로 8시다 — 만나기 한 시간 전이라 닫히지 않아야 한다")
+        .isFalse();
+    assertThat(post.closeForMeetTimePassed(utc("2026-09-14T08:00:00")))
+        .as("같은 순간의 KST 벽시계를 넣으면 만나기 전에 닫힌다 — 배치가 UTC 를 넣어야 하는 이유다")
+        .isTrue();
+  }
+
+  /**
+   * 배치는 재실행된다 (PO-14 「멱등」).
+   *
+   * <p>{@code closeByHost} 가 같은 상황에서 409 를 내는 것과 갈리는 자리다. 예외를 던지면 밀린 글을 청크로 나눠 닫는 도중 한 건이 다른 실행과
+   * 겹치는 순간 배치 전체가 멈춘다.
+   */
+  @DisplayName("이미 마감된 모집글을 닫으려 해도 예외를 던지지 않는다.")
+  @Test
+  void closeForMeetTimePassed_isIdempotent() {
+    CompanionPost post = open(kst("2026-09-14T09:00:00+09:00"), null);
+    post.closeForMeetTimePassed(utc("2026-09-14T00:00:01"));
+
+    boolean closed = post.closeForMeetTimePassed(utc("2026-09-14T00:00:02"));
+
+    assertThat(closed).isFalse();
+    assertThat(post.getClosedReason()).isEqualTo(ClosedReason.MEET_TIME_PASSED);
+  }
+
+  /**
+   * 방장이 만남시각 전에 닫은 글도 시간이 지나면 이 메서드의 조건에 걸린다.
+   *
+   * <p>사유를 덮으면 화면 배지가 「모집 완료」에서 「종료」로 바뀌어 <b>방장이 모집을 끝냈다는 사실이 지워진다.</b>
+   */
+  @DisplayName("방장이 마감한 모집글의 사유는 만남시각이 지나도 직접 마감으로 남는다.")
+  @Test
+  void closeForMeetTimePassed_keepsManualReason() {
+    CompanionPost post = open(kst("2026-09-14T09:00:00+09:00"), null);
+    post.closeByHost(HOST_ID);
+
+    boolean closed = post.closeForMeetTimePassed(utc("2026-09-14T00:00:01"));
+
+    assertThat(closed).isFalse();
+    assertThat(post.getClosedReason()).isEqualTo(ClosedReason.MANUAL);
+  }
+
   private static CompanionPost open(OffsetDateTime meetAt, ChosenEvent event) {
     return CompanionPost.open(
         HOST_ID, "에이티즈 팝업 오픈런 같이 하실 분", "혼자 가려니...", event, meetAt, MEET_POINT, null);
@@ -288,5 +366,10 @@ class CompanionPostTest {
 
   private static OffsetDateTime kst(String text) {
     return OffsetDateTime.parse(text);
+  }
+
+  /** 배치가 넣는 현재 시각. 오프셋이 없는 것은 {@code meetAt} 이 UTC 로 저장돼 비교 대상이 벽시계이기 때문이다 (PO-14). */
+  private static LocalDateTime utc(String text) {
+    return LocalDateTime.parse(text);
   }
 }

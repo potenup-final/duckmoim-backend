@@ -19,6 +19,7 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -29,7 +30,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-@Tag(name = "회원", description = "가입 정보 입력 · 내 정보 · 프로필 수정 · 공개 프로필 · 이미지 업로드")
+@Tag(name = "회원", description = "가입 정보 입력 · 내 정보 · 프로필 수정 · 공개 프로필 · 이미지 업로드 · 탈퇴")
 @RestController
 @RequestMapping("/api/v1/users")
 @RequiredArgsConstructor
@@ -173,5 +174,24 @@ public class UserController {
       @Valid @RequestBody ProfileImageConfirmRequest request) {
 
     profileImageService.confirm(authUser.userId(), request.objectKey());
+  }
+
+  /**
+   * 계정을 탈퇴 처리한다 (AU-11).
+   *
+   * <p><b>되돌릴 수 없다.</b> 같은 카카오 계정으로 다시 로그인해도 404 다 — 소프트 삭제라 행이 남고 {@code kakao_user_id} 가 UNIQUE 라
+   * 새 계정을 만들 수도 없다. 「탈퇴 후 재가입」은 요구사항이 없어 열지 않았다.
+   *
+   * <p><b>조립을 여기서 하지 않는다.</b> 탈퇴와 토큰 정리를 컨트롤러가 차례로 부르면 <b>트랜잭션이 갈라져</b> 뒤가 실패했을 때 「탈퇴는 됐는데 토큰이 남은」
+   * 상태로 굳는다. {@code UserService.withdraw} 안에서 한 트랜잭션으로 묶었다 — 근거는 그 javadoc 에 있다 (PR #84 리뷰).
+   *
+   * <p>등급이 {@code SIGNUP} 이다 (API 설계 2-2). <b>가입 미완료 계정은 이 경로로 탈퇴할 수 없다</b> — 관문이 403 으로 끊는다.
+   *
+   * <p>성공은 본문 없는 200 이다 (컨벤션의 상태 코드 표에 204 가 없다). 로그아웃과 같은 모양이다.
+   */
+  @Operation(summary = "회원 탈퇴", description = "되돌릴 수 없다. 닉네임과 프로필 이미지가 비워지고 쓴 글과 댓글은 남는다.")
+  @DeleteMapping("/me")
+  public void withdraw(@AuthenticationPrincipal AuthUser authUser) {
+    userService.withdraw(authUser.userId());
   }
 }
