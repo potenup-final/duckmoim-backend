@@ -139,6 +139,20 @@ public class User extends BaseEntity {
   }
 
   /**
+   * 프로필 이미지 주소를 박는다 (AU-08 · I 티켓).
+   *
+   * <p><b>{@link #updateProfile} 이 이 값을 받지 않는 이유와 짝이다.</b> 그쪽은 클라이언트가 준 문자열을 그대로 저장할 수 없다 — 임의 URL
+   * 을 박을 수 있고, 그 순간 결정 D-2(서버가 기본 이미지 URL 을 만들지 않는다)가 의미를 잃는다. 여기 오는 값은 <b>서버가 만든 객체 키로 조립한
+   * 주소</b>다.
+   *
+   * <p><b>업로드가 확인된 뒤에만 불린다.</b> 발급 시점에 박으면 사용자가 취소했을 때 없는 객체를 가리키는 주소가 남고, 그것은 {@code null} 도 아니고
+   * 유효한 값도 아니다 — 아바타가 깨진 채로 굳는다.
+   */
+  public void updateProfileImage(String profileImageUrl) {
+    this.profileImageUrl = profileImageUrl;
+  }
+
+  /**
    * 계정을 탈퇴 처리한다 (AU-11).
    *
    * <p>가입 축의 마지막 전이다 — {@code ACTIVE ──탈퇴──▶ WITHDRAWN} (도메인 6장). 되돌리는 전이가 없다.
