@@ -289,6 +289,88 @@ class UserServiceTest {
     cleanUp(second);
   }
 
+  @Test
+  @DisplayName("탈퇴하면 상태가 바뀌고 닉네임이 비워진다.")
+  void withdraw() {
+    long userId = aUser().nickname("떠날덕후").profile("소개", "/avatar/a.webp").insert(jdbcTemplate);
+
+    userService.withdraw(userId);
+
+    User saved = userRepository.findById(userId).orElseThrow();
+    assertThat(saved.isWithdrawn()).isTrue();
+    assertThat(saved.getNickname()).isNull();
+    assertThat(saved.getProfileImageUrl()).isNull();
+    assertThat(saved.getWithdrawnAt()).isNotNull();
+    cleanUp(userId);
+  }
+
+  /**
+   * <b>익명 닉네임을 고정 문자열로 뒀다면 여기서 깨진다.</b> {@code uk_user_nickname} 이 UNIQUE 라 두 번째 탈퇴자가 제약 위반을 낸다 —
+   * 비우는 쪽을 고른 이유가 이 테스트다.
+   */
+  @Test
+  @DisplayName("두 명이 탈퇴해도 닉네임 유니크 제약에 걸리지 않는다.")
+  void withdraw_twoUsers() {
+    long first = aUser().nickname("먼저떠난덕후").insert(jdbcTemplate);
+    long second = aUser().nickname("나중에떠난덕후").insert(jdbcTemplate);
+
+    userService.withdraw(first);
+    userService.withdraw(second);
+
+    assertThat(userRepository.findById(first).orElseThrow().getNickname()).isNull();
+    assertThat(userRepository.findById(second).orElseThrow().getNickname()).isNull();
+    cleanUp(first);
+    cleanUp(second);
+  }
+
+  /** 비우면 유니크 제약이 그 값을 세지 않는다 — 탈퇴한 사람이 이름을 영구히 점유하지 않는다. */
+  @Test
+  @DisplayName("탈퇴한 회원이 쓰던 닉네임을 남이 다시 쓸 수 있다.")
+  void withdraw_releasesNickname() {
+    long leaving = aUser().nickname("물려줄덕후").insert(jdbcTemplate);
+    long joining = pendingUser();
+
+    userService.withdraw(leaving);
+    userService.completeSignup(new SignupCommand(joining, "물려줄덕후", 2000));
+
+    assertThat(userRepository.findById(joining).orElseThrow().getNickname()).isEqualTo("물려줄덕후");
+    cleanUp(joining);
+    cleanUp(leaving);
+  }
+
+  @Test
+  @DisplayName("이미 탈퇴한 계정으로 탈퇴하면 회원을 찾을 수 없다.")
+  void withdraw_alreadyWithdrawn() {
+    long userId = aUser().status(SignupStatus.WITHDRAWN).insert(jdbcTemplate);
+
+    assertThatThrownBy(() -> userService.withdraw(userId))
+        .isInstanceOf(BusinessException.class)
+        .hasFieldOrPropertyWithValue("errorCode", UserErrorCode.USER_NOT_FOUND);
+    cleanUp(userId);
+  }
+
+  @Test
+  @DisplayName("없는 회원번호로 탈퇴하면 회원을 찾을 수 없다.")
+  void withdraw_notFound() {
+    assertThatThrownBy(() -> userService.withdraw(9_999_999L))
+        .isInstanceOf(BusinessException.class)
+        .hasFieldOrPropertyWithValue("errorCode", UserErrorCode.USER_NOT_FOUND);
+  }
+
+  /** 탈퇴한 계정은 프로필을 고칠 수도, 가입 정보를 낼 수도 없다 — C·F 가 이미 건 필터가 그대로 작동한다. */
+  @Test
+  @DisplayName("탈퇴한 뒤에는 프로필을 수정할 수 없다.")
+  void withdraw_thenUpdateProfile() {
+    long userId = aUser().nickname("떠난뒤덕후").insert(jdbcTemplate);
+    userService.withdraw(userId);
+
+    assertThatThrownBy(
+            () -> userService.updateProfile(new ProfileUpdateCommand(userId, "다시덕후", null)))
+        .isInstanceOf(BusinessException.class)
+        .hasFieldOrPropertyWithValue("errorCode", UserErrorCode.USER_NOT_FOUND);
+    cleanUp(userId);
+  }
+
   private long pendingUser() {
     return aUser().status(SignupStatus.PENDING_SIGNUP_INFO).insert(jdbcTemplate);
   }
