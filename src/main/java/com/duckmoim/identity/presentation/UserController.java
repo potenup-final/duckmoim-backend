@@ -1,0 +1,197 @@
+package com.duckmoim.identity.presentation;
+
+import com.duckmoim.auth.domain.AuthUser;
+import com.duckmoim.identity.presentation.dto.MyProfileResponse;
+import com.duckmoim.identity.presentation.dto.NicknameAvailabilityResponse;
+import com.duckmoim.identity.presentation.dto.ProfileImageConfirmRequest;
+import com.duckmoim.identity.presentation.dto.ProfileImageUploadRequest;
+import com.duckmoim.identity.presentation.dto.ProfileImageUploadResponse;
+import com.duckmoim.identity.presentation.dto.ProfileUpdateRequest;
+import com.duckmoim.identity.presentation.dto.PublicProfileResponse;
+import com.duckmoim.identity.presentation.dto.SignupInfoRequest;
+import com.duckmoim.identity.service.ProfileImageService;
+import com.duckmoim.identity.service.UserQueryService;
+import com.duckmoim.identity.service.UserService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
+import lombok.RequiredArgsConstructor;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+@Tag(name = "회원", description = "가입 정보 입력 · 내 정보 · 프로필 수정 · 공개 프로필 · 이미지 업로드 · 탈퇴")
+@RestController
+@RequestMapping("/api/v1/users")
+@RequiredArgsConstructor
+public class UserController {
+
+  private final UserService userService;
+  private final UserQueryService userQueryService;
+  private final ProfileImageService profileImageService;
+
+  /**
+   * 닉네임을 쓸 수 있는지 미리 본다 (AU-06).
+   *
+   * <p><b>확정이 아니다.</b> 이 답과 저장 사이에 남이 같은 닉네임을 넣을 수 있어서, 「완료」에서 409 가 날 수 있다 (API 설계 2-2). 흔한 중복을 입력
+   * 중에 걸러 주는 것이 이 경로의 값이다.
+   *
+   * <p>등급이 {@code AUTH} 다 — <b>가입 미완료 사용자가 부르는 경로</b>라 {@code SIGNUP} 으로 닫으면 가입을 마칠 방법이 없어진다.
+   */
+  @Operation(summary = "닉네임 중복 확인", description = "확정이 아니다. 저장 시점에 중복이면 409 가 난다.")
+  @GetMapping("/nickname-availability")
+  public NicknameAvailabilityResponse checkNicknameAvailability(
+      @RequestParam @NotBlank @Size(max = 20) String nickname) {
+
+    return NicknameAvailabilityResponse.of(userQueryService.isNicknameAvailable(nickname));
+  }
+
+  /**
+   * 가입 정보를 입력해 계정을 활성화한다 (AU-05).
+   *
+   * <p><b>한 번만 통한다.</b> 이미 입력한 사용자가 다시 부르면 409 다 — 출생연도가 가입 후 잠기기 때문이다 (API 설계 2-2). 닉네임만 바꾸는 것은
+   * AU-08 의 {@code PATCH /users/me/profile} 몫이다.
+   *
+   * <p><b>회원번호를 본문으로 받지 않는다.</b> {@code @AuthenticationPrincipal} 에서 꺼낸다 — 남의 가입 정보를 채우는 경로를 만들지 않는
+   * 유일한 장치다.
+   *
+   * <p><b>본문 없이 200 이다</b> (API-컨벤션.md 「Status Code 규칙」에 204 가 없다). 저장된 값은 {@code GET /users/me} 로
+   * 읽는다.
+   *
+   * <p><b>이 호출 뒤에 토큰을 재발급해야 한다.</b> 손에 든 Access 토큰은 아직 {@code signupCompleted: false} 를 들고 있어서 쓰기가
+   * 403 이다. {@code POST /api/v1/auth/token} 이 DB 를 다시 읽어 갱신된 값을 찍는다 (AU-03).
+   */
+  @Operation(summary = "가입 정보 입력", description = "닉네임과 출생연도. 한 번만 통한다. 이 뒤에 토큰을 재발급해야 쓰기가 열린다.")
+  @PutMapping("/me/signup-info")
+  public void completeSignup(
+      @AuthenticationPrincipal AuthUser authUser, @Valid @RequestBody SignupInfoRequest request) {
+
+    userService.completeSignup(request.toCommand(authUser.userId()));
+  }
+
+  /**
+   * 내 정보를 읽는다.
+   *
+   * <p>가입 미완료 계정도 부를 수 있다 — 등급이 {@code AUTH} 다. 그때 닉네임은 {@code null} 이고 {@code signupCompleted} 가
+   * {@code false} 다.
+   */
+  @Operation(summary = "내 정보 조회", description = "프로필 · 가입 완료 여부 · 최근 접속 구간 · 제재 상태")
+  @GetMapping("/me")
+  public MyProfileResponse findMyProfile(@AuthenticationPrincipal AuthUser authUser) {
+    return MyProfileResponse.from(userQueryService.findMyProfile(authUser.userId()));
+  }
+
+  /**
+   * 닉네임과 한줄소개를 고친다 (AU-08).
+   *
+   * <p><b>부분 수정이다.</b> 안 보낸 필드는 바뀌지 않고, 한줄소개는 빈 문자열로 비운다. 닉네임은 비울 수 없다 — 규칙과 근거는 {@link
+   * ProfileUpdateRequest} 에 있다.
+   *
+   * <p><b>출생연도를 받지 않는다.</b> 가입 후 잠긴다 (API 설계 2-2). 요청 DTO 에 필드가 없어서 보내도 무시된다.
+   *
+   * <p>등급이 {@code SIGNUP} 이다 — 가입 미완료 계정의 수정 경로는 {@code PUT /me/signup-info} 하나다 (AU-07).
+   *
+   * <p><b>본문 없이 200 이다</b> (API 컨벤션 「Status Code 규칙」에 204 가 없다). 바뀐 값은 {@code GET /users/me} 나 공개
+   * 프로필로 읽는다.
+   */
+  @Operation(summary = "프로필 수정", description = "닉네임과 한줄소개. 안 보낸 필드는 바뀌지 않는다. 출생연도는 받지 않는다.")
+  @PatchMapping("/me/profile")
+  public void updateProfile(
+      @AuthenticationPrincipal AuthUser authUser,
+      @Valid @RequestBody ProfileUpdateRequest request) {
+
+    userService.updateProfile(request.toCommand(authUser.userId()));
+  }
+
+  /**
+   * 남의 프로필을 읽는다 (AU-09).
+   *
+   * <p><b>등급이 {@code PUBLIC} 이다.</b> 비회원이 부른다 — 만나기 전에 상대를 확인하는 화면이라 로그인을 요구하면 그 확인이 막힌다.
+   *
+   * <p><b>이 매핑이 {@code /me} 계열보다 넓다.</b> {@code /users/me} 와 {@code /users/nickname-availability} 도
+   * 이 패턴에 걸리는 모양인데, 스프링이 <b>리터럴 경로를 변수 경로보다 먼저</b> 고르므로 그쪽으로 간다. 등급이 다르므로 ({@code AUTH} vs {@code
+   * PUBLIC}) 그 우선순위가 뒤집히면 남의 정보가 열리는 것이 아니라 <b>내 정보 조회가 숫자 변환에서 터진다.</b> 조용히 뒤집히지 않게 테스트로 못박아 두었다.
+   *
+   * <p>모집글은 담지 않는다 — API 설계가 <i>"건수가 늘면 프로필 조회가 같이 무거워진다"</i> 로 갈라 놨다. {@code
+   * /users/&#123;userId&#125;/posts} 는 G 티켓이다.
+   */
+  @Operation(
+      summary = "공개 프로필 조회",
+      description = "닉네임 · 프로필 이미지 · 한줄소개 · 최근 접속 구간. 탈퇴하거나 가입을 마치지 않은 회원은 404 다.")
+  @GetMapping("/{userId}")
+  public PublicProfileResponse findPublicProfile(@PathVariable Long userId) {
+    return PublicProfileResponse.from(userQueryService.findPublicProfile(userId));
+  }
+
+  /**
+   * 프로필 이미지를 올릴 서명된 주소를 받는다 (AU-08).
+   *
+   * <p><b>파일을 여기로 보내지 않는다.</b> 형식과 크기를 <b>선언</b>하면 서버가 S3 로 올릴 수 있는 서명된 주소를 준다. 브라우저는 그 주소로 직접 올리므로
+   * 파일이 우리 서버를 지나지 않는다.
+   *
+   * <p><b>여기가 「용량·MIME 위반 400」이 나는 자리다.</b> 정책을 벗어난 선언에는 서명을 만들지 않는다 — 올리기 전에 막는 것이 올린 뒤 버리는 것보다
+   * 낫다.
+   *
+   * <p>업로드가 끝나면 {@code PUT} 으로 확정해야 프로필에 박힌다. 확정 전에는 {@code profileImageUrl} 이 그대로다.
+   */
+  @Operation(
+      summary = "프로필 이미지 업로드 주소 발급",
+      description = "형식과 크기를 선언하면 S3 로 직접 올릴 서명된 주소를 준다. 올린 뒤 PUT 으로 확정해야 반영된다.")
+  @PostMapping("/me/profile-image")
+  public ProfileImageUploadResponse issueProfileImageUpload(
+      @AuthenticationPrincipal AuthUser authUser,
+      @Valid @RequestBody ProfileImageUploadRequest request) {
+
+    return ProfileImageUploadResponse.from(
+        profileImageService.issueUpload(request.toCommand(authUser.userId())));
+  }
+
+  /**
+   * 올린 이미지를 프로필에 반영한다 (AU-08).
+   *
+   * <p><b>이 경로가 API 설계 2-2 에 없다.</b> 그 표는 멀티파트 업로드 하나를 전제로 `POST` 한 줄만 적어 두었는데, Presigned 는 서버가 파일을
+   * 받지 않아 <b>올라간 것을 확인하는 단계</b>가 따로 필요하다. 위키를 고쳐야 한다 — PR 에 적었다.
+   *
+   * <p><b>미리 박지 않는 이유</b> — 발급 시점에 최종 주소를 이미 알지만 그때 박으면 사용자가 취소했을 때 없는 객체를 가리키는 주소가 남는다. 그것은 {@code
+   * null} 도 아니고 유효한 값도 아니라 아바타가 깨진 채로 굳고, 삭제 엔드포인트가 계약에 없어 되돌릴 수도 없다.
+   *
+   * <p>성공은 본문 없는 200 이다. 바뀐 값은 {@code GET /users/me} 나 공개 프로필로 읽는다.
+   */
+  @Operation(summary = "프로필 이미지 확정", description = "올라간 객체를 확인하고 프로필에 반영한다. 올라간 것이 없으면 400 이다.")
+  @PutMapping("/me/profile-image")
+  public void confirmProfileImage(
+      @AuthenticationPrincipal AuthUser authUser,
+      @Valid @RequestBody ProfileImageConfirmRequest request) {
+
+    profileImageService.confirm(authUser.userId(), request.objectKey());
+  }
+
+  /**
+   * 계정을 탈퇴 처리한다 (AU-11).
+   *
+   * <p><b>되돌릴 수 없다.</b> 같은 카카오 계정으로 다시 로그인해도 404 다 — 소프트 삭제라 행이 남고 {@code kakao_user_id} 가 UNIQUE 라
+   * 새 계정을 만들 수도 없다. 「탈퇴 후 재가입」은 요구사항이 없어 열지 않았다.
+   *
+   * <p><b>조립을 여기서 하지 않는다.</b> 탈퇴와 토큰 정리를 컨트롤러가 차례로 부르면 <b>트랜잭션이 갈라져</b> 뒤가 실패했을 때 「탈퇴는 됐는데 토큰이 남은」
+   * 상태로 굳는다. {@code UserService.withdraw} 안에서 한 트랜잭션으로 묶었다 — 근거는 그 javadoc 에 있다 (PR #84 리뷰).
+   *
+   * <p>등급이 {@code SIGNUP} 이다 (API 설계 2-2). <b>가입 미완료 계정은 이 경로로 탈퇴할 수 없다</b> — 관문이 403 으로 끊는다.
+   *
+   * <p>성공은 본문 없는 200 이다 (컨벤션의 상태 코드 표에 204 가 없다). 로그아웃과 같은 모양이다.
+   */
+  @Operation(summary = "회원 탈퇴", description = "되돌릴 수 없다. 닉네임과 프로필 이미지가 비워지고 쓴 글과 댓글은 남는다.")
+  @DeleteMapping("/me")
+  public void withdraw(@AuthenticationPrincipal AuthUser authUser) {
+    userService.withdraw(authUser.userId());
+  }
+}

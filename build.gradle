@@ -1,7 +1,9 @@
 plugins {
 	id 'java'
+	id 'checkstyle'
 	id 'org.springframework.boot' version '3.5.16'
 	id 'io.spring.dependency-management' version '1.1.7'
+	id 'com.diffplug.spotless' version '7.0.2'
 }
 
 group = 'com.duckmoim'
@@ -22,12 +24,151 @@ dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-validation'
 	implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.13'
 
+	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+	runtimeOnly 'com.mysql:mysql-connector-j'
+	implementation 'org.flywaydb:flyway-core'
+	implementation 'org.flywaydb:flyway-mysql'
+
+	// 토큰은 전부 헤더로 오간다 (ADR 0001). 쿠키도 서블릿 세션도 쓰지 않으므로
+	// SecurityConfig 가 세션 생성 경로를 전부 닫는다.
+	implementation 'org.springframework.boot:spring-boot-starter-security'
+
+	// 프로필 이미지는 브라우저가 S3 로 직접 올린다 (AU-08). 서버는 서명만 하므로
+	// 파일이 힙을 지나지 않고, 그래서 멀티파트 설정도 필요하지 않다.
+	//
+	// BOM 으로 버전을 한 곳에서 맞춘다 — s3 와 s3-presigner 가 어긋나면 서명 방식이
+	// 갈려서 컴파일은 되고 런타임에 403 이 난다.
+	implementation platform('software.amazon.awssdk:bom:2.29.52')
+	implementation 'software.amazon.awssdk:s3'
+
+	// jjwt 는 API 와 구현이 분리돼 있다. 컴파일은 api 에만 붙이고 impl·jackson 은
+	// 런타임에만 있으면 된다 — 구현체를 직접 import 하지 못하게 막는 배치다.
+	implementation 'io.jsonwebtoken:jjwt-api:0.12.6'
+	runtimeOnly 'io.jsonwebtoken:jjwt-impl:0.12.6'
+	runtimeOnly 'io.jsonwebtoken:jjwt-jackson:0.12.6'
+
+	compileOnly 'org.projectlombok:lombok'
+	annotationProcessor 'org.projectlombok:lombok'
+
 	testImplementation 'org.springframework.boot:spring-boot-starter-test'
+	testImplementation 'org.springframework.security:spring-security-test'
+	testCompileOnly 'org.projectlombok:lombok'
+	testAnnotationProcessor 'org.projectlombok:lombok'
+	testImplementation 'com.tngtech.archunit:archunit-junit5:1.4.0'
 	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+
+	testImplementation 'org.testcontainers:mysql'
+	testImplementation 'org.testcontainers:junit-jupiter'
 }
 
 tasks.named('test') {
 	useJUnitPlatform()
+
+	systemProperty 'spring.datasource.url', 'jdbc:tc:mysql:8.4:///duckmoim'
+	systemProperty 'spring.datasource.driver-class-name', 'org.testcontainers.jdbc.ContainerDatabaseDriver'
+
+	// 마감 배치를 테스트에서 돌지 않게 한다 (PO-14).
+	//
+	// @EnableScheduling 이 무조건 켜져 있어서 @SpringBootTest 에도 스케줄러가 뜨고, cron
+	// 기본값이 5분 주기라 테스트가 도는 중에 발화한다. 그러면 배치가 남의 테스트 데이터를
+	// CLOSED 로 닫고, 그 테스트는 자기가 만들지 않은 이유로 깨진다. 스레드가 달라 테스트의
+	// 트랜잭션에 참여하지 않으므로 롤백으로도 막히지 않는다.
+	//
+	// src/test/resources/application.yml 로 cron 만 덮어쓰는 방법은 쓸 수 없다. 같은 이름의
+	// 리소스는 병합이 아니라 앞선 클래스패스가 이겨서 main 의 application.yml 이 통째로
+	// 가려진다 — 실측하면 jwt.secret 부터 없다고 컨텍스트가 죽는다
+	// ("Could not resolve placeholder 'duckmoim.jwt.secret'"). 그래서 위 datasource 와 같은
+	// 방식으로 이 값 하나만 덮는다.
+	systemProperty 'duckmoim.batch.post-close.cron', '0 0 0 1 1 *'
+
+	// 위반 픽스처는 아키텍처 규칙을 일부러 어기는 클래스라 테스트로 실행하지 않는다.
+	// 이름을 *Test 로 안 지으면 안 잡힐 거라 봤지만, Gradle 은 클래스 파일을 훑어
+	// 플랫폼에 넘기므로 이름 규칙이 걸리지 않는다. 컴파일은 그대로여서 ArchUnit 은
+	// 계속 읽는다.
+	exclude '**/architecture/fixture/**'
+	// 산출물 생성이라 요구사항 검증 목록에서 뺀다. 아래 apiSpec 태스크가 따로 돌린다.
+	exclude '**/OpenApiSpecWriter.class'
+
+	// SubmodulePinTest 가 .gitmodules 를 읽는다. Gradle 은 소스와 클래스패스만 입력으로
+	// 보므로, 이 선언이 없으면 .gitmodules 만 고쳤을 때 test 가 UP-TO-DATE 로 건너뛴다.
+	// 그러면 `ignore = all` 한 줄을 지우고 check 를 돌려도 초록불이 나온다 — 실측했다.
+	// 지키라고 만든 검사가 정작 그 줄이 사라진 순간에만 안 도는 셈이라 입력으로 건다.
+	//
+	// file 이 아니라 files 다. inputs.file(...).optional(true) 는 "값이 비어도 된다" 는
+	// 뜻이지 "파일이 없어도 된다" 가 아니라서, .gitmodules 가 없으면 태스크 설정 단계에서
+	// `Input file does not exist` 로 빌드가 통째로 깨진다 — 실측했다. 서브모듈을 선언하지
+	// 않은 트리(하네스 머지 전에 갈라진 브랜치)가 실재하므로 그 트리를 깨면 안 된다.
+	// 파일 컬렉션은 없는 파일을 그냥 빈 것으로 보고, 그때는 검사도 스스로 건너뛴다.
+	inputs.files('.gitmodules')
+			.withPathSensitivity(PathSensitivity.RELATIVE)
+			.withPropertyName('gitmodules')
+}
+
+// API 문서용 스펙 추출. 컨텍스트가 떠야 스펙이 나오고, 그 컨텍스트를 띄우는 수단이
+// 테스트 쪽에만 있어서(Testcontainers) 같은 클래스패스를 빌려 쓴다. test 와 갈라 둔
+// 이유는 이게 검증이 아니라 파일 하나를 만드는 일이기 때문이다.
+tasks.register('apiSpec', Test) {
+	description = 'OpenAPI 스펙을 build/openapi/openapi.json 으로 뽑는다'
+	group = 'documentation'
+
+	useJUnitPlatform()
+	testClassesDirs = sourceSets.test.output.classesDirs
+	classpath = sourceSets.test.runtimeClasspath
+
+	systemProperty 'spring.datasource.url', 'jdbc:tc:mysql:8.4:///duckmoim'
+	systemProperty 'spring.datasource.driver-class-name', 'org.testcontainers.jdbc.ContainerDatabaseDriver'
+
+	filter {
+		includeTestsMatching 'com.duckmoim.common.config.OpenApiSpecWriter'
+	}
+}
+
+// 포맷을 부탁하지 않고 강제한다. 에이전트가 어떤 스타일로 써도 spotlessApply 한
+// 번에 통일되고, 어긋난 채로 올라오면 check 가 막는다. 리뷰에서 포맷 지적이 사라진다.
+//
+// googleJavaFormat 은 설정 항목이 없다. 그게 고른 이유다 — 다툴 여지가 생기지 않는다.
+spotless {
+	java {
+		googleJavaFormat()
+		removeUnusedImports()
+		trimTrailingWhitespace()
+		endWithNewline()
+	}
+}
+
+// Spotless 가 포맷을 보고, Checkstyle 은 포맷으로 판정할 수 없는 것을 본다 —
+// 로그 prefix, 로그 문자열 더하기, 테스트 메서드 네이밍. 위키 코드·테스트 컨벤션에서
+// 기계가 판정할 수 있는 항목만 옮겼다.
+//
+// main 과 test 의 메서드 네이밍 규칙이 달라 설정을 둘로 나눈다.
+// 테스트는 실패 케이스를 pay_pointIsNotEnough 형식으로 쓰므로 밑줄을 허용해야 한다.
+checkstyle {
+	toolVersion = '10.21.1'
+	maxWarnings = 0
+}
+
+tasks.named('checkstyleTest') {
+	configFile = file("${rootDir}/config/checkstyle/checkstyle-test.xml")
+}
+
+tasks.register('dbDown', Exec) {
+	description = '로컬 MySQL 볼륨을 버린다'
+	group = 'build setup'
+	commandLine 'docker', 'compose', 'down', '-v'
+}
+
+// 마이그레이션 번호가 영역별 대역으로 갈려 있어 낮은 번호가 나중에 머지된다.
+// 빈 DB 에서 시작하면 항상 번호순으로 적용되므로, 로컬 DB 는 이어 붙이지 않고
+// 버리고 다시 만드는 것을 기본으로 둔다. 적용된 파일을 고쳐 체크섬이 깨진 경우도
+// 같은 명령으로 풀린다.
+//
+// --wait 는 docker-compose.yml 의 healthcheck 가 통과할 때까지 잡아둔다.
+// 태스크가 끝나면 바로 bootRun 해도 된다.
+tasks.register('dbReset', Exec) {
+	description = '로컬 MySQL 을 비우고 마이그레이션을 처음부터 다시 적용한다'
+	group = 'build setup'
+	dependsOn 'dbDown'
+	commandLine 'docker', 'compose', 'up', '-d', '--wait'
 }
 
 tasks.register('installGitHooks', Exec) {
@@ -38,6 +179,159 @@ tasks.register('installGitHooks', Exec) {
 	ignoreExitValue = true
 }
 
+// git 이 위키 포인터를 아예 신경 쓰지 않게 한다. 설정 두 개가 짝이고, 태스크가
+// 둘로 나뉘어 있어도 configureWikiGit 이 configureWikiIgnore 에 의존하므로 항상
+// 함께 돈다. 한 태스크에서 `sh -c` 로 이어 붙이지 않는 이유는 Windows 다 — Git
+// for Windows 가 sh.exe 를 PATH 에 없는 Git\bin 에 두어서 프로세스 기동 자체가
+// 실패하고, ignoreExitValue 는 뜬 프로세스의 종료 코드만 무시하므로 못 막는다.
+//
+// ① submodule.docs/wiki.ignore=all — 위키는 빌드하는 의존성이 아니라 읽는 문서라
+//    커밋에 고정할 이유가 없고, 최신으로 당겨오면 status 가 `M docs/wiki` 로 계속
+//    더러워진다. 방치하면 팀원이 "이건 커밋해야 하나" 를 매번 판단하게 된다.
+//
+//    **이 태스크가 핀을 커밋에서 막지는 못한다.** 로컬 config 의 ignore 는 status·
+//    diff 표시만 바꾸고 `git add -A` 는 그대로 핀을 집어 간다 — 실측했고, 그렇게
+//    실린 핀이 develop 에 다섯 개 있다 (STAR-76). 막는 것은 .gitmodules 의 같은
+//    설정이고 SubmodulePinTest 가 그 한 줄을 지킨다. 여기 남은 것은 중복이다.
+//    지우지 않은 이유는 대조를 git 2.54.0 한 판본에서만 했기 때문이다.
+tasks.register('configureWikiIgnore', Exec) {
+	description = 'git 이 위키 서브모듈 포인터를 건드리지 않도록 설정한다'
+	group = 'build setup'
+	onlyIf { file("${rootDir}/.gitmodules").exists() }
+	commandLine 'git', 'config', 'submodule.docs/wiki.ignore', 'all'
+	ignoreExitValue = true
+}
+
+// ② submodule.recurse=false — recurse 가 켜져 있으면 `git pull` 이 위키를 **기록된
+//    핀**으로 체크아웃한다. 핀을 관리하지 않기로 했으니 그건 아무도 안 챙기는 옛
+//    값이고, 결과적으로 pull 이 위키를 뒤로 되돌린다. 실측했다:
+//    a25d114(최신) → 46651e7(6시간 낡음). ①은 status·diff 표시만 바꾸므로 이걸
+//    막지 못한다. STAR-22 시절 configureSubmoduleRecurse 가 true 를 심어둔 기존
+//    클론을 되돌리기 위해 unset 이 아니라 false 로 명시한다.
+tasks.register('configureWikiGit', Exec) {
+	description = 'git pull 이 위키를 옛 핀으로 되돌리지 않게 한다'
+	group = 'build setup'
+	dependsOn 'configureWikiIgnore'
+	onlyIf { file("${rootDir}/.gitmodules").exists() }
+	commandLine 'git', 'config', 'submodule.recurse', 'false'
+	ignoreExitValue = true
+}
+
+// docs/wiki 는 [1] 컨텍스트 확보가 읽는 곳이다. **최신으로 맞춘다.**
+//
+// 예전에는 `--init` 만 하고 조건이 "docs/wiki/README.md 가 없을 때" 였다. 그래서
+// 한 번 채워지면 다시 돌지 않았고, 누가 위키를 고쳐도 포인터를 올려주지 않으면
+// 팀원은 낡은 문서를 최신이라 믿고 읽었다. 실제로 그 상태였다 — 백엔드가 가리키는
+// 핀이 위키 최신보다 커밋 2개 뒤처져 있었고 아무 경고도 없었다.
+//
+// --remote 를 조건 없이 돌리는 것이 예전에는 위험했다. 포인터를 올리려고 실행한
+// --remote 를 되돌렸기 때문이다. 지금은 방향이 반대다 — 항상 최신을 가져오므로
+// 되돌릴 핀이라는 개념 자체가 없고, .gitmodules 의 ignore=all 이 그 변화를 커밋에서
+// 떼어낸다 (configureWikiIgnore 가 아니다 — ① 참고).
+//
+// 위키는 PRIVATE 이라 접근 권한이 없으면 실패한다. 그때 조용히 넘기지 않는다 —
+// 빌드는 통과하는데 에이전트가 스펙을 못 읽는 상태가 가장 나쁘다.
+tasks.register('syncWiki', Exec) {
+	description = '위키 서브모듈을 최신으로 맞춘다 (docs/wiki)'
+	group = 'build setup'
+	onlyIf { file("${rootDir}/.gitmodules").exists() }
+	commandLine 'git', 'submodule', 'update', '--init', '--remote', 'docs/wiki'
+	ignoreExitValue = true
+
+	doLast {
+		if (executionResult.get().exitValue != 0) {
+			logger.lifecycle('''
+========================================================================
+ 위키 서브모듈(docs/wiki) 을 최신으로 맞추지 못했습니다.
+
+ 빌드와 테스트는 그대로 됩니다. 다만 요구사항 검증 기준 · 불변식 ·
+ 설계 결정을 읽을 수 없거나, 낡은 것을 읽습니다.
+
+ 네트워크가 끊겼다면 이미 받아둔 위키를 그대로 쓰면 됩니다.
+ 그게 아니면 위키는 PRIVATE 이므로 potenup-final/duckmoim-wiki
+ 접근 권한을 받은 뒤 아래를 실행하세요.
+
+   git submodule update --init --remote docs/wiki
+========================================================================'''.stripIndent())
+			return
+		}
+		reportWikiMoved(logger, rootDir)
+	}
+}
+
+// [1] 이 읽은 위키와 지금 디스크의 위키가 같은지 본다.
+//
+// syncWiki 는 매 빌드마다 --remote 로 당긴다. 그래서 [3] 구현과 [4] check 를
+// 오가는 사이에 누가 위키를 고치면 **디스크만 조용히 바뀐다.** 에이전트 컨텍스트는
+// [1] 에서 읽은 옛 판본 그대로라, 그 상태로 커밋 메시지와 PR 에 옛 내용을 인용한다.
+// 낡은 것이 아니라 갈라진 것이고, 성공 경로가 아무 말도 안 해서 갈라진 줄을 모른다.
+//
+// 핀을 고정하는 것은 답이 아니다 — 그러면 아무도 안 올리는 옛 핀을 최신이라 믿고
+// 읽는 상태로 돌아간다 (STAR-36 이 고친 문제). 최신은 계속 당기되 **움직인 사실을
+// 보이게** 만든다.
+//
+// 기준선은 ticket-context 0절이 .git/wiki-seen-sha 에 적는다. .git 아래라 커밋될
+// 수 없고 clean 에도 안 지워진다. 여기서는 읽기만 하고 덮어쓰지 않는다 — 사람이
+// 다시 읽고 기준선을 갱신할 때까지 계속 보여야 하기 때문이다. 한 번만 알리면
+// 출력이 밀려 올라간 사이에 놓친다.
+static def gitOut(File dir, List args) {
+	try {
+		def proc = new ProcessBuilder(args).directory(dir).start()
+		def out = proc.inputStream.text
+		proc.waitFor()
+		return proc.exitValue() == 0 ? out.trim() : null
+	} catch (Exception ignored) {
+		return null
+	}
+}
+
+static void reportWikiMoved(logger, File rootDir) {
+	def wiki = new File(rootDir, 'docs/wiki')
+	if (!new File(wiki, 'README.md').exists()) {
+		return
+	}
+	def now = gitOut(wiki, ['git', 'rev-parse', 'HEAD'])
+	if (now == null) {
+		return
+	}
+
+	// 기준선이 없으면 이 저장소에서 아직 [1] 을 돈 적이 없다. 알릴 것이 없다.
+	def seenFile = new File(rootDir, '.git/wiki-seen-sha')
+	if (!seenFile.exists()) {
+		return
+	}
+	def seen = seenFile.text.trim()
+	if (seen.isEmpty() || seen == now) {
+		return
+	}
+
+	// 기준선 커밋이 사라졌으면(히스토리 재작성) 무엇이 바뀌었는지 셀 수 없다.
+	def changed = gitOut(wiki, ['git', 'diff', '--name-only', seen, now])
+	def count = gitOut(wiki, ['git', 'rev-list', '--count', seen + '..' + now])
+	def body = changed == null
+			? '   (기준선 커밋이 위키에 없어 목록을 낼 수 없습니다)'
+			: changed.readLines().collect { '   ' + it }.join('\n')
+	def moved = count ? '   (커밋 ' + count + '개)' : ''
+
+	logger.lifecycle('''
+========================================================================
+ 위키가 [1] 에서 읽은 판본과 다릅니다.
+
+   [1] 이 읽은 것   ''' + seen.take(7) + '''
+   지금 디스크      ''' + now.take(7) + moved + '''
+
+ 바뀐 문서
+''' + body + '''
+
+ 인용하기 전에 위 문서의 해당 절을 다시 읽으세요. [2] 에 올린 계획이
+ 이 변경에 걸리면 계획부터 고칩니다.
+
+ 다시 읽었으면 기준선을 갱신하세요.
+
+   git -C docs/wiki rev-parse HEAD > .git/wiki-seen-sha
+========================================================================''')
+}
+
 tasks.named('compileJava') {
-	dependsOn 'installGitHooks'
+	dependsOn 'installGitHooks', 'configureWikiGit', 'syncWiki'
 }

@@ -5,3 +5,62 @@ springdoc:
     enabled: false
   swagger-ui:
     enabled: false
+
+# ALB 가 앞에 서 있다. TLS 는 ALB 에서 끝나고 안쪽은 평문 HTTP 로 8080 에 들어오므로,
+# 이 설정이 없으면 앱은 자기가 http · 8080 으로 불렸다고 판단한다. 그렇게 만든 주소가
+# 리다이렉트 Location 에 실려 https 밖으로 나가고, 접근 로그의 클라이언트 IP 는 전부
+# ALB 사설 IP 가 된다.
+#
+# prod 에만 둔다. 프록시가 없는 프로파일에서 켜면 클라이언트가 직접 보낸 X-Forwarded-*
+# 를 그대로 믿는다. ALB 는 그 헤더를 자기 것으로 덮어쓴다.
+server:
+  forward-headers-strategy: framework
+
+# 아래 여덟 개는 GitHub Secrets 에 있고 배포 워크플로가 --env-file 로 넘긴다
+# (ci-cd.yml 「환경 파일 전송」).
+#   DB_URL · DB_USERNAME · DB_PASSWORD · JWT_SECRET · CORS_ALLOWED_ORIGINS
+#   KAKAO_CLIENT_ID · S3_BUCKET · S3_PUBLIC_BASE_URL
+# 여덟 개 모두 기본값을 두지 않는다. 하나라도 비면 기동이 실패해야 한다 — 조용히 뜨면
+# 개발용 열쇠로 관리자 토큰을 위조할 수 있고, localhost 가 허용 출처로 남는다.
+#
+# KAKAO_CLIENT_SECRET 만 기본값이 빈 문자열이다. 카카오 콘솔에서 「보안」의 시크릿을
+# 켜지 않으면 애초에 보낼 값이 없고, 켜지 않은 상태가 정상 동작이라 필수로 두면
+# 켜지 않은 앱이 기동조차 못 한다.
+spring:
+  datasource:
+    url: ${DB_URL}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+
+  jpa:
+    hibernate:
+      ddl-auto: none
+    properties:
+      hibernate:
+        format_sql: false
+
+# 기본값을 두지 않는다. JWT_SECRET 이 없으면 기동이 실패해야 한다 —
+# 조용히 개발용 열쇠로 뜨면 발급한 토큰을 누구나 위조할 수 있다.
+duckmoim:
+  jwt:
+    secret: ${JWT_SECRET}
+
+  # 개발용 키로 뜨면 누구나 가짜 행사를 밀어 넣을 수 있다. 수집 원칙 6번
+  # (「출처를 속이지 않는다」)이 무의미해지므로 기동 실패가 낫다.
+  ingest:
+    key: ${INGEST_KEY}
+
+  # localhost 기본값이 운영까지 따라오면 개발자 PC 에서 운영 API 를 부를 수 있다.
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS}
+
+  # 더미 열쇠로 뜨면 로그인이 카카오에서 KOE101 로 실패한다. 기동 실패가 낫다 —
+  # 「로그인만 안 되는 정상 기동」은 헬스체크를 통과해 배포가 성공으로 보인다.
+  kakao:
+    client-id: ${KAKAO_CLIENT_ID}
+
+  # 버킷 이름이 없으면 S3 구현 대신 대역이 떠서 업로드만 조용히 망가진 「정상 기동」이 된다.
+  # 헬스체크를 통과하므로 배포가 성공으로 보인다 — JWT_SECRET 과 같은 이유로 필수다.
+  s3:
+    bucket: ${S3_BUCKET}
+    public-base-url: ${S3_PUBLIC_BASE_URL}

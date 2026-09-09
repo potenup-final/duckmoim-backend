@@ -7,8 +7,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 @SpringBootTest
 class DuckmoimApplicationTests {
 
-	@Test
-	@DisplayName("스프링 컨텍스트가 정상적으로 로딩된다")
-	void contextLoads() {
-	}
+  @Test
+  @DisplayName("스프링 컨텍스트가 정상적으로 로딩된다")
+  void contextLoads() {}
 }

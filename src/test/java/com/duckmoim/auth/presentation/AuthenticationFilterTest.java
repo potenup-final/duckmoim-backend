@@ -1,0 +1,179 @@
+package com.duckmoim.auth.presentation;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.mock;
+
+import com.duckmoim.admin.infra.AdminAccountRepository;
+import com.duckmoim.auth.domain.AuthUser;
+import com.duckmoim.auth.exception.AuthErrorCode;
+import com.duckmoim.auth.infra.JwtProvider;
+import com.duckmoim.auth.service.AuthenticationService;
+import com.duckmoim.identity.domain.User;
+import com.duckmoim.identity.infra.UserRepository;
+import java.time.Duration;
+import java.util.Optional;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.springframework.mock.web.MockFilterChain;
+import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.mock.web.MockHttpServletResponse;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+
+class AuthenticationFilterTest {
+
+  private static final String SECRET = "duckmoim-unit-test-secret-key-32-bytes-or-longer";
+  private static final Duration REFRESH_TTL = Duration.ofDays(14);
+
+  private final JwtProvider jwtProvider =
+      new JwtProvider(SECRET, Duration.ofMinutes(30), REFRESH_TTL);
+  private final AuthenticationFilter filter = filterWith(true);
+
+  /**
+   * 회원 조회를 고정한 필터를 만든다.
+   *
+   * <p>필터가 {@code AuthenticationService} 를 받게 되면서(AU-04) 이 단위 테스트에도 회원 조회가 끼어든다. 여기서 볼 것은 <b>필터가
+   * SecurityContext 를 어떻게 채우는가</b>지 조회 판정이 아니다.
+   *
+   * <p><b>{@code signupCompleted} 를 인자로 받는 이유</b> — 관문이 그 값을 토큰이 아니라 회원 행에서 읽게 됐다 (I-02 · AU-07).
+   * 토큰에 무엇을 담아도 DB 가 이긴다. 그래서 「가입 미완료」를 검증하려면 <b>DB 쪽을 미완료로</b> 만들어야 한다.
+   */
+  private AuthenticationFilter filterWith(boolean signupCompleted) {
+    AdminAccountRepository adminAccountRepository = mock(AdminAccountRepository.class);
+    given(adminAccountRepository.existsByKakaoUserId(any())).willReturn(true);
+
+    UserRepository userRepository = mock(UserRepository.class);
+    given(userRepository.findById(any()))
+        .willAnswer(
+            invocation -> {
+              User user = mock(User.class);
+              given(user.getId()).willReturn(invocation.<Long>getArgument(0));
+              given(user.isSignupCompleted()).willReturn(signupCompleted);
+              given(user.isTokenInvalidated(any())).willReturn(false);
+              return Optional.of(user);
+            });
+
+    return new AuthenticationFilter(
+        new AuthenticationService(jwtProvider, userRepository, adminAccountRepository));
+  }
+
+  @AfterEach
+  void clearContext() {
+    SecurityContextHolder.clearContext();
+  }
+
+  @Test
+  @DisplayName("토큰이 없는 요청은 익명인 채로 통과한다.")
+  void doFilter_withoutToken() throws Exception {
+    MockHttpServletRequest request = new MockHttpServletRequest();
+
+    filter.doFilter(request, new MockHttpServletResponse(), new MockFilterChain());
+
+    assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+    assertThat(request.getAttribute(AuthenticationFilter.ERROR_CODE)).isNull();
+  }
+
+  @Test
+  @DisplayName("유효한 토큰을 보내면 인증 주체가 토큰의 회원으로 채워진다.")
+  void doFilter_withValidToken() throws Exception {
+    AuthUser authUser = new AuthUser(7L, true, false);
+    MockHttpServletRequest request = requestWith(jwtProvider.createAccessToken(authUser));
+
+    filter.doFilter(request, new MockHttpServletResponse(), new MockFilterChain());
+
+    Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+    assertThat(authentication.getPrincipal()).isEqualTo(authUser);
+  }
+
+  @Test
+  @DisplayName("가입을 마친 회원에게는 SIGNUP 권한이 주어진다.")
+  void doFilter_signupCompleted() throws Exception {
+    MockHttpServletRequest request =
+        requestWith(jwtProvider.createAccessToken(new AuthUser(7L, true, false)));
+
+    filter.doFilter(request, new MockHttpServletResponse(), new MockFilterChain());
+
+    assertThat(SecurityContextHolder.getContext().getAuthentication().getAuthorities())
+        .extracting("authority")
+        .containsExactly(AuthAuthority.SIGNUP);
+  }
+
+  @Test
+  @DisplayName("가입 미완료 회원에게는 아무 권한도 주어지지 않는다.")
+  void doFilter_signupIncomplete() throws Exception {
+    AuthenticationFilter filter = filterWith(false);
+    MockHttpServletRequest request =
+        requestWith(jwtProvider.createAccessToken(new AuthUser(7L, false, false)));
+
+    filter.doFilter(request, new MockHttpServletResponse(), new MockFilterChain());
+
+    assertThat(SecurityContextHolder.getContext().getAuthentication().getAuthorities()).isEmpty();
+  }
+
+  @Test
+  @DisplayName("관리자에게는 SIGNUP 과 ADMIN 권한이 함께 주어진다.")
+  void doFilter_admin() throws Exception {
+    MockHttpServletRequest request =
+        requestWith(jwtProvider.createAccessToken(new AuthUser(7L, true, true)));
+
+    filter.doFilter(request, new MockHttpServletResponse(), new MockFilterChain());
+
+    assertThat(SecurityContextHolder.getContext().getAuthentication().getAuthorities())
+        .extracting("authority")
+        .containsExactlyInAnyOrder(AuthAuthority.SIGNUP, AuthAuthority.ADMIN);
+  }
+
+  @Test
+  @DisplayName("만료된 토큰을 보내면 인증되지 않고 만료 사유가 요청에 남는다.")
+  void doFilter_expiredToken() throws Exception {
+    JwtProvider alreadyExpired = new JwtProvider(SECRET, Duration.ofMinutes(-1), REFRESH_TTL);
+    MockHttpServletRequest request =
+        requestWith(alreadyExpired.createAccessToken(new AuthUser(7L, true, false)));
+
+    filter.doFilter(request, new MockHttpServletResponse(), new MockFilterChain());
+
+    assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+    assertThat(request.getAttribute(AuthenticationFilter.ERROR_CODE))
+        .isEqualTo(AuthErrorCode.AUTH_ACCESS_TOKEN_EXPIRED);
+  }
+
+  @Test
+  @DisplayName("서명이 위조된 토큰을 보내면 인증되지 않고 위조 사유가 요청에 남는다.")
+  void doFilter_forgedToken() throws Exception {
+    JwtProvider forger =
+        new JwtProvider(
+            "someone-elses-secret-key-32-bytes-or-longer-here",
+            Duration.ofMinutes(30),
+            REFRESH_TTL);
+    MockHttpServletRequest request =
+        requestWith(forger.createAccessToken(new AuthUser(7L, true, true)));
+
+    filter.doFilter(request, new MockHttpServletResponse(), new MockFilterChain());
+
+    assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+    assertThat(request.getAttribute(AuthenticationFilter.ERROR_CODE))
+        .isEqualTo(AuthErrorCode.AUTH_ACCESS_TOKEN_INVALID);
+  }
+
+  @Test
+  @DisplayName("Bearer 접두어가 없는 헤더는 토큰으로 보지 않는다.")
+  void doFilter_headerWithoutBearerPrefix() throws Exception {
+    MockHttpServletRequest request = new MockHttpServletRequest();
+    request.addHeader(
+        "Authorization", jwtProvider.createAccessToken(new AuthUser(7L, true, false)));
+
+    filter.doFilter(request, new MockHttpServletResponse(), new MockFilterChain());
+
+    assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+    assertThat(request.getAttribute(AuthenticationFilter.ERROR_CODE)).isNull();
+  }
+
+  private MockHttpServletRequest requestWith(String accessToken) {
+    MockHttpServletRequest request = new MockHttpServletRequest();
+    request.addHeader("Authorization", "Bearer " + accessToken);
+    return request;
+  }
+}

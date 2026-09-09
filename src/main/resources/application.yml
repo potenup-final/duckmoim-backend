@@ -2,8 +2,15 @@ spring:
   application:
     name: duckmoim
 
-# Swagger UI 는 /swagger-ui.html, 스펙은 /v3/api-docs 로 노출한다.
-# 프로덕션(prod 프로파일)에서는 application-prod.yml 이 둘 다 끈다.
+  # 접속 정보가 프로파일별 파일에만 있어서, 프로파일 없이 띄우면 DataSource 를
+  # 못 찾고 기동이 실패한다. 로컬에서 매번 손으로 지정하지 않게 기본값을 둔다.
+  # active 가 아니라 default 라서 배포의 SPRING_PROFILES_ACTIVE=prod 를 가리지 않는다.
+  profiles:
+    default: local
+
+  jpa:
+    open-in-view: false
+
 springdoc:
   api-docs:
     enabled: true
@@ -13,3 +20,87 @@ springdoc:
     path: /swagger-ui.html
     operations-sorter: alpha
     tags-sorter: alpha
+
+# 토큰 서명 열쇠. local·test 는 아래 기본값으로 뜨고, prod 는 기본값 없이 필수로 건다
+# (application-prod.yml). 기본값을 운영까지 남기면 기본 시크릿으로 배포되는 사고가 난다.
+duckmoim:
+  jwt:
+    secret: ${JWT_SECRET:duckmoim-local-development-secret-do-not-use-in-production}
+    access-token-ttl: 30m
+    refresh-token-ttl: 14d
+
+  # 크롤러 적재 키 (EV-03 · D-11). 사람이 아니라 GitHub Actions 가 보낸다.
+  # jwt.secret 과 같은 배치다 — local·test 는 아래 기본값으로 뜨고 prod 는 필수다.
+  ingest:
+    key: ${INGEST_KEY:duckmoim-local-ingest-key-do-not-use-in-production}
+
+  catalog:
+    # 이 시간 동안 크롤러에 안 잡힌 행사를 목록에서 숨긴다 (D-7).
+    #
+    # 72시간인 이유 — 잡이 하루 한 번(04:00 KST)이라 이틀 연속 실패해도 멀쩡한 행사가
+    # 사라지지 않는다. 잡 실패 횟수가 아니라 시각으로 판정하는 이유는, 카운터 방식은
+    # 잡이 멈춘 동안 카운터도 멈춰서 유령이 무한히 남기 때문이다.
+    #
+    # 잠정값이다. 전환(EV-08) 이후 실측으로 조정한다.
+    stale-after: 72h
+
+  # 프론트(Vercel)와 API(AWS)가 다른 도메인이라 브라우저 호출에 CORS 가 필요하다.
+  # 쿠키를 쓰지 않으므로 credentials 는 열지 않는다 (ADR 0001).
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000}
+
+  # 주기 작업 (PO-14 마감 배치). 문서가 주기를 정하지 않아 여기서 정한다.
+  #
+  # 5분인 근거 — 이 배치가 늦어서 생기는 일은 카드 배지가 「모집중」인 채로 남는 것
+  # 하나이고 돈이나 권한이 걸린 전이가 아니다. 반대로 1분마다 돌면 대부분의 실행이
+  # 0건을 세고 끝난다.
+  #
+  # local 에서도 돈다. 끄는 스위치를 두지 않는 것은, 개발 중에 안 도는 배치는 배포
+  # 후에 처음 돌고 그때 처음 틀린 것을 알기 때문이다.
+  # chunk 는 한 트랜잭션이 닫을 최대 건수다. 밀린 글 전부를 한 트랜잭션에 담으면
+  # 롤백 단위가 통째가 되고, 잠긴 행이 커밋 전까지 풀리지 않아 방장의 마감 요청이
+  # 그 뒤에서 기다린다.
+  batch:
+    post-close:
+      cron: ${POST_CLOSE_CRON:0 */5 * * * *}
+      chunk: 200
+
+  # 카카오 로그인 (AU-01). 우리 로그인은 이것 하나뿐이다.
+  #
+  # local·test 는 아래 더미 값으로 뜬다 — 열쇠가 없어도 기동과 테스트가 돌아야 한다
+  # (카카오를 부르는 자리를 테스트가 대역으로 갈아끼운다). prod 는 기본값이 없다.
+  #
+  # redirect-uri 는 여기 없다. 카카오가 인가 때 쓴 값과의 일치를 강제하는데 그 값은
+  # 브라우저 origin + /auth/kakao/callback 이라 로컬·프리뷰·프로덕션이 각각 다르다.
+  # 서버가 하나로 못박으면 백엔드 한 대가 프론트 한 곳만 상대하게 된다. 요청 바디로 받는다.
+  kakao:
+    client-id: ${KAKAO_CLIENT_ID:kakao-local-dummy-rest-api-key}
+    client-secret: ${KAKAO_CLIENT_SECRET:}
+    token-uri: https://kauth.kakao.com/oauth/token
+    user-uri: https://kapi.kakao.com/v2/user/me
+    # 없으면 카카오가 응답을 안 줄 때 스레드가 무한정 매달린다. 이 호출은
+    # 트랜잭션 밖이지만 톰캣 스레드는 그대로 잡는다.
+    connect-timeout: 3s
+    read-timeout: 5s
+
+  # 프로필 이미지 업로드 (AU-08). 브라우저가 S3 로 직접 올리고 서버는 서명만 한다.
+  #
+  # 버킷 이름이 비어 있으면 S3 구현 대신 대역이 뜬다 — 프로파일로 가르지 않는 이유는
+  # 자격증명을 가진 개발자가 로컬에서 실물을 확인할 길을 막지 않으려는 것이다.
+  # prod 는 기본값이 없다 (application-prod.yml).
+  #
+  # 자격증명을 여기 두지 않는다. EC2 인스턴스 역할을 SDK 기본 공급자가 읽는다 —
+  # ci-cd.yml 이 ECR 로그인을 같은 방식으로 한다.
+  s3:
+    bucket: ${S3_BUCKET:}
+    region: ${AWS_REGION:ap-northeast-2}
+    # 저장되는 profile_image_url 의 앞부분. CloudFront 를 앞에 세우면 이 값만 바뀐다 —
+    # 코드에 박으면 이미 저장된 값 전부가 마이그레이션 대상이 된다.
+    public-base-url: ${S3_PUBLIC_BASE_URL:}
+    # 서명의 유효 시간. 사용자가 파일을 고르고 올리는 데 걸리는 시간이라 짧게 둔다.
+    presign-ttl: 5m
+
+  profile-image:
+    # 위키에 값이 없어 정했다. 아바타라 큰 파일을 받을 이유가 없다.
+    max-bytes: 5242880
+    allowed-content-types: image/jpeg,image/png,image/webp
