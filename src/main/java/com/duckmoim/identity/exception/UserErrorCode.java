@@ -24,6 +24,19 @@ public enum UserErrorCode implements ErrorCode {
   // 가입(AU-06)과 프로필 수정(AU-08) 양쪽이 쓴다.
   USER_NICKNAME_DUPLICATED(HttpStatus.CONFLICT, "이미 사용 중인 닉네임입니다."),
 
+  /** AU-08 이미지 업로드. 허용 목록은 설정에 있다 — 위키가 값을 정하지 않았다. */
+  USER_PROFILE_IMAGE_TYPE_NOT_ALLOWED(HttpStatus.BAD_REQUEST, "JPG · PNG · WEBP 이미지만 올릴 수 있습니다."),
+
+  /** 「업로드 실패」로 뭉치지 않는다 — 사진을 줄이면 되는 것과 다른 파일을 골라야 하는 것은 사용자가 할 일이 다르다. */
+  USER_PROFILE_IMAGE_TOO_LARGE(HttpStatus.BAD_REQUEST, "이미지는 5MB 이하만 올릴 수 있습니다."),
+
+  /**
+   * 확정 요청의 키로 올라간 것이 없다.
+   *
+   * <p><b>남의 키를 들고 온 경우도 이 코드다.</b> 「그 키는 남의 것이다」로 답하면 <b>남의 객체가 존재한다는 사실</b>을 알려준다.
+   */
+  USER_PROFILE_IMAGE_NOT_UPLOADED(HttpStatus.BAD_REQUEST, "업로드된 이미지를 찾을 수 없습니다. 다시 시도해 주세요."),
+
   /**
    * 제재 중인 회원이 쓰기를 시도했다 (I-14).
    *
