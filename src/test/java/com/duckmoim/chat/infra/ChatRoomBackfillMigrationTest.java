@@ -70,15 +70,15 @@ class ChatRoomBackfillMigrationTest {
   @Test
   void backfillIsIdempotent() throws IOException {
     // given
-    int roomsBefore = count("chat_room");
-    int membersBefore = count("chat_room_member");
+    int roomsBefore = seedRoomCount();
+    int membersBefore = seedMemberCount();
 
     // when
     backfillAgain();
 
     // then
-    assertThat(count("chat_room")).isEqualTo(roomsBefore);
-    assertThat(count("chat_room_member")).isEqualTo(membersBefore);
+    assertThat(seedRoomCount()).isEqualTo(roomsBefore);
+    assertThat(seedMemberCount()).isEqualTo(membersBefore);
   }
 
   /** 배포되는 파일 그대로 실행한다. 주석 줄과 빈 문장을 걸러 낸다. */
@@ -99,8 +99,29 @@ class ChatRoomBackfillMigrationTest {
         .strip();
   }
 
-  private int count(String table) {
-    return jdbc.queryForObject("SELECT COUNT(*) FROM " + table, Integer.class);
+  /**
+   * 시드 세 글의 방만 센다.
+   *
+   * <p><b>표 전체를 세면 이 테스트가 남의 픽스처에 매달린다.</b> 방 없는 모집글이 한 건이라도 커밋된 채 남아 있으면 (트랜잭션 없이 도는 테스트가
+   * {@code @AfterEach} 전에 죽는 경우) 백필 재실행이 그 글에 방을 만들어 수가 늘어난다. <b>백필이 고장나서가 아니라 정상 동작해서 빨간불이 되는
+   * 모양</b>이라 원인 추적이 특히 나쁘고, 남의 글에 방을 남기는 부작용까지 있다.
+   */
+  private int seedRoomCount() {
+    return countIn("SELECT COUNT(*) FROM chat_room WHERE post_id IN (?, ?, ?)");
+  }
+
+  private int seedMemberCount() {
+    return countIn(
+        """
+        SELECT COUNT(*)
+        FROM chat_room_member m
+                 JOIN chat_room r ON r.id = m.room_id
+        WHERE r.post_id IN (?, ?, ?)
+        """);
+  }
+
+  private int countIn(String sql) {
+    return jdbc.queryForObject(sql, Integer.class, SEED_POST_IDS.toArray());
   }
 
   private int roomCountOf(long postId) {
