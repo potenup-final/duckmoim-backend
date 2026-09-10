@@ -160,6 +160,33 @@ class AdminCommentReadServiceTest {
     assertThat(auditLogRepository.findSlice(new AuditLogListQuery(null, 20))).isEmpty();
   }
 
+  /**
+   * 관리자는 가시성 매트릭스 밖이지만 익명화의 예외는 아니다 (AU-11). 예외를 두어도 {@code withdraw} 가 닉네임 컬럼을 이미 비워 내릴 실명이 없고, 조립
+   * 경로만 갈라진다.
+   */
+  @DisplayName("백오피스 댓글 열람에서도 탈퇴 작성자는 자리표시자다.")
+  @Test
+  void readWithdrawnAuthor() {
+    withdraw(AUTHOR_ID);
+    long commentId = comment(true, CommentStatus.ACTIVE);
+
+    AdminCommentView view = adminCommentReadService.read(commentId, ADMIN_ID, null);
+
+    assertThat(view.nickname()).isEqualTo("탈퇴한 회원");
+  }
+
+  /** {@code User.withdraw} 가 남기는 모양 그대로다 — 상태와 시각을 찍고 닉네임 · 사진을 비운다 (AU-11). */
+  private void withdraw(long userId) {
+    jdbc.update(
+        """
+        UPDATE user
+           SET status = 'WITHDRAWN', withdrawn_at = now(), nickname = NULL,
+               profile_image_url = NULL
+         WHERE id = ?
+        """,
+        userId);
+  }
+
   private long comment(boolean secret, CommentStatus status) {
     return aComment().postId(postId).authorId(AUTHOR_ID).secret(secret).status(status).insert(jdbc);
   }

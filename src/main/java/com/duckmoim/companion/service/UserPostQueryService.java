@@ -7,7 +7,7 @@ import com.duckmoim.companion.domain.UserPostListQuery;
 import com.duckmoim.companion.infra.AuthoredPost;
 import com.duckmoim.companion.infra.CommentRepository;
 import com.duckmoim.companion.infra.CompanionPostRepository;
-import com.duckmoim.identity.domain.LastSeen;
+import com.duckmoim.identity.domain.AuthorDisplay;
 import java.time.Clock;
 import java.util.List;
 import java.util.Map;
@@ -63,6 +63,13 @@ public class UserPostQueryService {
    */
   private PostView toView(AuthoredPost authored, Map<Long, Long> commentCounts) {
     CompanionPost post = authored.post();
+    AuthorDisplay host =
+        AuthorDisplay.of(
+            authored.hostStatus(),
+            authored.nickname(),
+            authored.profileImageUrl(),
+            authored.lastSeenAt(),
+            clock);
 
     return new PostView(
         post.getId(),
@@ -78,9 +85,9 @@ public class UserPostQueryService {
         post.getCreatedAt(),
         post.getMeetPoint(),
         post.getHostId(),
-        authored.nickname(),
-        authored.profileImageUrl(),
-        LastSeen.from(authored.lastSeenAt(), clock),
+        host.nickname(),
+        host.profileImageUrl(),
+        host.lastSeen(),
         // 댓글이 없는 모집글은 집계에 아예 없다. GROUP BY 는 행이 없는 그룹을 만들지 않는다
         commentCounts.getOrDefault(post.getId(), 0L));
   }

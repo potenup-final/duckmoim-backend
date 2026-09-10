@@ -6,7 +6,7 @@ import com.duckmoim.common.exception.BusinessException;
 import com.duckmoim.companion.exception.CommentErrorCode;
 import com.duckmoim.companion.infra.AuthoredComment;
 import com.duckmoim.companion.infra.CommentRepository;
-import com.duckmoim.identity.domain.LastSeen;
+import com.duckmoim.identity.domain.AuthorDisplay;
 import java.time.Clock;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -23,6 +23,9 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * <p><b>가시성 매트릭스를 지나지 않는 유일한 경로다</b> (도메인-모델링.md 「7. 도메인 규칙」). 관리자는 그 표 밖이라 {@code secret} 여부로 갈라지지
  * 않는다.
+ *
+ * <p><b>탈퇴 익명화(AU-11)에는 관리자도 예외가 아니다.</b> 매트릭스 밖이라고 여기만 실명을 내릴 수 있는 것이 아니라, {@code withdraw} 가 닉네임
+ * 컬럼을 이미 비워 <b>내릴 실명 자체가 없다.</b> 예외를 두면 얻는 것 없이 조립 경로만 갈라진다.
  */
 @Service
 @RequiredArgsConstructor
@@ -55,11 +58,16 @@ public class AdminCommentReadService {
 
     auditLogRecorder.record(adminUserId, AuditKind.SECRET_READ, commentId, detailOf(reportId));
 
+    AuthorDisplay author =
+        AuthorDisplay.of(
+            authored.authorStatus(),
+            authored.nickname(),
+            authored.profileImageUrl(),
+            authored.lastSeenAt(),
+            clock);
+
     return new AdminCommentView(
-        authored.comment(),
-        authored.nickname(),
-        authored.profileImageUrl(),
-        LastSeen.from(authored.lastSeenAt(), clock));
+        authored.comment(), author.nickname(), author.profileImageUrl(), author.lastSeen());
   }
 
   /** 본문을 남기지 않는다. 감사 로그는 무엇을 열었는지의 기록이지 그 내용의 사본이 아니다. */

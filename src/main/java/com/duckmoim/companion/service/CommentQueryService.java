@@ -10,7 +10,7 @@ import com.duckmoim.companion.exception.PostErrorCode;
 import com.duckmoim.companion.infra.AuthoredComment;
 import com.duckmoim.companion.infra.CommentRepository;
 import com.duckmoim.companion.infra.CompanionPostRepository;
-import com.duckmoim.identity.domain.LastSeen;
+import com.duckmoim.identity.domain.AuthorDisplay;
 import java.time.Clock;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -102,12 +102,21 @@ public class CommentQueryService {
     return view.comment().getStatus() == CommentStatus.ACTIVE || !view.replies().isEmpty();
   }
 
+  /** 작성자 값은 {@link AuthorDisplay} 를 지난 것만 싣는다. 탈퇴한 작성자는 여기서 자리표시자가 된다 (AU-11). */
   private CommentView toView(AuthoredComment authored, List<CommentView> replies) {
+    AuthorDisplay author =
+        AuthorDisplay.of(
+            authored.authorStatus(),
+            authored.nickname(),
+            authored.profileImageUrl(),
+            authored.lastSeenAt(),
+            clock);
+
     return new CommentView(
         authored.comment(),
-        authored.nickname(),
-        authored.profileImageUrl(),
-        LastSeen.from(authored.lastSeenAt(), clock),
+        author.nickname(),
+        author.profileImageUrl(),
+        author.lastSeen(),
         replies);
   }
 
