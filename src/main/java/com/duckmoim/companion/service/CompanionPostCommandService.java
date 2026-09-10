@@ -7,10 +7,12 @@ import com.duckmoim.common.exception.BusinessException;
 import com.duckmoim.companion.domain.Capacity;
 import com.duckmoim.companion.domain.ChosenEvent;
 import com.duckmoim.companion.domain.CompanionPost;
+import com.duckmoim.companion.domain.CompanionPostOpened;
 import com.duckmoim.companion.domain.MeetPoint;
 import com.duckmoim.companion.exception.PostErrorCode;
 import com.duckmoim.companion.infra.CompanionPostRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -34,8 +36,17 @@ public class CompanionPostCommandService {
 
   private final CompanionPostRepository companionPostRepository;
   private final EventRepository eventRepository;
+  private final ApplicationEventPublisher events;
 
-  /** 모집글을 연다. */
+  /**
+   * 모집글을 연다.
+   *
+   * <p><b>글이 열렸다는 사실만 발행하고 방을 만들지 않는다</b> (CH-01). 도메인-모델링.md 「2. 바운디드 컨텍스트」가 의존을 {@code Chat ──▶
+   * Companion} 한 방향으로 정해 <b>Companion 은 Chat 을 모른다.</b> 여기서 채팅 서비스를 부르면 그 화살표가 뒤집히고, 뒤집힌 뒤에는
+   * 알림(NT)이 같은 사실을 들을 때 화살표가 하나 더 생긴다.
+   *
+   * <p><b>저장한 뒤에 발행한다.</b> 듣는 쪽이 필요한 것이 모집글 번호인데 그 값은 저장이 매긴다.
+   */
   @Transactional
   public WrittenCompanionPost create(CompanionPostWriteCommand command) {
     CompanionPost post =
@@ -48,7 +59,10 @@ public class CompanionPostCommandService {
             MeetPoint.of(command.meetPlace(), command.meetLat(), command.meetLng()),
             Capacity.of(command.capacity()));
 
-    return WrittenCompanionPost.of(companionPostRepository.save(post), command.eventExternalId());
+    CompanionPost saved = companionPostRepository.save(post);
+    events.publishEvent(new CompanionPostOpened(saved.getId(), saved.getHostId()));
+
+    return WrittenCompanionPost.of(saved, command.eventExternalId());
   }
 
   /**
