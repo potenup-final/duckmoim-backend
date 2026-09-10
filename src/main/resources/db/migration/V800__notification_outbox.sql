@@ -38,10 +38,24 @@ CREATE TABLE notification_outbox
     created_at   DATETIME(6) NOT NULL,
     updated_at   DATETIME(6) NOT NULL,
 
-    PRIMARY KEY (id)
+    PRIMARY KEY (id),
 
-    -- 인덱스를 두지 않았다. 이 표를 읽는 유일한 질의가 「미발행 건을 집는다」(NT-02) 이고 그
-    -- 정렬·선점 방식이 아직 없다. 정렬 키를 쥔 티켓이 인덱스도 함께 붙인다 — V34 가 AD-02 의
-    -- 인덱스를 그 티켓에 미룬 것과 같다.
+    -- 「미발행 건을 오래된 순으로」 가 아웃박스의 정의라 (NT-02) 이 두 컬럼은 워커의 선점
+    -- 방식이 무엇으로 정해지든 바뀌지 않는다. V34 가 AD-02 의 인덱스를 그 티켓에 미룬 것과
+    -- 다른 자리다 — 그쪽은 읽기 전용 목록이고, 여기는 워커의 조회와 도메인 트랜잭션의
+    -- INSERT 가 같은 표에서 만난다.
+    --
+    -- **성능이 아니라 I-25 때문에 지금 넣는다.** 인덱스가 없으면 워커의
+    -- `WHERE status = 'PENDING' ... FOR UPDATE` 가 풀스캔이 되고, REPEATABLE READ 에서
+    -- 풀스캔 잠금 읽기는 훑은 행과 그 사이 갭까지 잠근다. 그러면 댓글 작성의 아웃박스
+    -- INSERT 가 워커를 기다리고, 알림 인프라의 느려짐이 댓글 작성 응답으로 샌다 — I-25 가
+    -- 막으려는 것이 정확히 그 경로다.
+    INDEX idx_notification_outbox_pending (status, id)
+
+    -- NT-04 에 넘기는 것 — **이 인덱스만으로는 끝나지 않는다.** 락 범위가 표 전체에서 맞는
+    -- 범위로 줄어들 뿐이고, 대기 건이 적어 스캔이 범위 끝까지 가면 그 끝의 갭이 잠긴다.
+    -- 하필 그 자리에 새 PENDING 행이 들어가면 INSERT 가 여전히 기다린다. 선점을
+    -- `SKIP LOCKED`(MySQL 8.4 라 쓸 수 있다) 나 `UPDATE` 로 하거나, 워커 트랜잭션만
+    -- READ COMMITTED 로 낮춰 갭 락을 없애는 것 중 하나를 골라야 한다.
 ) DEFAULT CHARSET = utf8mb4
   COLLATE = utf8mb4_0900_ai_ci;
