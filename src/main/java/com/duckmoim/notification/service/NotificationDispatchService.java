@@ -3,6 +3,8 @@ package com.duckmoim.notification.service;
 import com.duckmoim.common.domain.NotificationOutbox;
 import com.duckmoim.common.infra.NotificationOutboxRepository;
 import com.duckmoim.notification.domain.Notification;
+import com.duckmoim.notification.domain.NotificationOutboxDlq;
+import com.duckmoim.notification.infra.NotificationOutboxDlqRepository;
 import com.duckmoim.notification.infra.NotificationRepository;
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -29,6 +31,7 @@ public class NotificationDispatchService {
 
   private final NotificationOutboxRepository outboxRepository;
   private final NotificationRepository notificationRepository;
+  private final NotificationOutboxDlqRepository dlqRepository;
 
   /**
    * 실패 뒤 다음 시도까지 기다리는 간격 (NT-03).
@@ -44,11 +47,13 @@ public class NotificationDispatchService {
   public NotificationDispatchService(
       NotificationOutboxRepository outboxRepository,
       NotificationRepository notificationRepository,
+      NotificationOutboxDlqRepository dlqRepository,
       @Value("${duckmoim.notification.worker.backoff}") List<Duration> backoff,
       @Value("${duckmoim.notification.worker.max-attempts}") int maxAttempts) {
 
     this.outboxRepository = outboxRepository;
     this.notificationRepository = notificationRepository;
+    this.dlqRepository = dlqRepository;
     this.backoff = backoff;
     this.maxAttempts = maxAttempts;
   }
@@ -105,11 +110,13 @@ public class NotificationDispatchService {
   }
 
   /**
-   * 실패를 적고 다음 시도를 미룬다 (NT-03).
+   * 실패를 적고 다음 시도를 미룬다. 시도를 다 썼으면 DLQ 로 옮긴다 (NT-03).
    *
    * <p><b>새 트랜잭션이다.</b> {@link #dispatch} 가 롤백된 뒤에 불리므로 그 트랜잭션과 이어지지 않는다.
    *
-   * @return 시도를 다 써서 더 재시도하지 않을 건이면 {@code true}
+   * <p><b>옮기면서 원본을 지운다.</b> 명세 문면이 「별도 표로 옮기고」이고, 남겨 두면 워커가 10초마다 훑는 표에 죽은 건이 쌓인다.
+   *
+   * @return 시도를 다 써서 DLQ 로 옮겼으면 {@code true}
    */
   @Transactional
   public boolean recordFailure(Long outboxId, LocalDateTime nowInUtc) {
@@ -121,7 +128,14 @@ public class NotificationDispatchService {
 
     outbox.failed(nowInUtc.plus(backoffFor(outbox.getAttempts())));
 
-    return outbox.hasExhausted(maxAttempts);
+    if (!outbox.hasExhausted(maxAttempts)) {
+      return false;
+    }
+
+    dlqRepository.save(NotificationOutboxDlq.of(outbox, nowInUtc));
+    outboxRepository.delete(outbox);
+
+    return true;
   }
 
   /**

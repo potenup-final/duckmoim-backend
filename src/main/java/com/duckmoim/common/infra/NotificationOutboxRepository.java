@@ -27,6 +27,15 @@ public interface NotificationOutboxRepository extends Repository<NotificationOut
   Optional<NotificationOutbox> findById(Long id);
 
   /**
+   * DLQ 로 옮긴 건을 지운다 (NT-03).
+   *
+   * <p><b>이 표에서 지우는 유일한 문이다.</b> 명세가 「별도 표로 옮기고」라 옮긴 뒤 원본이 남으면 안 된다 — 워커가 10초마다 훑는 표에 죽은 건이 쌓이면 훑는
+   * 양이 계속 는다. {@code AuditLogRepository} 가 {@code delete} 를 아예 열지 않은 것과 갈리는 지점이고, 그쪽은 지우지 않는 것이 불변식
+   * (I-13)이지만 여기는 옮기는 것이 요구사항이다.
+   */
+  void delete(NotificationOutbox outbox);
+
+  /**
    * 지금 보낼 수 있는 건을 오래된 순으로 집는다 (NT-02).
    *
    * <p>{@code nextAttemptAt} 이 NULL 인 것은 한 번도 실패하지 않은 건이다 — 발행 직후부터 보낼 수 있어야 하므로 함께 잡는다 (NT-03).

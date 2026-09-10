@@ -37,6 +37,7 @@ class NotificationDispatchServiceTest {
   @AfterEach
   void clean() {
     jdbc.update("DELETE FROM notification");
+    jdbc.update("DELETE FROM notification_outbox_dlq");
     jdbc.update("DELETE FROM notification_outbox");
   }
 
@@ -139,19 +140,47 @@ class NotificationDispatchServiceTest {
     assertThat(nextAttemptAt(outboxId)).isEqualTo(NOW.plusMinutes(5));
   }
 
-  @DisplayName("세 번 실패한 건은 시도를 다 써서 더 집히지 않는다.")
+  @DisplayName("세 번 실패한 건은 DLQ 로 옮겨지고 아웃박스에서 사라진다.")
   @Test
-  void recordFailure_exhausts() {
+  void recordFailure_movesToDlq() {
     // given
     long outboxId = givenPendingOutbox();
     notificationDispatchService.recordFailure(outboxId, NOW);
     notificationDispatchService.recordFailure(outboxId, NOW);
 
     // when
-    boolean exhausted = notificationDispatchService.recordFailure(outboxId, NOW);
+    boolean movedToDlq = notificationDispatchService.recordFailure(outboxId, NOW);
 
-    // then — 아무리 기다려도 다시 집히지 않는다. 옮기는 것은 DLQ 몫이다 (NT-03)
-    assertThat(exhausted).isTrue();
+    // then — 원본을 지우므로 보낼 것이 무엇이었는지는 DLQ 행에만 남는다
+    assertThat(movedToDlq).isTrue();
+    assertThat(jdbc.queryForList("SELECT * FROM notification_outbox WHERE id = ?", outboxId))
+        .isEmpty();
+    assertThat(dlqRows())
+        .singleElement()
+        .satisfies(
+            row -> {
+              assertThat(row).containsEntry("outbox_id", outboxId);
+              assertThat(row).containsEntry("recipient_id", RECIPIENT_ID);
+              assertThat(row).containsEntry("kind", "POST_COMMENTED");
+              assertThat(row).containsEntry("post_id", POST_ID);
+              assertThat(row).containsEntry("comment_id", COMMENT_ID);
+              assertThat(row).containsEntry("attempts", 3);
+              assertThat(row).containsEntry("failed_at", NOW);
+            });
+  }
+
+  @DisplayName("DLQ 로 옮긴 건은 더 집히지 않는다.")
+  @Test
+  void findSendableIds_excludesDlq() {
+    // given
+    long outboxId = givenPendingOutbox();
+    notificationDispatchService.recordFailure(outboxId, NOW);
+    notificationDispatchService.recordFailure(outboxId, NOW);
+
+    // when
+    notificationDispatchService.recordFailure(outboxId, NOW);
+
+    // then — 아무리 기다려도 다시 집히지 않는다
     assertThat(notificationDispatchService.findSendableIds(NOW.plusYears(1), 10)).isEmpty();
   }
 
@@ -174,6 +203,14 @@ class NotificationDispatchServiceTest {
   private List<Map<String, Object>> notifications() {
     return jdbc.queryForList(
         "SELECT outbox_id, recipient_id, kind, post_id, comment_id, read_at FROM notification");
+  }
+
+  private List<Map<String, Object>> dlqRows() {
+    return jdbc.queryForList(
+        """
+        SELECT outbox_id, recipient_id, kind, post_id, comment_id, attempts, failed_at
+        FROM notification_outbox_dlq
+        """);
   }
 
   private Object outboxColumn(long outboxId, String column) {
