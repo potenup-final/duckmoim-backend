@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Put the Jira ticket's context at the top of a pull request body.
+"""Put the Jira ticket's identity at the top of a pull request body.
 
 The block sits between markers, so everything a person wrote around it is left
-alone. The point is that a reviewer reads the requirement without leaving GitHub.
+alone. It carries who and which ticket, not the spec and not `Closes #N` — the
+requirement is read in Jira, and the issue link is the template's own first
+line for a person to fill in.
 
 Reads one JSON object on stdin:
-    {"issue": <Jira issue>, "body": "...", "issue_number": 12 | null}
+    {"issue": <Jira issue>, "body": "..."}
 Writes the new body on stdout.
 """
 
@@ -15,10 +17,6 @@ import re
 import sys
 
 MARKERS = ("<!-- jira:start -->", "<!-- jira:end -->")
-
-# Jira descriptions can run long. Past this, the block is collapsed so the
-# human-written part of the PR stays visible without scrolling past a spec.
-COLLAPSE_OVER = 1200
 
 
 def splice(body, block):
@@ -33,14 +31,7 @@ def splice(body, block):
     return new + "\n\n" + body
 
 
-def strip_markers(text):
-    """Keep a Jira description from terminating the block it lives inside."""
-    for marker in MARKERS:
-        text = text.replace(marker, marker.replace("<!--", "<!—"))
-    return text
-
-
-def jira_block(issue, base_url, closes):
+def jira_block(issue, base_url):
     key = issue["key"]
     fields = issue["fields"]
 
@@ -63,25 +54,7 @@ def jira_block(issue, base_url, closes):
         "",
     ]
 
-    description = strip_markers((fields.get("description") or "").strip())
-    if description:
-        if len(description) > COLLAPSE_OVER:
-            lines += [
-                "<details><summary>📄 Jira 설명 (길어서 접었습니다)</summary>",
-                "",
-                description,
-                "",
-                "</details>",
-                "",
-            ]
-        else:
-            lines += ["#### 📄 Jira 설명", "", description, ""]
-
     lines.append("🔗 {}/browse/{}".format(base_url.rstrip("/"), key))
-
-    # This line is what closes the mirrored GitHub issue when the PR merges.
-    if closes:
-        lines += ["", "Closes #{}".format(closes)]
 
     return "\n".join(lines)
 
@@ -92,7 +65,7 @@ def main():
     body = data.get("body") or ""
     base_url = os.environ["JIRA_BASE_URL"]
 
-    sys.stdout.write(splice(body, jira_block(issue, base_url, data.get("issue_number"))))
+    sys.stdout.write(splice(body, jira_block(issue, base_url)))
 
 
 if __name__ == "__main__":
