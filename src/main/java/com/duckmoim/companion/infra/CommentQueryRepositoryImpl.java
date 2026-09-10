@@ -21,7 +21,7 @@ public class CommentQueryRepositoryImpl implements CommentQueryRepository {
   private static final String SELECT_AUTHORED =
       """
       SELECT new com.duckmoim.companion.infra.AuthoredComment(
-                 c, u.nickname, u.profileImageUrl, u.lastSeenAt)
+                 c, u.nickname, u.profileImageUrl, u.lastSeenAt, u.status)
         FROM Comment c
         JOIN User u ON u.id = c.authorId
       """;

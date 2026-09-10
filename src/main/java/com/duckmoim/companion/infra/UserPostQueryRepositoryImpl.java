@@ -24,7 +24,7 @@ public class UserPostQueryRepositoryImpl implements UserPostQueryRepository {
   private static final String SELECT_USER_POST =
       """
       SELECT new com.duckmoim.companion.infra.AuthoredPost(
-                 p, u.nickname, u.profileImageUrl, u.lastSeenAt, e.externalId)
+                 p, u.nickname, u.profileImageUrl, u.lastSeenAt, e.externalId, u.status)
         FROM CompanionPost p
         JOIN User u ON u.id = p.hostId
         LEFT JOIN Event e ON e.id = p.eventId
