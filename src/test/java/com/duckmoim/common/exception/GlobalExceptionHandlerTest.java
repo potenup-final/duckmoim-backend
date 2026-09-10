@@ -121,30 +121,75 @@ class GlobalExceptionHandlerTest {
   }
 
   /**
-   * 아래 넷은 원래 400 · 405 · 415 · 418 이 맞는 요청이다. 핸들러를 나열하지 않으면 캐치올로 떨어져 500 이 된다.
+   * 자기 status(418)를 들고 온 {@link ResponseStatusException} 은 이 핸들러가 나열하지 않아 캐치올로 떨어져 500 이 된다.
    *
-   * <p>버그가 아니라 <b>합의된 동작</b>이라 여기 못 박아 둔다. 어느 하나를 제대로 된 4xx 로 내리기로 하면 그때 {@link
-   * GlobalExceptionHandler} 에 핸들러를 추가하고 이 테스트에서 그 줄을 빼면 된다. 경로 변수 타입 불일치가 STAR-54 에서 그렇게 빠져나갔다.
-   *
-   * <p><b>필수 쿼리 파라미터 누락은 여기 남는다.</b> 그것은 {@code MissingServletRequestParameterException} 이라 타입 불일치
-   * 핸들러가 잡지 않는다.
+   * <p>버그가 아니라 <b>합의된 동작</b>이라 여기 못 박아 둔다. 418 을 제대로 된 4xx 로 내리기로 하면 그때 {@link
+   * GlobalExceptionHandler} 에 핸들러를 추가하고 이 테스트를 지우면 된다. 경로 변수 타입 불일치가 STAR-54 에서, 파라미터 누락 · 메서드 ·
+   * Content-Type 이 STAR-87 에서 그렇게 빠져나갔다.
    */
-  @DisplayName("나열하지 않은 프로토콜 예외는 500 으로 나간다 — 합의된 동작이다.")
+  @DisplayName("나열하지 않은 프로토콜 예외(418)는 500 으로 나간다 — 합의된 동작이다.")
   @Test
   void handle_unmappedProtocolExceptions() throws Exception {
-    // 필수 쿼리 파라미터 누락 — 원래 400
-    mockMvc.perform(get("/test/search")).andExpect(status().isInternalServerError());
+    mockMvc.perform(get("/test/teapot")).andExpect(status().isInternalServerError());
+  }
 
-    // 지원하지 않는 메서드 — 원래 405
-    mockMvc.perform(post("/test/business")).andExpect(status().isInternalServerError());
+  @DisplayName("필수 쿼리 파라미터가 없으면 400 이고 INVALID_INPUT 이다.")
+  @Test
+  void handle_missingParameter() throws Exception {
+    // when
+    mockMvc
+        .perform(get("/test/search"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.code").value("INVALID_INPUT"));
 
-    // 지원하지 않는 Content-Type — 원래 415
+    // then
+    assertThat(logs.list)
+        .singleElement()
+        .satisfies(
+            event -> {
+              assertThat(event.getLevel()).isEqualTo(Level.WARN);
+              assertThat(event.getFormattedMessage()).contains("status=400", "code=INVALID_INPUT");
+            });
+  }
+
+  @DisplayName("지원하지 않는 HTTP 메서드로 요청하면 405 이고 METHOD_NOT_ALLOWED 이다.")
+  @Test
+  void handle_methodNotSupported() throws Exception {
+    // when
+    mockMvc
+        .perform(post("/test/business"))
+        .andExpect(status().isMethodNotAllowed())
+        .andExpect(jsonPath("$.code").value("METHOD_NOT_ALLOWED"));
+
+    // then
+    assertThat(logs.list)
+        .singleElement()
+        .satisfies(
+            event -> {
+              assertThat(event.getLevel()).isEqualTo(Level.WARN);
+              assertThat(event.getFormattedMessage())
+                  .contains("status=405", "code=METHOD_NOT_ALLOWED");
+            });
+  }
+
+  @DisplayName("지원하지 않는 Content-Type 으로 요청하면 415 이고 UNSUPPORTED_MEDIA_TYPE 이다.")
+  @Test
+  void handle_mediaTypeNotSupported() throws Exception {
+    // when
     mockMvc
         .perform(post("/test/posts").contentType(MediaType.TEXT_PLAIN).content("제목"))
-        .andExpect(status().isInternalServerError());
+        .andExpect(status().isUnsupportedMediaType())
+        .andExpect(jsonPath("$.code").value("UNSUPPORTED_MEDIA_TYPE"));
 
-    // 자기 status 를 들고 온 예외 — 원래 418
-    mockMvc.perform(get("/test/teapot")).andExpect(status().isInternalServerError());
+    // then
+    assertThat(logs.list)
+        .singleElement()
+        .satisfies(
+            event -> {
+              assertThat(event.getLevel()).isEqualTo(Level.WARN);
+              assertThat(event.getFormattedMessage())
+                  .contains("status=415", "code=UNSUPPORTED_MEDIA_TYPE");
+            });
   }
 
   @DisplayName("예상하지 못한 예외는 500 이고 내부 사정을 응답에 담지 않는다.")
