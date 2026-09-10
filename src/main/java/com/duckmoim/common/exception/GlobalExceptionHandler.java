@@ -6,7 +6,10 @@ import org.springframework.context.support.DefaultMessageSourceResolvable;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.web.HttpMediaTypeNotSupportedException;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
@@ -86,6 +89,33 @@ public class GlobalExceptionHandler {
   @ExceptionHandler(NoResourceFoundException.class)
   public ResponseEntity<ErrorResponse> handleNoResourceFound(NoResourceFoundException e) {
     return respond(e, CommonErrorCode.ENDPOINT_NOT_FOUND);
+  }
+
+  /**
+   * 필수 쿼리 파라미터가 없을 때다 — {@code ?nickname=} 처럼 빈 값으로 온 것과 다르다. 빈 값은 {@link
+   * HandlerMethodValidationException} 이 잡는다.
+   *
+   * <p>나열하지 않으면 캐치올로 떨어져 <b>500</b> 이 나간다. 파라미터 이름 · 타입이 담긴 예외 메시지를 그대로 쓰지 않고 공통 문구를 쓴다 — {@code
+   * handleNotReadable} 과 같은 판단이다.
+   */
+  @ExceptionHandler(MissingServletRequestParameterException.class)
+  public ResponseEntity<ErrorResponse> handleMissingParameter(
+      MissingServletRequestParameterException e) {
+    return respond(e, CommonErrorCode.INVALID_INPUT);
+  }
+
+  /** 매핑에 없는 HTTP 메서드로 부를 때다 — 나열하지 않으면 캐치올로 떨어져 <b>500</b> 이 나간다. */
+  @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+  public ResponseEntity<ErrorResponse> handleMethodNotSupported(
+      HttpRequestMethodNotSupportedException e) {
+    return respond(e, CommonErrorCode.METHOD_NOT_ALLOWED);
+  }
+
+  /** 지원하지 않는 {@code Content-Type} 으로 부를 때다 — 나열하지 않으면 캐치올로 떨어져 <b>500</b> 이 나간다. */
+  @ExceptionHandler(HttpMediaTypeNotSupportedException.class)
+  public ResponseEntity<ErrorResponse> handleMediaTypeNotSupported(
+      HttpMediaTypeNotSupportedException e) {
+    return respond(e, CommonErrorCode.UNSUPPORTED_MEDIA_TYPE);
   }
 
   @ExceptionHandler(Exception.class)
