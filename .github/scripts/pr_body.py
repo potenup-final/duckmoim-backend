@@ -8,8 +8,6 @@ line for a person to fill in.
 
 Reads one JSON object on stdin:
     {"issue": <Jira issue>, "body": "..."}
-`issue_number` is still accepted and ignored, so the workflow's payload keeps
-working unchanged.
 Writes the new body on stdout.
 """
 
