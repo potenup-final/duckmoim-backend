@@ -280,10 +280,15 @@ jobs:
       # 전환 전 게이트다. 유휴 서버가 스스로 UP 이라고 답해야 리스너를 옮긴다.
       # 여기서 실패하면 리스너를 건드리지 않으므로 사용자는 계속 옛 버전을 쓴다 —
       # 배포가 실패한 것이지 서비스가 죽은 것이 아니다.
+      #
+      # /api/health 가 아니라 /actuator/health 를 본다. 앞의 것은 상수를 돌려주므로
+      # DB 에 못 붙는 버전도 이 게이트를 통과했다 — 배포는 초록불인데 전환 직후 모든
+      # 요청이 500 이 되고, 아래 스모크 테스트의 자동 롤백도 발동하지 않는다.
+      # 뒤의 것은 DataSource 커넥션을 실제로 얻어 보고 실패하면 503 을 낸다.
       - name: 유휴 서버 헬스체크
         run: |
           for i in $(seq 1 20); do
-            if curl -fsS "http://$DEPLOY_HOST:8080/api/health" | grep -q '"status":"UP"'; then
+            if curl -fsS "http://$DEPLOY_HOST:8080/actuator/health" | grep -q '"status":"UP"'; then
               echo "$DEPLOY_COLOR 기동 확인 — ${i}회차에서 UP"
               exit 0
             fi
@@ -329,6 +334,9 @@ jobs:
             sleep 5
           done
 
+          # 여기만 /api/health 다. 이 호출은 ALB 를 통과하는데, /actuator/* 는 리스너 규칙으로
+          # 인터넷에서 막을 자리라 옮기면 그 규칙과 충돌한다. 깊은 판정은 위 게이트가 이미
+          # 했고, 여기가 보는 것은 「리스너가 실제로 이 색을 향하고 응답이 오는가」다.
           if [ "$STATE" = "healthy" ]; then
             for i in $(seq 1 10); do
               if curl -fsS "$SERVICE_URL/api/health" | grep -q '"status":"UP"'; then
