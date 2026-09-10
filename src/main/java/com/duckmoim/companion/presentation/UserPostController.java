@@ -55,10 +55,14 @@ public class UserPostController {
    * <p><b>없는 회원번호로 물으면 200 과 빈 페이지다.</b> 404 를 내려면 회원 조회가 한 번 더 붙는데, 없는 회원과 글이 없는 회원의 응답이 어차피 같아 존재
    * 여부가 새지 않는다. 프로필 단건이 404 를 내므로 화면은 그쪽으로 판단한다.
    *
+   * <p><b>탈퇴한 회원도 같다 — 200 과 빈 페이지다</b> (AU-11). 프로필 단건이 404 인데 그 사람의 글 목록만 계속 나오던 자리를 닫았다. 탈퇴만 404
+   * 로 올리지 않은 것은 위 문단과 같은 이유다 — 그러면 <b>탈퇴자와 없는 회원을 구분해 주는 신호</b>가 생긴다. 글은 전체 목록에는 그대로 남고 (결정 D-3),
+   * 그쪽에서는 작성자만 자리표시자로 뜬다.
+   *
    * <p><b>이 매핑이 {@code /me/posts} 보다 넓다.</b> 스프링이 리터럴 경로를 변수 경로보다 먼저 골라 그쪽으로 간다. 우선순위가 뒤집히면 남의 내역이
    * 열리는 것이 아니라 <b>{@code "me"} 를 {@code Long} 으로 바꾸다 터진다</b> — 조용히 뒤집히지 않게 테스트로 못박아 두었다.
    */
-  @Operation(summary = "유저가 쓴 모집글 조회", description = "작성 최신순이다. 없는 회원이면 빈 페이지가 온다.")
+  @Operation(summary = "유저가 쓴 모집글 조회", description = "작성 최신순이다. 없거나 탈퇴한 회원이면 빈 페이지가 온다.")
   @GetMapping("/{userId}/posts")
   public UserPostListResponse getUserPosts(@PathVariable Long userId, UserPostListRequest request) {
 
