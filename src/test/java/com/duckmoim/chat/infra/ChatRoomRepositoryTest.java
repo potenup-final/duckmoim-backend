@@ -71,6 +71,27 @@ class ChatRoomRepositoryTest {
   }
 
   /**
+   * 방 번호로 읽는 경로도 멤버를 함께 가져온다 (CH-06).
+   *
+   * <p><b>이 클래스에 {@code @Transactional} 이 없는 것이 곧 단언이다.</b> 지연 로딩이면 {@code currentMembers()} 에서 세션이
+   * 닫혀 터진다 — 트랜잭션 안에서 검증하면 {@code @EntityGraph} 를 지워도 초록불이라 아무것도 증명하지 않는다.
+   */
+  @DisplayName("방 번호로 찾은 방도 멤버를 함께 읽는다.")
+  @Test
+  void findById() {
+    // given
+    Long roomId = chatRoomRepository.saveAndFlush(ChatRoom.openFor(POST_ID, HOST_ID)).getId();
+
+    // when
+    ChatRoom found = chatRoomRepository.findById(roomId).orElseThrow();
+
+    // then
+    assertThat(found.currentMembers())
+        .extracting(ChatRoomMember::getUserId)
+        .containsExactly(HOST_ID);
+  }
+
+  /**
    * I-16 의 이중 방어다 — 유니크 제약({@code post_id}).
    *
    * <p><b>경쟁이 생길 수 있는 자리가 실재한다.</b> 방을 만드는 방아쇠가 모집글 작성 하나라 정상 경로에서는 한 번뿐이지만, CH-01a 의 백필과 작성이 배포
