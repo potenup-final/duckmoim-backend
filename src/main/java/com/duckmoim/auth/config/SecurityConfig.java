@@ -23,8 +23,17 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 @Configuration
 public class SecurityConfig {
 
+  // 여기 두 actuator 경로는 사람이 아니라 인프라가 부른다 — ALB 대상 그룹의 상태 검사와
+  // 각 EC2 의 Alloy 다. 둘 다 토큰을 들고 다니지 않으므로 인가를 요구하면 상태 검사가
+  // 401 을 받고 인스턴스가 통째로 로테이션에서 빠진다.
+  //
+  // 열어도 되는 이유는 노출 자체가 좁기 때문이다 (application.yml 의
+  // management.endpoints.web.exposure.include). 여기 이름을 더하기 전에 그 목록을 먼저 본다 —
+  // /actuator/env 를 노출해 두고 이 배열에 더하면 DB 비밀번호가 인터넷에 나간다.
   private static final String[] INFRA = {
     "/api/health",
+    "/actuator/health",
+    "/actuator/prometheus",
     "/error",
     "/v3/api-docs/**",
     "/swagger-ui/**",
