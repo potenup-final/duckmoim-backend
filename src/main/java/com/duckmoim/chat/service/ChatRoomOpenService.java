@@ -24,6 +24,9 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * <p><b>I-16 을 여기서 미리 세지 않는다.</b> 도메인-모델링.md 「5. 불변식」이 이중 방어를 유니크 제약으로 정했고, 사전 조회를 넣으면 동시 요청에서 어차피
  * 깨지는 검사가 하나 늘어난다.
+ *
+ * <p><b>이 클래스를 다음 리스너의 본으로 삼지 마라.</b> 같은 트랜잭션은 「방 없는 모집글을 만들지 않는다」는 이 부수효과만의 근거로 고른 것이다. 무엇을 어떻게
+ * 붙이는지는 {@link CompanionPostOpened} 의 「구독 규약」에 있다 — 밖으로 나가는 호출을 여기와 같은 방식으로 붙이면 그 실패가 사용자의 글을 지운다.
  */
 @Service
 @RequiredArgsConstructor
