@@ -104,11 +104,16 @@ public class NotificationOutbox extends BaseEntity {
     return new NotificationOutbox(kind, recipientId, postId, commentId);
   }
 
+  /** 아직 보내지 않은 건인지. 워커가 「내가 처리할 건인가」를 묻는 자리다 (NT-02). */
+  public boolean isPending() {
+    return status == OutboxStatus.PENDING;
+  }
+
   /**
    * 보냈다고 적는다 (NT-02). 종착이다.
    *
-   * <p><b>이미 보낸 건을 다시 보냈다고 적지 않는다.</b> 그 일이 일어난다는 것은 워커 둘이 같은 행을 집었다는 뜻이고 (선점이 없는 동안은 가능하다 —
-   * NT-04), 조용히 넘기면 그 사실이 아무 데도 남지 않는다.
+   * <p><b>이미 보낸 건에는 부를 수 없다.</b> 이 가드는 프로그래밍 실수를 잡는 것이지 동시 실행을 잡는 것이 아니다 — 선점이 없는 동안 두 워커가 같은 건을 집는
+   * 것은 정상으로 일어나고 (NT-04), 그 경우는 부르는 쪽이 {@link #isPending} 으로 먼저 걸러 낸다. 여기서 예외로 다루면 배치의 주기 전체가 끝난다.
    */
   public void markSent() {
     requirePending();

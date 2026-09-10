@@ -78,18 +78,59 @@ class NotificationDispatchServiceTest {
     assertThat(notificationDispatchService.findSendableIds(NOW, 10)).isEmpty();
   }
 
-  @DisplayName("같은 아웃박스 행으로 알림이 두 번 만들어지지 않는다.")
+  @DisplayName("남이 이미 보낸 건은 다시 보내지 않는다.")
   @Test
-  void dispatch_isIdempotent() {
-    // given — 알림을 만든 뒤 상태를 바꾸기 전에 워커가 죽은 상태를 만든다
+  void dispatch_alreadySentByAnotherWorker() {
+    // given — 선점이 없어 (NT-04) 두 워커가 같은 건을 집는 상황이다
     long outboxId = givenPendingOutbox();
     notificationDispatchService.dispatch(outboxId);
-    jdbc.update("UPDATE notification_outbox SET status = 'PENDING' WHERE id = ?", outboxId);
+
+    // when — 뒤에 집은 워커가 같은 건을 부른다
+    boolean sent = notificationDispatchService.dispatch(outboxId);
+
+    // then — 예외 없이 넘어가고 알림도 늘지 않는다
+    assertThat(sent).isFalse();
+    assertThat(notifications()).hasSize(1);
+  }
+
+  @DisplayName("남이 이미 보낸 건에는 실패를 적지 않는다.")
+  @Test
+  void recordFailure_alreadySentByAnotherWorker() {
+    // given
+    long outboxId = givenPendingOutbox();
+    notificationDispatchService.dispatch(outboxId);
+
+    // when — 유니크 제약에 걸려 롤백된 워커가 실패를 적으러 온 상황이다
+    boolean movedToDlq = notificationDispatchService.recordFailure(outboxId, NOW);
+
+    // then — 전달된 알림의 시도 횟수를 올리면 세 번 겹칠 때 DLQ 로 간다
+    assertThat(movedToDlq).isFalse();
+    assertThat(outboxColumn(outboxId, "attempts")).isEqualTo(0);
+    assertThat(outboxColumn(outboxId, "status")).isEqualTo("SENT");
+  }
+
+  @DisplayName("이미 알림이 있는 건은 알림을 새로 만들지 않는다.")
+  @Test
+  void dispatch_notificationAlreadyExists() {
+    // given — 알림만 있고 아웃박스는 아직 PENDING 인 상태를 직접 만든다
+    long outboxId = givenPendingOutbox();
+    jdbc.update(
+        """
+        INSERT INTO notification
+            (outbox_id, recipient_id, kind, post_id, comment_id, created_at, updated_at)
+        VALUES (?, ?, 'POST_COMMENTED', ?, ?, ?, ?)
+        """,
+        outboxId,
+        RECIPIENT_ID,
+        POST_ID,
+        COMMENT_ID,
+        NOW,
+        NOW);
 
     // when
     boolean sent = notificationDispatchService.dispatch(outboxId);
 
-    // then — 새로 만들지 않고 보냈다고만 적는다
+    // then — 유니크 제약에 걸리는 대신 보냈다고만 적는다
     assertThat(sent).isFalse();
     assertThat(notifications()).hasSize(1);
     assertThat(outboxColumn(outboxId, "status")).isEqualTo("SENT");

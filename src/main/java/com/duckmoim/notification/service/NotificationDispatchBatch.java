@@ -21,9 +21,12 @@ import org.springframework.stereotype.Service;
  * <p><b>여기는 트랜잭션을 열지 않는다.</b> 건마다 트랜잭션이 따로여서 (실패 기록이 롤백에 함께 지워지면 안 된다) 반복만 진다. 트랜잭션 경계는 {@link
  * NotificationDispatchService} 다.
  *
- * <p><b>선점이 없다.</b> 인스턴스가 둘이면 두 워커가 같은 건을 집을 수 있다 (NT-04 가 넣는다). 그때 알림함이 두 벌이 되는 것은 {@code
- * notification} 표의 {@code outbox_id} 유니크 제약이 막고, 뒤에 집은 쪽은 「이미 있다」로 읽어 상태만 바꾼다. <b>남는 낭비는 헛일이지 중복
- * 발송이 아니다.</b>
+ * <p><b>선점이 없다.</b> 인스턴스가 둘이면 두 워커가 같은 건을 집을 수 있다 (NT-04 가 넣는다). 알림함이 두 벌이 되는 것은 {@code
+ * notification} 표의 {@code outbox_id} 유니크 제약이 막는다 — <b>남는 낭비는 헛일이지 중복 발송이 아니다.</b>
+ *
+ * <p><b>그 헛일이 조용히 끝나야 한다.</b> 뒤에 집은 워커는 두 갈래로 끝난다 — 앞선 워커가 이미 커밋했으면 {@link
+ * NotificationDispatchService#dispatch} 가 「보낼 것이 아니다」로 넘어가고, 커밋이 그 사이에 끼면 유니크 제약에 걸려 롤백된 뒤 실패 기록도
+ * 「남이 보냈다」로 넘어간다. 둘 다 예외가 아니다. 예외로 다루면 주기가 끝나고, 실패로 세면 전달된 알림이 DLQ 로 간다.
  */
 @Service
 @Slf4j
@@ -113,21 +116,37 @@ public class NotificationDispatchBatch {
       return notificationDispatchService.dispatch(outboxId);
 
     } catch (Exception exception) {
-      boolean exhausted = notificationDispatchService.recordFailure(outboxId, nowInUtc);
-
-      if (exhausted) {
-        log.error(
-            "[NotificationDispatchBatch.dispatchOne] Notification gave up. outboxId={}",
-            outboxId,
-            exception);
-      } else {
-        log.warn(
-            "[NotificationDispatchBatch.dispatchOne] Notification failed. outboxId={}, exception={}",
-            outboxId,
-            exception.getClass().getSimpleName());
-      }
+      recordFailure(outboxId, nowInUtc, exception);
 
       return false;
+    }
+  }
+
+  /**
+   * 실패를 적는다. <b>이 호출이 실패해도 주기를 끝내지 않는다.</b>
+   *
+   * <p>catch 블록 안에서 부르는 것이라 여기서 나간 예외는 {@code dispatchOne} 과 반복문을 뚫고 주기 전체를 끝낸다 — 한 건의 실패가 남은 건을 다음
+   * 주기까지 미루게 된다. 기록을 못 남기는 것은 다음 주기가 다시 시도하면 되는 일이지만, 주기가 끝나는 것은 그렇지 않다.
+   */
+  private void recordFailure(Long outboxId, LocalDateTime nowInUtc, Exception cause) {
+    try {
+      if (notificationDispatchService.recordFailure(outboxId, nowInUtc)) {
+        log.error(
+            "[NotificationDispatchBatch.recordFailure] Notification gave up. outboxId={}",
+            outboxId,
+            cause);
+      } else {
+        log.warn(
+            "[NotificationDispatchBatch.recordFailure] Notification failed. outboxId={},"
+                + " exception={}",
+            outboxId,
+            cause.getClass().getSimpleName());
+      }
+    } catch (Exception exception) {
+      log.error(
+          "[NotificationDispatchBatch.recordFailure] Failed to record failure. outboxId={}",
+          outboxId,
+          exception);
     }
   }
 
