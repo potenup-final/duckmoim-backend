@@ -31,6 +31,21 @@ public class ChatRoomQueryRepositoryImpl implements ChatRoomQueryRepository {
        ORDER BY p.meetAt ASC, r.id ASC
       """;
 
+  /**
+   * 방장·초대 응답({@code ChatRoomInvitation})과 달리 여기는 {@code User} 를 조인한다 — 방 상세(CH-06)의 멤버 블록에 닉네임 ·
+   * 아바타가 필요해서다 ({@code AuthoredPost} 와 같은 근거).
+   */
+  private static final String SELECT_MEMBER =
+      """
+      SELECT new com.duckmoim.chat.infra.AuthoredChatRoomMember(
+                 m.userId, u.nickname, u.profileImageUrl, u.lastSeenAt, u.status)
+        FROM ChatRoomMember m
+        JOIN User u ON u.id = m.userId
+       WHERE m.room.id = :roomId
+         AND m.leftAt IS NULL
+       ORDER BY m.joinedAt ASC
+      """;
+
   @PersistenceContext private EntityManager entityManager;
 
   @Override
@@ -38,6 +53,14 @@ public class ChatRoomQueryRepositoryImpl implements ChatRoomQueryRepository {
     return entityManager
         .createQuery(SELECT_SUMMARY, ChatRoomSummary.class)
         .setParameter("userId", userId)
+        .getResultList();
+  }
+
+  @Override
+  public List<AuthoredChatRoomMember> findMembersOf(Long roomId) {
+    return entityManager
+        .createQuery(SELECT_MEMBER, AuthoredChatRoomMember.class)
+        .setParameter("roomId", roomId)
         .getResultList();
   }
 }

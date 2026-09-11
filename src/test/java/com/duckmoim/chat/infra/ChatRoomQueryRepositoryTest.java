@@ -1,9 +1,11 @@
 package com.duckmoim.chat.infra;
 
 import static com.duckmoim.companion.CompanionPostFixture.aCompanionPost;
+import static com.duckmoim.identity.UserFixture.aUser;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.duckmoim.chat.domain.ChatRoom;
+import com.duckmoim.identity.domain.SignupStatus;
 import java.time.LocalDateTime;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
@@ -114,5 +116,67 @@ class ChatRoomQueryRepositoryTest {
 
     // then
     assertThat(summaries).extracting(ChatRoomSummary::postId).doesNotContain(postId);
+  }
+
+  @DisplayName("방 상세의 멤버 목록에 유저 정보가 함께 실린다.")
+  @Test
+  void findMembersOf() {
+    // given
+    long hostUserId = aUser().nickname("방장픽스처").insert(jdbc);
+    long postId = aCompanionPost().title("CH-06 픽스처 방").insert(jdbc);
+    ChatRoom room = chatRoomRepository.saveAndFlush(ChatRoom.openFor(postId, hostUserId));
+
+    // when
+    var members = chatRoomRepository.findMembersOf(room.getId());
+
+    // then
+    assertThat(members)
+        .hasSize(1)
+        .first()
+        .satisfies(
+            member -> {
+              assertThat(member.userId()).isEqualTo(hostUserId);
+              assertThat(member.nickname()).isEqualTo("방장픽스처");
+            });
+  }
+
+  @DisplayName("나간 멤버는 방 상세 목록에 없다.")
+  @Test
+  void findMembersOf_excludesLeftMember() {
+    // given
+    long hostUserId = aUser().insert(jdbc);
+    long guestUserId = aUser().insert(jdbc);
+    long postId = aCompanionPost().title("CH-06 픽스처 나간멤버").insert(jdbc);
+    ChatRoom room = chatRoomRepository.saveAndFlush(ChatRoom.openFor(postId, hostUserId));
+    room.invite(guestUserId);
+    chatRoomRepository.saveAndFlush(room);
+    jdbc.update(
+        "UPDATE chat_room_member SET left_at = UTC_TIMESTAMP(6)"
+            + " WHERE room_id = ? AND user_id = ?",
+        room.getId(),
+        guestUserId);
+
+    // when
+    var members = chatRoomRepository.findMembersOf(room.getId());
+
+    // then
+    assertThat(members).extracting(AuthoredChatRoomMember::userId).containsExactly(hostUserId);
+  }
+
+  @DisplayName("탈퇴한 멤버도 목록에 남고 상태만 실린다.")
+  @Test
+  void findMembersOf_includesWithdrawnMember() {
+    // given
+    long withdrawnUserId = aUser().status(SignupStatus.WITHDRAWN).insert(jdbc);
+    long postId = aCompanionPost().title("CH-06 픽스처 탈퇴멤버").insert(jdbc);
+    ChatRoom room = chatRoomRepository.saveAndFlush(ChatRoom.openFor(postId, withdrawnUserId));
+
+    // when
+    var members = chatRoomRepository.findMembersOf(room.getId());
+
+    // then
+    assertThat(members)
+        .first()
+        .satisfies(member -> assertThat(member.status()).isEqualTo(SignupStatus.WITHDRAWN));
   }
 }

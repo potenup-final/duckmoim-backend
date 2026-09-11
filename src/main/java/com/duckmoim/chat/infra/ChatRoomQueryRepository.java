@@ -23,4 +23,12 @@ public interface ChatRoomQueryRepository {
    * <p><b>커서가 없다.</b> 한 사람이 속한 방 수가 작아 페이지네이션의 이득보다 화면 쪽 구현 비용이 크다고 판단했다 (이 티켓 계획의 참고 사항).
    */
   List<ChatRoomSummary> findSummariesForMember(Long userId);
+
+  /**
+   * 방 상세(CH-06)의 멤버 목록. 지금 멤버만, 들어온 순서로 읽는다.
+   *
+   * <p><b>탈퇴한 멤버는 빠지지 않는다.</b> 익명화는 응답 조립 시점에 {@link AuthoredChatRoomMember#display} 가 한다 — 나간 사람만
+   * 여기서 거른다({@code leftAt IS NULL}).
+   */
+  List<AuthoredChatRoomMember> findMembersOf(Long roomId);
 }
