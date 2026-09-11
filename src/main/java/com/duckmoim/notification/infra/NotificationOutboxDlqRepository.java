@@ -14,4 +14,12 @@ public interface NotificationOutboxDlqRepository extends Repository<Notification
 
   /** 못 보낸 건 하나를 옮겨 담는다. */
   NotificationOutboxDlq save(NotificationOutboxDlq dlq);
+
+  /**
+   * 포기한 건이 몇 개인지 (NT-05).
+   *
+   * <p><b>조회는 아직 못 열지만 세는 것은 연다.</b> 지금 DLQ 를 볼 수단이 이관 시점의 ERROR 로그 한 줄뿐이라, 운영 중 쌓여도 로그를 뒤지지 않으면
+   * 모른다. 건수는 응답 필드를 정할 필요가 없어 짐작으로 여는 문이 아니다.
+   */
+  long count();
 }

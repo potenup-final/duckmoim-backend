@@ -6,8 +6,10 @@ import com.duckmoim.notification.domain.Notification;
 import com.duckmoim.notification.domain.NotificationOutboxDlq;
 import com.duckmoim.notification.infra.NotificationOutboxDlqRepository;
 import com.duckmoim.notification.infra.NotificationRepository;
+import java.time.Clock;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.PageRequest;
@@ -44,33 +46,70 @@ public class NotificationDispatchService {
   /** 이만큼 시도하고 못 보내면 DLQ 로 옮긴다 (NT-03). */
   private final int maxAttempts;
 
+  /**
+   * 선점한 건을 남이 못 집게 막아 두는 시간 (NT-04).
+   *
+   * <p><b>짧으면 리스가 만료된 건을 남이 집고, 길면 죽은 워커가 쥔 건이 오래 멈춰 있다.</b> 한 건의 발송이 알림 INSERT 하나라 밀리초 단위인데, 그보다
+   * 충분히 길고 가장 짧은 백오프(1분)보다는 짧아야 재시도 간격과 뒤섞이지 않는다.
+   */
+  private final Duration lease;
+
+  /**
+   * 리스를 <b>거는 그 순간</b>의 시각을 얻으려고 받는다 (NT-04).
+   *
+   * <p>부르는 쪽이 넘기는 {@code nowInUtc} 는 <b>사이클이 시작한 시각</b>이라 쓸 수 없다. {@code NotificationDispatchBatch}
+   * 가 한 사이클에 청크를 최대 100번 돌리므로, 그 값으로 리스를 계산하면 뒤쪽 청크에서는 <b>이미 지나간 시각</b>이 적힌다.
+   */
+  private final Clock clock;
+
   public NotificationDispatchService(
       NotificationOutboxRepository outboxRepository,
       NotificationRepository notificationRepository,
       NotificationOutboxDlqRepository dlqRepository,
+      Clock clock,
       @Value("${duckmoim.notification.worker.backoff}") List<Duration> backoff,
-      @Value("${duckmoim.notification.worker.max-attempts}") int maxAttempts) {
+      @Value("${duckmoim.notification.worker.max-attempts}") int maxAttempts,
+      @Value("${duckmoim.notification.worker.lease}") Duration lease) {
 
     this.outboxRepository = outboxRepository;
     this.notificationRepository = notificationRepository;
     this.dlqRepository = dlqRepository;
+    this.clock = clock;
     this.backoff = backoff;
     this.maxAttempts = maxAttempts;
+    this.lease = lease;
   }
 
   /**
-   * 지금 보낼 수 있는 건의 번호를 집는다.
+   * 지금 보낼 수 있는 건을 <b>집어서 내 것으로 표시하고</b> 번호를 돌려준다 (NT-04).
+   *
+   * <p><b>읽기만 하던 것이 쓰기가 됐다.</b> 예전에는 조회 전용이었고 그래서 두 워커가 같은 목록을 받았다 — 200건을 워커 둘이 돌렸을 때 162건이 알림
+   * INSERT 에서 유니크 제약에 부딪혀 롤백됐다(실측). 이제 잠그고 읽은 뒤 리스를 적으므로 그 목록이 갈린다.
+   *
+   * <p><b>잠금과 리스가 둘 다 필요하다.</b> 잠금은 이 트랜잭션이 끝나면 풀리는데 발송은 건마다 다른 트랜잭션이라, 잠금만으로는 그 사이에 남이 집는다. 리스는
+   * 잠금이 풀린 뒤에도 남는 표시다. 반대로 리스만 두고 잠그지 않으면 <b>둘이 동시에 읽고 둘 다 리스를 쓰는</b> 경쟁이 남는다.
    *
    * <p><b>엔티티가 아니라 번호를 돌려준다.</b> 건마다 트랜잭션이 따로라, 여기서 읽은 엔티티는 부르는 쪽에서 이미 준영속이다. 번호만 넘기고 각 트랜잭션이 다시
    * 읽는다.
    *
    * <p>{@code Pageable} 을 시그니처에 두지 않는다 — 아키텍처 컨벤션이 service 의 공개 시그니처에 Spring Data 타입을 금지했다.
+   *
+   * <p><b>리스는 {@code nowInUtc} 가 아니라 지금 시각에서 잰다.</b> 넘어오는 값은 <b>사이클이 시작한 시각</b>이고 드레인은 최대 100청크를
+   * 도는데, 그 값으로 계산하면 뒤쪽 청크에서 <b>써 넣는 순간 이미 지난 시각</b>이 적힌다. 그러면 다른 워커의 조회 조건 {@code nextAttemptAt <=
+   * now} 가 곧바로 참이 되어 선점이 없던 상태로 되돌아간다 — <b>적체가 쌓였을 때만</b> 일어나므로 NT-04 가 필요한 바로 그 순간에 꺼진다.
+   *
+   * <p><b>조회에 쓰는 {@code nowInUtc} 는 고정인 채 둔다.</b> 그것은 「이 사이클이 보는 세계」를 정하는 값이라, 드레인 도중 백오프가 풀린 건이 같은
+   * 사이클에 끼어드는 것을 막는다.
    */
-  @Transactional(readOnly = true)
-  public List<Long> findSendableIds(LocalDateTime nowInUtc, int chunk) {
-    return outboxRepository.findSendable(nowInUtc, maxAttempts, PageRequest.ofSize(chunk)).stream()
-        .map(NotificationOutbox::getId)
-        .toList();
+  @Transactional
+  public List<Long> claimSendableIds(LocalDateTime nowInUtc, int chunk) {
+    List<NotificationOutbox> claimed =
+        outboxRepository.findSendableForUpdate(nowInUtc, maxAttempts, PageRequest.ofSize(chunk));
+
+    LocalDateTime leaseUntil = LocalDateTime.ofInstant(clock.instant(), ZoneOffset.UTC).plus(lease);
+    claimed.forEach(outbox -> outbox.claim(leaseUntil));
+
+    return claimed.stream().map(NotificationOutbox::getId).toList();
   }
 
   /**

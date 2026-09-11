@@ -67,7 +67,7 @@ class NotificationDispatchServiceTest {
 
   @DisplayName("보낸 아웃박스 행은 다시 집히지 않는다.")
   @Test
-  void findSendableIds_excludesSent() {
+  void claimSendableIds_excludesSent() {
     // given
     long outboxId = givenPendingOutbox();
 
@@ -75,7 +75,7 @@ class NotificationDispatchServiceTest {
     notificationDispatchService.dispatch(outboxId);
 
     // then
-    assertThat(notificationDispatchService.findSendableIds(NOW, 10)).isEmpty();
+    assertThat(notificationDispatchService.claimSendableIds(NOW, 10)).isEmpty();
   }
 
   @DisplayName("남이 이미 보낸 건은 다시 보내지 않는다.")
@@ -153,7 +153,7 @@ class NotificationDispatchServiceTest {
 
   @DisplayName("재시도 시각이 되기 전에는 다시 집지 않는다.")
   @Test
-  void findSendableIds_waitsForNextAttempt() {
+  void claimSendableIds_waitsForNextAttempt() {
     // given
     long outboxId = givenPendingOutbox();
 
@@ -161,8 +161,8 @@ class NotificationDispatchServiceTest {
     notificationDispatchService.recordFailure(outboxId, NOW);
 
     // then
-    assertThat(notificationDispatchService.findSendableIds(NOW, 10)).isEmpty();
-    assertThat(notificationDispatchService.findSendableIds(NOW.plusMinutes(1), 10))
+    assertThat(notificationDispatchService.claimSendableIds(NOW, 10)).isEmpty();
+    assertThat(notificationDispatchService.claimSendableIds(NOW.plusMinutes(1), 10))
         .containsExactly(outboxId);
   }
 
@@ -212,7 +212,7 @@ class NotificationDispatchServiceTest {
 
   @DisplayName("DLQ 로 옮긴 건은 더 집히지 않는다.")
   @Test
-  void findSendableIds_excludesDlq() {
+  void claimSendableIds_excludesDlq() {
     // given
     long outboxId = givenPendingOutbox();
     notificationDispatchService.recordFailure(outboxId, NOW);
@@ -222,7 +222,7 @@ class NotificationDispatchServiceTest {
     notificationDispatchService.recordFailure(outboxId, NOW);
 
     // then — 아무리 기다려도 다시 집히지 않는다
-    assertThat(notificationDispatchService.findSendableIds(NOW.plusYears(1), 10)).isEmpty();
+    assertThat(notificationDispatchService.claimSendableIds(NOW.plusYears(1), 10)).isEmpty();
   }
 
   private long givenPendingOutbox() {

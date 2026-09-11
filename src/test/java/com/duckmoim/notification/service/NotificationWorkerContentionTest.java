@@ -1,0 +1,376 @@
+package com.duckmoim.notification.service;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.core.JdbcTemplate;
+
+/**
+ * 워커 둘이 같은 아웃박스를 훑을 때 무슨 일이 생기는가 (NT-04).
+ *
+ * <p><b>이 클래스가 이 티켓의 측정 장치다.</b> 티켓이 선점 방식을 「실제로 돌려보고 고른다」로 정했고, 방식을 바꿔도 이 장치는 그대로 쓴다 — 재는 자리가 한
+ * 곳이어야 숫자를 비교할 수 있다.
+ *
+ * <p><b>배치가 아니라 서비스를 돌린다.</b> {@code NotificationDispatchBatch} 는 보낸 건수만 세고 <b>겹쳐서 헛일한 횟수</b>를 세지
+ * 않는다. 지금 구조에서 새는 것이 중복 발송이 아니라 헛일이므로, 그 값을 못 보면 선점이 실제로 무엇을 줄였는지 알 수 없다.
+ *
+ * <p><b>{@code @Transactional} 을 붙이지 않는다.</b> 별도 스레드가 테스트의 트랜잭션에 참여하지 않아, 붙이면 롤백이 스레드가 만든 행을 지우지
+ * 못하고 검사가 <b>항상 통과하는 상태</b>가 된다 (테스트 컨벤션 「동시성」).
+ *
+ * <p>수신자와 아웃박스 번호를 남이 안 쓰는 대역에서 뗀다. 이 검사는 표 전체를 훑고 「정확히 이만큼」을 단언한다.
+ */
+@SpringBootTest
+class NotificationWorkerContentionTest {
+
+  private static final Logger log = LoggerFactory.getLogger(NotificationWorkerContentionTest.class);
+
+  /**
+   * 이 검사들이 워커에게 「사이클 시작 시각」이라고 넘기는 값.
+   *
+   * <p><b>미래 상수를 쓸 수 없다.</b> 리스는 <b>거는 순간의 시계</b>에서 재므로(NT-04), 여기에 내일 날짜를 넣으면 방금 건 리스가 그보다 과거가 되어
+   * 「남이 선점한 건은 집히지 않는다」가 코드와 무관한 이유로 뒤집힌다.
+   *
+   * <p><b>{@code Clock} 빈을 고정하지 않는 이유는 컨텍스트 하나가 커넥션을 더 쓰기 때문이다.</b> 이 클래스는 시각의 <b>절대값</b>이 아니라 리스와의
+   * 앞뒤만 보므로 실제 시계로 충분하다.
+   */
+  private static final LocalDateTime NOW = LocalDateTime.now(ZoneOffset.UTC);
+
+  /** 한 워커가 한 번에 집는 건수. 운영 기본값과 같다. */
+  private static final int CHUNK = 100;
+
+  /**
+   * 한 워커가 도는 최대 바퀴.
+   *
+   * <p>조회 조건과 처리 결과가 어긋나면 같은 건을 무한히 다시 집는다. 운영 배치에 같은 이유의 상한이 있고 (`MAX_CHUNKS`), 여기서도 없으면 실패가 무한
+   * 루프로 나타나 원인을 못 좁힌다.
+   */
+  private static final int MAX_ROUNDS = 100;
+
+  private static final long RECIPIENT_ID = 92_001L;
+
+  private final AtomicLong outboxIds = new AtomicLong(92_000);
+
+  @Autowired private NotificationDispatchService notificationDispatchService;
+  @Autowired private JdbcTemplate jdbc;
+
+  @BeforeEach
+  @AfterEach
+  void clean() {
+    jdbc.update("DELETE FROM notification");
+    jdbc.update("DELETE FROM notification_outbox_dlq");
+    jdbc.update("DELETE FROM notification_outbox");
+  }
+
+  /**
+   * {@code NT-04} 의 검증 기준이다 — <i>워커 2개 동시 구동 시 중복 발송 0건</i>.
+   *
+   * <p><b>선점이 없는 지금도 이 검사는 통과한다.</b> {@code notification} 표의 {@code outbox_id} 유니크가 둘째 알림을 막기 때문이다.
+   * 그래서 이 검사만으로는 선점이 들어왔는지 알 수 없고, 아래 기준선 검사가 그 자리를 맡는다.
+   */
+  @DisplayName("워커 둘이 동시에 돌아도 알림이 한 번만 생긴다.")
+  @Test
+  void dispatch_withTwoWorkers() {
+    claimStrategy = notificationDispatchService::claimSendableIds;
+    givenPendingOutbox(200);
+
+    Run run = runWorkers(2);
+
+    assertThat(run.sent()).as("보낸 건수가 쌓인 건수와 같아야 한다").isEqualTo(200);
+    assertThat(notificationCount()).isEqualTo(200);
+    assertThat(distinctOutboxCount()).as("한 발행에서 알림이 둘 나오면 안 된다").isEqualTo(200);
+  }
+
+  /**
+   * 선점이 들어오면 <b>줄어야 하는 숫자</b>를 남긴다.
+   *
+   * <p>헛일은 「남이 이미 처리한 건을 집어서 아무것도 못 한 횟수」다. 지금은 두 워커가 같은 목록을 받으므로 이 값이 크고, 선점이 들어오면 0 에 가까워져야 한다. 이
+   * 검사는 값을 <b>기록</b>하는 것이 목적이라 상한을 걸지 않는다 — 걸면 선점 방식을 바꿀 때마다 기대값을 손봐야 하고, 그러면 기록이 아니라 잔소리가 된다.
+   */
+  @DisplayName("워커 둘이 겹쳐 집은 횟수를 기록한다.")
+  @Test
+  void dispatch_measuresWastedPicks() {
+    claimStrategy = notificationDispatchService::claimSendableIds;
+    givenPendingOutbox(200);
+
+    Run run = runWorkers(2);
+
+    log.info(
+        "[측정 SKIP-LOCKED] 워커 2 · 건수 200 → 보냄 {}, 조용히 넘김 {}, 충돌 {}, 걸린 시간 {}ms",
+        run.sent(),
+        run.skipped(),
+        run.collided(),
+        run.elapsedMillis());
+
+    assertThat(run.sent() + run.skipped() + run.collided())
+        .as("집은 횟수는 보낸 것과 헛일의 합이다")
+        .isGreaterThanOrEqualTo(200);
+  }
+
+  @DisplayName("남이 선점한 건은 집히지 않는다.")
+  @Test
+  void claimSendableIds_alreadyClaimed() {
+    givenPendingOutbox(3);
+
+    List<Long> mine = notificationDispatchService.claimSendableIds(NOW, CHUNK);
+    List<Long> theirs = notificationDispatchService.claimSendableIds(NOW, CHUNK);
+
+    assertThat(mine).hasSize(3);
+    assertThat(theirs).as("먼저 집은 워커가 다 가져갔으면 뒤는 빈손이다").isEmpty();
+  }
+
+  /**
+   * 선점이 영구 점유가 되면 안 된다.
+   *
+   * <p>{@code CLAIMED} 같은 상태로 표시했다면 워커가 죽은 순간 그 건이 표에 박제되고, 빼내는 장치를 따로 만들어야 한다. 리스는 시각이라 지나면 저절로
+   * 풀린다 — 이 검사가 그 성질을 지킨다.
+   */
+  @DisplayName("선점한 워커가 죽어도 리스가 풀리면 다시 집힌다.")
+  @Test
+  void claimSendableIds_afterLeaseExpires() {
+    givenPendingOutbox(1);
+
+    List<Long> mine = notificationDispatchService.claimSendableIds(NOW, CHUNK);
+    List<Long> beforeExpiry = notificationDispatchService.claimSendableIds(NOW, CHUNK);
+    // 리스(30초)보다 넉넉히 뒤다. 검사가 오래 걸려도 「아직 안 지났다」로 뒤집히지 않는다.
+    List<Long> afterExpiry = notificationDispatchService.claimSendableIds(NOW.plusHours(1), CHUNK);
+
+    assertThat(beforeExpiry).isEmpty();
+    assertThat(afterExpiry).as("리스가 지나면 다시 집힌다").isEqualTo(mine);
+  }
+
+  /**
+   * 리스는 <b>집는 순간</b>부터 잰다 (NT-04).
+   *
+   * <p>넘어오는 {@code nowInUtc} 는 <b>사이클이 시작한 시각</b>이다. 그 값으로 리스를 계산하면 드레인이 길어졌을 때 <b>써 넣는 순간 이미 지난
+   * 시각</b>이 적히고, 다른 워커의 조회 조건이 곧바로 참이 되어 선점이 없던 상태로 돌아간다.
+   *
+   * <p><b>사이클이 1분 전에 시작한 상황을 그대로 넣는다.</b> 리스(30초)보다 길어야 그 자리가 드러난다 — 위 검사들은 사이클 시작과 집는 시각이 같아 이 결함을
+   * 지나친다.
+   */
+  @DisplayName("사이클이 길어져도 리스는 집는 순간부터 잰다.")
+  @Test
+  void claimSendableIds_leaseStartsAtClaimTime() {
+    givenPendingOutbox(1);
+
+    List<Long> claimed = notificationDispatchService.claimSendableIds(NOW.minusMinutes(1), CHUNK);
+
+    assertThat(claimed).hasSize(1);
+    assertThat(leaseOf(claimed.get(0))).as("이미 지난 시각을 리스로 적으면 남이 곧바로 집는다").isAfter(NOW);
+  }
+
+  @DisplayName("SKIP LOCKED 로 집는 동안 아웃박스 발행이 얼마나 밀리는지 잰다.")
+  @Test
+  void publishLatency_whileClaimingWithSkipLocked() throws Exception {
+    log.info(
+        "[측정 I-25 SKIP-LOCKED] 발행 지연 최대 {}ms",
+        maxPublishLatencyWhileWorking(notificationDispatchService::claimSendableIds));
+  }
+
+  /**
+   * 워커가 도는 동안 새 아웃박스 행을 넣어 보고 <b>가장 오래 걸린 INSERT</b> 를 돌려준다.
+   *
+   * <p>이것이 {@code I-25} 가 걸리는 자리다 — 워커의 잠금이 댓글 작성의 아웃박스 INSERT 를 기다리게 만들면 알림이 도메인 트랜잭션을 붙잡은 것이 된다.
+   * 대기 건이 적을수록 스캔이 범위 끝까지 가므로 일부러 적게 깔아 둔다 ({@code V800} 주석).
+   */
+  private long maxPublishLatencyWhileWorking(ClaimStrategy strategy) throws Exception {
+    claimStrategy = strategy;
+    givenPendingOutbox(5);
+
+    ExecutorService pool = Executors.newFixedThreadPool(2);
+    CountDownLatch start = new CountDownLatch(1);
+    java.util.concurrent.atomic.AtomicBoolean done =
+        new java.util.concurrent.atomic.AtomicBoolean(false);
+
+    Future<Long> inserter =
+        pool.submit(
+            () -> {
+              start.await();
+              long worst = 0;
+              for (int i = 0; i < 200; i++) {
+                long began = System.nanoTime();
+                insertOnePending();
+                worst = Math.max(worst, (System.nanoTime() - began) / 1_000_000);
+              }
+              done.set(true);
+              return worst;
+            });
+
+    Future<?> worker =
+        pool.submit(
+            () -> {
+              start.await();
+              while (!done.get()) {
+                workRound();
+              }
+              return null;
+            });
+
+    try {
+      start.countDown();
+      long worst = inserter.get(60, TimeUnit.SECONDS);
+      worker.get(60, TimeUnit.SECONDS);
+      return worst;
+    } finally {
+      pool.shutdownNow();
+    }
+  }
+
+  /** 한 바퀴만 돈다. 지연 측정에서는 끝까지 비우지 않고 계속 도는 것이 목적이다. */
+  private void workRound() {
+    for (Long id : claimStrategy.claim(NOW, CHUNK)) {
+      try {
+        notificationDispatchService.dispatch(id);
+      } catch (Exception collision) {
+        notificationDispatchService.recordFailure(id, NOW);
+      }
+    }
+  }
+
+  /**
+   * 집는 방식을 갈아끼우는 자리.
+   *
+   * <p>지금은 구현이 하나뿐이라 굳이 없어도 되는 이음매다. 남겨 둔 이유는 <b>다음에 후보가 늘 때 이 장치를 다시 만들지 않게</b> 하려는 것이다 — ADR 0008
+   * 이 전환 트리거를 적어 두었고, 그 트리거가 당겨지면 여기에 후보를 하나 더 꽂아 같은 숫자를 뽑으면 된다.
+   */
+  private interface ClaimStrategy {
+    List<Long> claim(LocalDateTime nowInUtc, int chunk);
+  }
+
+  private ClaimStrategy claimStrategy;
+
+  /** 워커를 동시에 띄워 한 명도 먼저 출발하지 않게 한다. 순차로 돌면 경쟁이 아예 안 생긴다. */
+  private Run runWorkers(int workers) {
+    ExecutorService pool = Executors.newFixedThreadPool(workers);
+    CountDownLatch start = new CountDownLatch(1);
+
+    try {
+      List<Future<Run>> futures =
+          java.util.stream.IntStream.range(0, workers)
+              .mapToObj(i -> pool.submit(() -> workOnce(start)))
+              .toList();
+
+      long began = System.nanoTime();
+      start.countDown();
+
+      int sent = 0;
+      int skipped = 0;
+      int collided = 0;
+      for (Future<Run> future : futures) {
+        Run run = future.get(60, TimeUnit.SECONDS);
+        sent += run.sent();
+        skipped += run.skipped();
+        collided += run.collided();
+      }
+
+      return new Run(sent, skipped, collided, (System.nanoTime() - began) / 1_000_000);
+
+    } catch (Exception e) {
+      throw new IllegalStateException("워커를 돌리지 못했다", e);
+    } finally {
+      pool.shutdownNow();
+    }
+  }
+
+  /**
+   * 워커 하나가 보낼 것이 없어질 때까지 도는 것. <b>운영 배치의 반복을 그대로 옮긴 것이다.</b>
+   *
+   * <p><b>예외를 잡는 자리가 장치의 핵심이다.</b> 선점이 없으면 두 워커가 같은 행에서 부딪히고, 그때 진 쪽은 {@code false} 를 받는 것이 아니라
+   * <b>유니크 제약 위반으로 예외를 맞는다</b> — 알림을 만들려는 순간 이미 남이 만들어 둔 것이다. 운영에서는 {@code
+   * NotificationDispatchBatch.dispatchOne} 이 그 예외를 잡아 실패 기록으로 넘기고, 그 기록이 「남이 보냈다」로 조용히 끝난다. 여기서 안
+   * 잡으면 장치가 운영과 다른 것을 재게 된다.
+   */
+  private Run workOnce(CountDownLatch start) throws InterruptedException {
+    start.await();
+
+    int sent = 0;
+    int skipped = 0;
+    int collided = 0;
+
+    for (int round = 0; round < MAX_ROUNDS; round++) {
+      List<Long> ids = claimStrategy.claim(NOW, CHUNK);
+      if (ids.isEmpty()) {
+        break;
+      }
+
+      for (Long id : ids) {
+        try {
+          if (notificationDispatchService.dispatch(id)) {
+            sent++;
+          } else {
+            skipped++;
+          }
+        } catch (Exception collision) {
+          // 운영 배치와 같은 순서다 — 발송이 롤백된 뒤에 별 트랜잭션이 실패를 적으러 간다.
+          notificationDispatchService.recordFailure(id, NOW);
+          collided++;
+        }
+      }
+    }
+
+    return new Run(sent, skipped, collided, 0);
+  }
+
+  private void givenPendingOutbox(int rows) {
+    for (int i = 0; i < rows; i++) {
+      insertOnePending();
+    }
+  }
+
+  /** 댓글 작성이 아웃박스에 한 줄 넣는 것과 같은 모양이다 (NT-01). */
+  private void insertOnePending() {
+    jdbc.update(
+        """
+        INSERT INTO notification_outbox
+            (recipient_id, kind, post_id, comment_id, status, attempts, created_at, updated_at)
+        VALUES (?, 'POST_COMMENTED', 10, ?, 'PENDING', 0, ?, ?)
+        """,
+        RECIPIENT_ID,
+        outboxIds.getAndIncrement(),
+        NOW,
+        NOW);
+  }
+
+  /** 선점 표시는 {@code next_attempt_at} 하나다 — 상태도 시도 횟수도 안 바뀐다. */
+  private LocalDateTime leaseOf(long outboxId) {
+    return jdbc.queryForObject(
+        "SELECT next_attempt_at FROM notification_outbox WHERE id = ?",
+        LocalDateTime.class,
+        outboxId);
+  }
+
+  private int notificationCount() {
+    return jdbc.queryForObject("SELECT COUNT(*) FROM notification", Integer.class);
+  }
+
+  private int distinctOutboxCount() {
+    return jdbc.queryForObject("SELECT COUNT(DISTINCT outbox_id) FROM notification", Integer.class);
+  }
+
+  /**
+   * 워커들이 돌고 난 결과. {@code elapsedMillis} 는 전체 합산에서만 뜻이 있다.
+   *
+   * <p><b>헛일을 둘로 나눈 것이 이 장치의 값이다.</b> 비용이 다르다 — {@code skipped} 는 읽고 나서 「내 것이 아니다」로 끝나는 것이지만,
+   * {@code collided} 는 <b>알림 INSERT 가 유니크 제약에 걸려 트랜잭션이 롤백되고 실패 기록이 또 한 트랜잭션을 쓰는</b> 것이다. 선점이 없애야 하는
+   * 것은 후자다.
+   *
+   * @param skipped 집었으나 이미 남이 처리해 조용히 넘어간 횟수
+   * @param collided 알림을 만들다 유니크 제약에 부딪혀 롤백된 횟수
+   */
+  private record Run(int sent, int skipped, int collided, long elapsedMillis) {}
+}

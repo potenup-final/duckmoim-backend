@@ -1,11 +1,16 @@
 package com.duckmoim.common.infra;
 
 import com.duckmoim.common.domain.NotificationOutbox;
+import com.duckmoim.common.domain.OutboxStatus;
+import jakarta.persistence.LockModeType;
+import jakarta.persistence.QueryHint;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.jpa.repository.QueryHints;
 import org.springframework.data.repository.Repository;
 
 /**
@@ -14,11 +19,20 @@ import org.springframework.data.repository.Repository;
  * <p><b>{@code JpaRepository} 를 상속하지 않는다.</b> {@code AuditLogRepository} 와 같은 판단이다 — 상속하면 이 티켓이 쓰지
  * 않는 문이 전부 열린다. 여기서 여는 것은 {@link #save} 하나다.
  *
- * <p><b>선점이 없다.</b> {@link #findSendable} 에 {@code FOR UPDATE} 를 걸지 않았으므로 인스턴스가 둘이면 두 워커가 같은 행을 집을
- * 수 있다. 행 선점은 NT-04 가 넣는다 — 그때까지 중복 발송을 막는 것은 {@code notification} 표의 {@code outbox_id} 유니크 제약이고,
- * 집는 것까지는 겹칠 수 있다.
+ * <p><b>선점은 {@link #findSendableForUpdate} 가 한다</b> (NT-04). 잠그지 않는 {@link #findSendable} 은 남겨 두었다
+ * — 「지금 보낼 수 있는 건이 몇 개인가」를 세는 적체 관측(NT-05)이 잠글 이유가 없기 때문이다.
  */
 public interface NotificationOutboxRepository extends Repository<NotificationOutbox, Long> {
+
+  /**
+   * 아직 못 보낸 건이 몇 개인지 (NT-05).
+   *
+   * <p><b>잠그지 않는다.</b> 세는 것이 목적이라 값이 한 박자 낡아도 된다 — 적체를 보는 사람이 판단하는 것은 「지금 정확히 몇 개」가 아니라 「늘고 있나」다.
+   * 관측이 워커를 기다리게 만들면 관측이 장애 원인이 된다.
+   *
+   * <p>선점된 건도 {@code PENDING} 이라 함께 센다. 아직 알림함에 들어가지 않았으므로 적체가 맞다.
+   */
+  long countByStatus(OutboxStatus status);
 
   /** 보낼 알림 한 건을 덧붙인다. */
   NotificationOutbox save(NotificationOutbox outbox);
@@ -55,4 +69,31 @@ public interface NotificationOutboxRepository extends Repository<NotificationOut
       ORDER BY o.id ASC
       """)
   List<NotificationOutbox> findSendable(LocalDateTime nowInUtc, int maxAttempts, Pageable pageable);
+
+  /**
+   * 같은 조건을 <b>잠그고</b> 읽는다 (NT-04).
+   *
+   * <p><b>{@code FOR UPDATE SKIP LOCKED} 다.</b> 잠긴 행을 건너뛰면 두 워커가 같은 건을 집지 않는다. {@code SKIP LOCKED}
+   * 가 아니면 뒤에 온 쪽이 잠금을 기다렸다가 「이미 보냈다」로 전부 흘린다 — 결과는 같지만 그 시간이 통째로 낭비다. 마감 배치(PO-14)가 같은 문제를 같은 방식으로
+   * 풀었다.
+   *
+   * <p>힌트 값 {@code -2} 가 Hibernate 의 {@code SKIP_LOCKED} 다. 상수 이름이 아니라 숫자로 넣어야 하는 것은 애노테이션 속성이
+   * {@code String} 이기 때문이다.
+   *
+   * <p><b>이 잠금만으로는 선점이 끝나지 않는다.</b> 잠금은 트랜잭션이 끝나면 풀리는데 발송은 건마다 다른 트랜잭션이라 (실패 기록이 롤백에 함께 지워지면 안 된다)
+   * 그 사이에 남이 집을 수 있다. 그래서 이 트랜잭션 안에서 {@code NotificationOutbox#claim} 으로 <b>리스를 적어</b> 잠금이 풀린 뒤에도
+   * 표시가 남게 한다.
+   */
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @QueryHints(@QueryHint(name = "jakarta.persistence.lock.timeout", value = "-2"))
+  @Query(
+      """
+      SELECT o FROM NotificationOutbox o
+      WHERE o.status = com.duckmoim.common.domain.OutboxStatus.PENDING
+        AND o.attempts < :maxAttempts
+        AND (o.nextAttemptAt IS NULL OR o.nextAttemptAt <= :nowInUtc)
+      ORDER BY o.id ASC
+      """)
+  List<NotificationOutbox> findSendableForUpdate(
+      LocalDateTime nowInUtc, int maxAttempts, Pageable pageable);
 }
