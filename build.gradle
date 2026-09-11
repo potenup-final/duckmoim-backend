@@ -84,6 +84,22 @@ tasks.named('test') {
 	systemProperty 'spring.datasource.url', 'jdbc:tc:mysql:8.4:///duckmoim'
 	systemProperty 'spring.datasource.driver-class-name', 'org.testcontainers.jdbc.ContainerDatabaseDriver'
 
+	// 컨텍스트 하나가 커넥션을 열 상한이다. 기본값이 10 이라 그냥 두면 이렇게 된다.
+	//
+	//   @SpringBootTest 는 구성이 다르면 컨텍스트를 따로 띄우고, 뜬 것은 캐시에 남아
+	//   테스트가 끝날 때까지 살아 있다. 풀도 같이 산다. MySQL 컨테이너는 한 대이고
+	//   max_connections 기본값이 151 이라, 컨텍스트가 16개가 되는 순간 160 을 요구해서
+	//   **그 시점에 뜨려던 컨텍스트가 "Too many connections" 로 죽는다.**
+	//
+	// 실제로 STAR-110 이 테스트 클래스 둘을 더하면서 14 → 16 이 되어 넘겼다. 터진 곳은
+	// 새 테스트가 아니라 **하필 그때 뜨려던 남의 테스트**였다 (프로필 이미지 · 알림 워커).
+	// 원인과 증상이 갈려 있어서 다음에 또 겪으면 찾는 데 오래 걸린다.
+	//
+	// 5 로 줄이는 데 무리가 없는 이유 — 테스트 하나는 스레드 하나에서 돌고, 여러 커넥션이
+	// 동시에 필요한 것은 잠금 경합을 보는 테스트뿐이다. 그런 테스트가 생기면 그 클래스에서만
+	// 올린다.
+	systemProperty 'spring.datasource.hikari.maximum-pool-size', '5'
+
 	// 마감 배치를 테스트에서 돌지 않게 한다 (PO-14).
 	//
 	// @EnableScheduling 이 무조건 켜져 있어서 @SpringBootTest 에도 스케줄러가 뜨고, cron

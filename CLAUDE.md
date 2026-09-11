@@ -197,6 +197,11 @@ PR 본문에 **결과**를 적는다. 이슈는 계획, 대화는 진행 상황,
 - **ArchUnit 은 빈 입력을 거부한다.** `layeredArchitecture` 는 빈 레이어로,
   `noClasses`/`classes` 는 매칭 0건으로 실패한다. `withOptionalLayers(true)` 와
   `allowEmptyShould(true)` 로 인정하되, 그 대가로 생존 증명이 필요해진다
+- **`@SpringBootTest` 클래스를 더하면 남의 테스트가 깨질 수 있다.** 구성이 다르면 컨텍스트가
+  따로 뜨고 캐시에 남아 끝까지 살아 있다. 커넥션 풀도 같이 산다. MySQL 컨테이너는 한 대이고
+  `max_connections` 가 151 이라, 컨텍스트가 16개가 되는 순간 `Too many connections` 가 난다.
+  **터지는 곳은 새 테스트가 아니라 하필 그때 뜨려던 남의 테스트다.** `build.gradle` 이
+  `hikari.maximum-pool-size` 를 5 로 눌러 막았다 (STAR-110 에서 실제로 겪었다)
 - **위반 픽스처는 `test` 태스크에서 `exclude` 한다.** 이름을 `*Test` 로 안 지어도
   Gradle 이 클래스 파일을 훑어 수집한다
 
