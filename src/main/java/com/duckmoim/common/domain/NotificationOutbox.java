@@ -8,6 +8,7 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import java.time.LocalDateTime;
 import java.util.Objects;
 import lombok.AccessLevel;
 import lombok.Getter;
@@ -53,13 +54,26 @@ public class NotificationOutbox extends BaseEntity {
   private Long commentId;
 
   /**
-   * 발송 상태. <b>이 컬럼만 만든 뒤에 바뀐다.</b>
+   * 발송 상태.
    *
-   * <p>나머지 컬럼이 {@code updatable = false} 인 것은 「보낼 것」이 발행 시점에 정해지기 때문이다. 워커가 고칠 수 있는 것은 「보냈는지」 하나다.
+   * <p>「보낼 것」을 적은 컬럼들이 {@code updatable = false} 인 것은 그 값이 발행 시점에 정해지기 때문이다. 만든 뒤에 바뀌는 것은 발송의 진행 상태
+   * 셋뿐이다 — 이 컬럼과 {@link #attempts} · {@link #nextAttemptAt} (NT-03 이 더했다).
    */
   @Enumerated(EnumType.STRING)
   @Column(name = "status", nullable = false, length = 20)
   private OutboxStatus status;
+
+  /** 발송을 몇 번 시도했는지 (NT-03). 세 번이면 DLQ 로 옮긴다. */
+  @Column(name = "attempts", nullable = false)
+  private int attempts;
+
+  /**
+   * 다음에 집어도 되는 시각 (NT-03). NULL 은 「지금 집어도 된다」다.
+   *
+   * <p>발행 시점에 NULL 인 것이 의도다 — 「한 번도 실패하지 않았다」와 「지금 보낼 때다」가 같은 뜻이라 값을 나눌 이유가 없다.
+   */
+  @Column(name = "next_attempt_at")
+  private LocalDateTime nextAttemptAt;
 
   private NotificationOutbox(NotificationKind kind, Long recipientId, Long postId, Long commentId) {
 
@@ -88,5 +102,47 @@ public class NotificationOutbox extends BaseEntity {
     Objects.requireNonNull(commentId, "아웃박스 행은 댓글을 가진다.");
 
     return new NotificationOutbox(kind, recipientId, postId, commentId);
+  }
+
+  /** 아직 보내지 않은 건인지. 워커가 「내가 처리할 건인가」를 묻는 자리다 (NT-02). */
+  public boolean isPending() {
+    return status == OutboxStatus.PENDING;
+  }
+
+  /**
+   * 보냈다고 적는다 (NT-02). 종착이다.
+   *
+   * <p><b>이미 보낸 건에는 부를 수 없다.</b> 이 가드는 프로그래밍 실수를 잡는 것이지 동시 실행을 잡는 것이 아니다 — 선점이 없는 동안 두 워커가 같은 건을 집는
+   * 것은 정상으로 일어나고 (NT-04), 그 경우는 부르는 쪽이 {@link #isPending} 으로 먼저 걸러 낸다. 여기서 예외로 다루면 배치의 주기 전체가 끝난다.
+   */
+  public void markSent() {
+    requirePending();
+
+    this.status = OutboxStatus.SENT;
+  }
+
+  /**
+   * 실패를 적고 다음 시도를 미룬다 (NT-03).
+   *
+   * <p>상태를 바꾸지 않는다 — 실패는 「아직 못 보냈다」의 한 형태다. 다음 시도 시각을 부르는 쪽이 주는 것은 백오프 간격이 설정값이라서다. 도메인이 그 값을 알면 배포
+   * 없이 조절할 수 없다.
+   */
+  public void failed(LocalDateTime nextAttemptAt) {
+    requirePending();
+    Objects.requireNonNull(nextAttemptAt, "다음 시도 시각이 필요하다.");
+
+    this.attempts += 1;
+    this.nextAttemptAt = nextAttemptAt;
+  }
+
+  /** 시도를 다 썼는지 (NT-03). 다 쓴 건은 DLQ 로 옮긴다. */
+  public boolean hasExhausted(int maxAttempts) {
+    return attempts >= maxAttempts;
+  }
+
+  private void requirePending() {
+    if (status != OutboxStatus.PENDING) {
+      throw new IllegalStateException("이미 보낸 알림이다. id=" + id);
+    }
   }
 }
