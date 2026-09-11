@@ -9,7 +9,7 @@ import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
 /**
- * I-14 를 어느 경로에 거는지 (제재 중 쓰기 차단).
+ * 제재 관문을 어느 경로에 거는지 — 쓰기 차단(I-14)과 <b>비공개 읽기 차단</b>(STAR-84).
  *
  * <p><b>{@code SecurityConfig} 의 {@code SIGNUP_WRITE} 와 같은 목록이어야 한다.</b> API-설계.md 가 <i>"제재 중인 유저는
  * {@code SIGNUP} 등급 전체에서 차단된다"</i> 고 정했다. 둘이 어긋나면 등급은 있는데 제재는 안 막는 경로가 생기므로, 목록을 나란히 두어 눈으로 대조할 수
@@ -19,7 +19,9 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
  * 막으면 정지당한 사람이 자기가 왜 정지됐는지 볼 수 없다. 프로필 수정도 같은 경로에 있어 함께 열리는데, 도메인 6장 제재 축 표의 「쓰기」는 모집글·댓글을 뜻한다
  * (I-14 의 문장이 <i>"신규 모집글·댓글을 작성할 수 없다"</i> 다).
  *
- * <p>읽기는 어느 등급에서도 막지 않는다. {@code BANNED} 가 읽기까지 막는 것은 로그인 자체를 막는 일이라 AU 쪽 소관이다.
+ * <p><b>등록이 둘인 이유는 읽기다.</b> 모집글·댓글 경로에는 공개 읽기가 섞여 있어 메서드를 가리지 않으면 경고받은 사람이 남의 글도 못 보게 된다. 채팅방은 전부
+ * 비공개라 {@code BANNED} 의 읽기를 막을 수 있고, 막을 실익도 거기만 있다 — 공개 글은 비회원에게 열려 있어 로그아웃하면 그대로 보인다 (도메인-모델링.md
+ * 「6. 라이프사이클」의 제재 축).
  *
  * <p><b>인터셉터를 {@code ObjectProvider} 로 받는다.</b> {@code @WebMvcTest} 슬라이스가 {@code WebMvcConfigurer}
  * 는 집어 가면서 {@code @Component} 인 인터셉터는 안 가져와, 그대로 두면 컨트롤러 슬라이스 테스트가 전부 Safety 빈을 요구하게 된다. 없으면 등록을
@@ -37,6 +39,24 @@ public class SanctionGateConfig implements WebMvcConfigurer {
    *
    * <p>신고({@code /api/v1/reports})는 {@code SecurityConfig} 의 쓰기 목록에 있지만 여기 없다. 제재당한 사람이 남을 신고하는 길까지
    * 막으면 1차 안전장치가 신고뿐인데 그 창구가 좁아진다 — 불변식의 문장도 모집글·댓글 둘로 한정돼 있다.
+   *
+   * <p><b>채팅은 여기 없다</b> (2026-09-11 · STAR-84). {@link #SANCTIONED_PRIVATE} 로 옮겼다 — 그 경로는 읽기까지 막아야
+   * 해서 등록이 갈린다.
+   *
+   * <p><b>전송 service 에는 제재 판정이 없다.</b> 있어야 하는 것이 아니라 없는 것이 맞다 — 판정 자리를 관문 하나로 모으는 것이 I-14 의 설계이고,
+   * 서비스마다 적으면 하나를 빠뜨렸을 때 아무도 모른다.
+   */
+  private static final String[] SANCTIONED_WRITE = {"/api/v1/posts/**", "/api/v1/comments/**"};
+
+  /**
+   * 비공개 경로 — 쓰기와 <b>{@code BANNED} 의 읽기</b>를 함께 막는다 (STAR-84 · CH-20).
+   *
+   * <p><b>위 목록에 함께 넣지 않는다.</b> 이 등록이 쓰기도 보므로 두 곳에 넣으면 중복이고, 제재 조회가 요청마다 두 번 난다.
+   *
+   * <p>채팅만 있는 이유는 지금 비공개 읽기가 거기뿐이기 때문이다. 알림과 내 활동 내역도 {@code SIGNUP} 이지만 <b>본인 데이터라 막을 실익이 없다</b> —
+   * 제재당한 사람이 자기 알림을 못 보게 해서 얻는 것이 없다.
+   *
+   * <p><b>아래 각주는 STAR-112 가 쓰기 목록에 적어 둔 것이다.</b> 채팅이 이 상수로 옮겨 오면서 함께 왔다 — 가리키는 경로가 여기라 그대로 둘 수 없다.
    *
    * <p><b>채팅은 방 아래 전체를 건다</b> (CH-20). 인터셉터가 「읽기가 아니면 막는다」로 뒤집혀 있어, 쓰기 메서드가 하나 늘었을 때 조용히 열리는 쪽이 아니라
    * 막히는 쪽으로 기운다.
@@ -56,19 +76,14 @@ public class SanctionGateConfig implements WebMvcConfigurer {
    * 형태이고, 그 깊이에 사는 것이 삭제 하나다 — CH-15 의 이미지 서명은 한 칸 더 깊어 걸리지 않는다.
    *
    * <p>(별표를 {@code &#42;} 로 적은 것은 자바독 안에서 별표와 빗금이 붙으면 주석이 거기서 닫히기 때문이다.)
-   *
-   * <p><b>전송 service 에는 제재 판정이 없다.</b> 있어야 하는 것이 아니라 없는 것이 맞다 — 판정 자리를 관문 하나로 모으는 것이 I-14 의 설계이고,
-   * 서비스마다 적으면 하나를 빠뜨렸을 때 아무도 모른다.
-   *
-   * <p><b>그래서 퇴장(CH-04)을 아래에서 도로 뺀다.</b> 퇴장은 {@code DELETE} 라 이 목록에 걸리는데, 정지당한 사람이 방을 나가지 못하는 것은
-   * 신고와 탈퇴를 일부러 뺀 판단과 같은 줄에 있다 — 제재가 막는 것은 <b>새로 쓰는 일</b>이지 관계를 끊는 일이 아니다.
    */
-  private static final String[] SANCTIONED_WRITE = {
-    "/api/v1/posts/**", "/api/v1/comments/**", "/api/v1/chat-rooms/**"
-  };
+  private static final String[] SANCTIONED_PRIVATE = {"/api/v1/chat-rooms/**"};
 
   /**
-   * 위 접두어 아래이면서 막지 않는 경로 (CH-04).
+   * {@link #SANCTIONED_PRIVATE} 아래이면서 막지 않는 경로 (CH-04).
+   *
+   * <p><b>이 제외는 비공개 등록에 붙는다.</b> 한때 쓰기 목록에 채팅이 함께 있어 그쪽에 붙어 있었는데, STAR-84 가 채팅을 옮기면서 같이 옮겼다 — 안
+   * 옮겼으면 {@code /posts} · {@code /comments} 에 채팅 경로를 제외하는 꼴이 되어 <b>에러도 경고도 없이 아무것도 안 한다.</b>
    *
    * <p><b>제재가 막는 것은 새로 쓰는 일이지 관계를 끊는 일이 아니다</b> (도메인-모델링.md 「3.3 경계를 넘는 불변식」). 신고({@code
    * /api/v1/reports})와 탈퇴를 목록에서 뺀 것과 같은 판단이고, 방을 나가는 것은 그 둘에 가깝다 — 정지당한 사람을 대화방에 가둬 두는 것이 제재의 목적일 수
@@ -87,10 +102,15 @@ public class SanctionGateConfig implements WebMvcConfigurer {
   @Override
   public void addInterceptors(InterceptorRegistry registry) {
     sanctionQueryService.ifAvailable(
-        service ->
-            registry
-                .addInterceptor(new SanctionGateInterceptor(service))
-                .addPathPatterns(SANCTIONED_WRITE)
-                .excludePathPatterns(SANCTIONED_EXCEPT));
+        service -> {
+          registry
+              .addInterceptor(new SanctionGateInterceptor(service, false))
+              .addPathPatterns(SANCTIONED_WRITE);
+
+          registry
+              .addInterceptor(new SanctionGateInterceptor(service, true))
+              .addPathPatterns(SANCTIONED_PRIVATE)
+              .excludePathPatterns(SANCTIONED_EXCEPT);
+        });
   }
 }
