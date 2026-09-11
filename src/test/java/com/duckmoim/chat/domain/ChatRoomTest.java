@@ -5,6 +5,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.duckmoim.chat.exception.ChatErrorCode;
 import com.duckmoim.common.exception.BusinessException;
+import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
@@ -171,5 +173,58 @@ class ChatRoomTest {
     List<ChatRoomMember> members = ChatRoom.openFor(POST_ID, HOST_ID).getMembers();
 
     assertThatThrownBy(() -> members.remove(0)).isInstanceOf(UnsupportedOperationException.class);
+  }
+
+  @DisplayName("현재 멤버는 방 멤버로 판정된다.")
+  @Test
+  void isMemberTrue() {
+    ChatRoom room = ChatRoom.openFor(POST_ID, HOST_ID);
+
+    assertThat(room.isMember(HOST_ID)).isTrue();
+  }
+
+  @DisplayName("나간 사람은 방 멤버가 아니다.")
+  @Test
+  void isMemberFalseAfterLeaving() {
+    ChatRoom room = ChatRoom.openFor(POST_ID, HOST_ID);
+    room.invite(GUEST_ID);
+    markLeft(room, GUEST_ID);
+
+    assertThat(room.isMember(GUEST_ID)).isFalse();
+  }
+
+  @DisplayName("초대받은 적 없는 사람은 방 멤버가 아니다.")
+  @Test
+  void isMemberFalseForStranger() {
+    ChatRoom room = ChatRoom.openFor(POST_ID, HOST_ID);
+
+    assertThat(room.isMember(GUEST_ID)).isFalse();
+  }
+
+  @DisplayName("만남시각 + 7일 이내면 채팅이 가능하다.")
+  @Test
+  void isWritableWithinWindow() {
+    ChatRoom room = ChatRoom.openFor(POST_ID, HOST_ID);
+    LocalDateTime meetAt = LocalDateTime.now(ZoneOffset.UTC);
+    Clock clock = Clock.fixed(instantOf(meetAt).plusSeconds(1), ZoneOffset.UTC);
+
+    assertThat(room.isWritable(meetAt, clock)).isTrue();
+  }
+
+  @DisplayName("만남시각 + 7일이 지나면 읽기 전용이다.")
+  @Test
+  void isWritableAfterWindow() {
+    ChatRoom room = ChatRoom.openFor(POST_ID, HOST_ID);
+    LocalDateTime meetAt = LocalDateTime.now(ZoneOffset.UTC);
+    Clock clock =
+        Clock.fixed(
+            instantOf(meetAt.plusDays(ChatRoom.WRITABLE_WINDOW_DAYS)).plusSeconds(1),
+            ZoneOffset.UTC);
+
+    assertThat(room.isWritable(meetAt, clock)).isFalse();
+  }
+
+  private static Instant instantOf(LocalDateTime dateTime) {
+    return dateTime.toInstant(ZoneOffset.UTC);
   }
 }
