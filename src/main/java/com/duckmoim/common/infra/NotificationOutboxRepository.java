@@ -1,6 +1,7 @@
 package com.duckmoim.common.infra;
 
 import com.duckmoim.common.domain.NotificationOutbox;
+import com.duckmoim.common.domain.OutboxStatus;
 import jakarta.persistence.LockModeType;
 import jakarta.persistence.QueryHint;
 import java.time.LocalDateTime;
@@ -22,6 +23,16 @@ import org.springframework.data.repository.Repository;
  * — 「지금 보낼 수 있는 건이 몇 개인가」를 세는 적체 관측(NT-05)이 잠글 이유가 없기 때문이다.
  */
 public interface NotificationOutboxRepository extends Repository<NotificationOutbox, Long> {
+
+  /**
+   * 아직 못 보낸 건이 몇 개인지 (NT-05).
+   *
+   * <p><b>잠그지 않는다.</b> 세는 것이 목적이라 값이 한 박자 낡아도 된다 — 적체를 보는 사람이 판단하는 것은 「지금 정확히 몇 개」가 아니라 「늘고 있나」다.
+   * 관측이 워커를 기다리게 만들면 관측이 장애 원인이 된다.
+   *
+   * <p>선점된 건도 {@code PENDING} 이라 함께 센다. 아직 알림함에 들어가지 않았으므로 적체가 맞다.
+   */
+  long countByStatus(OutboxStatus status);
 
   /** 보낼 알림 한 건을 덧붙인다. */
   NotificationOutbox save(NotificationOutbox outbox);
