@@ -76,6 +76,7 @@ class NotificationWorkerContentionTest {
   @DisplayName("워커 둘이 동시에 돌아도 알림이 한 번만 생긴다.")
   @Test
   void dispatch_withTwoWorkers() {
+    claimStrategy = notificationDispatchService::claimSendableIds;
     givenPendingOutbox(200);
 
     Run run = runWorkers(2);
@@ -94,12 +95,13 @@ class NotificationWorkerContentionTest {
   @DisplayName("워커 둘이 겹쳐 집은 횟수를 기록한다.")
   @Test
   void dispatch_measuresWastedPicks() {
+    claimStrategy = notificationDispatchService::claimSendableIds;
     givenPendingOutbox(200);
 
     Run run = runWorkers(2);
 
     log.info(
-        "[측정] 워커 2 · 건수 200 → 보냄 {}, 조용히 넘김 {}, 충돌 {}, 걸린 시간 {}ms",
+        "[측정 SKIP-LOCKED] 워커 2 · 건수 200 → 보냄 {}, 조용히 넘김 {}, 충돌 {}, 걸린 시간 {}ms",
         run.sent(),
         run.skipped(),
         run.collided(),
@@ -141,6 +143,86 @@ class NotificationWorkerContentionTest {
     assertThat(beforeExpiry).isEmpty();
     assertThat(afterExpiry).as("리스가 지나면 다시 집힌다").isEqualTo(mine);
   }
+
+  @DisplayName("SKIP LOCKED 로 집는 동안 아웃박스 발행이 얼마나 밀리는지 잰다.")
+  @Test
+  void publishLatency_whileClaimingWithSkipLocked() throws Exception {
+    log.info(
+        "[측정 I-25 SKIP-LOCKED] 발행 지연 최대 {}ms",
+        maxPublishLatencyWhileWorking(notificationDispatchService::claimSendableIds));
+  }
+
+  /**
+   * 워커가 도는 동안 새 아웃박스 행을 넣어 보고 <b>가장 오래 걸린 INSERT</b> 를 돌려준다.
+   *
+   * <p>이것이 {@code I-25} 가 걸리는 자리다 — 워커의 잠금이 댓글 작성의 아웃박스 INSERT 를 기다리게 만들면 알림이 도메인 트랜잭션을 붙잡은 것이 된다.
+   * 대기 건이 적을수록 스캔이 범위 끝까지 가므로 일부러 적게 깔아 둔다 ({@code V800} 주석).
+   */
+  private long maxPublishLatencyWhileWorking(ClaimStrategy strategy) throws Exception {
+    claimStrategy = strategy;
+    givenPendingOutbox(5);
+
+    ExecutorService pool = Executors.newFixedThreadPool(2);
+    CountDownLatch start = new CountDownLatch(1);
+    java.util.concurrent.atomic.AtomicBoolean done =
+        new java.util.concurrent.atomic.AtomicBoolean(false);
+
+    Future<Long> inserter =
+        pool.submit(
+            () -> {
+              start.await();
+              long worst = 0;
+              for (int i = 0; i < 200; i++) {
+                long began = System.nanoTime();
+                insertOnePending();
+                worst = Math.max(worst, (System.nanoTime() - began) / 1_000_000);
+              }
+              done.set(true);
+              return worst;
+            });
+
+    Future<?> worker =
+        pool.submit(
+            () -> {
+              start.await();
+              while (!done.get()) {
+                workRound();
+              }
+              return null;
+            });
+
+    try {
+      start.countDown();
+      long worst = inserter.get(60, TimeUnit.SECONDS);
+      worker.get(60, TimeUnit.SECONDS);
+      return worst;
+    } finally {
+      pool.shutdownNow();
+    }
+  }
+
+  /** 한 바퀴만 돈다. 지연 측정에서는 끝까지 비우지 않고 계속 도는 것이 목적이다. */
+  private void workRound() {
+    for (Long id : claimStrategy.claim(NOW, CHUNK)) {
+      try {
+        notificationDispatchService.dispatch(id);
+      } catch (Exception collision) {
+        notificationDispatchService.recordFailure(id, NOW);
+      }
+    }
+  }
+
+  /**
+   * 집는 방식을 갈아끼우는 자리.
+   *
+   * <p>지금은 구현이 하나뿐이라 굳이 없어도 되는 이음매다. 남겨 둔 이유는 <b>다음에 후보가 늘 때 이 장치를 다시 만들지 않게</b> 하려는 것이다 — ADR 0008
+   * 이 전환 트리거를 적어 두었고, 그 트리거가 당겨지면 여기에 후보를 하나 더 꽂아 같은 숫자를 뽑으면 된다.
+   */
+  private interface ClaimStrategy {
+    List<Long> claim(LocalDateTime nowInUtc, int chunk);
+  }
+
+  private ClaimStrategy claimStrategy;
 
   /** 워커를 동시에 띄워 한 명도 먼저 출발하지 않게 한다. 순차로 돌면 경쟁이 아예 안 생긴다. */
   private Run runWorkers(int workers) {
@@ -191,7 +273,7 @@ class NotificationWorkerContentionTest {
     int collided = 0;
 
     for (int round = 0; round < MAX_ROUNDS; round++) {
-      List<Long> ids = notificationDispatchService.claimSendableIds(NOW, CHUNK);
+      List<Long> ids = claimStrategy.claim(NOW, CHUNK);
       if (ids.isEmpty()) {
         break;
       }
@@ -216,17 +298,22 @@ class NotificationWorkerContentionTest {
 
   private void givenPendingOutbox(int rows) {
     for (int i = 0; i < rows; i++) {
-      jdbc.update(
-          """
-          INSERT INTO notification_outbox
-              (recipient_id, kind, post_id, comment_id, status, attempts, created_at, updated_at)
-          VALUES (?, 'POST_COMMENTED', 10, ?, 'PENDING', 0, ?, ?)
-          """,
-          RECIPIENT_ID,
-          outboxIds.getAndIncrement(),
-          NOW,
-          NOW);
+      insertOnePending();
     }
+  }
+
+  /** 댓글 작성이 아웃박스에 한 줄 넣는 것과 같은 모양이다 (NT-01). */
+  private void insertOnePending() {
+    jdbc.update(
+        """
+        INSERT INTO notification_outbox
+            (recipient_id, kind, post_id, comment_id, status, attempts, created_at, updated_at)
+        VALUES (?, 'POST_COMMENTED', 10, ?, 'PENDING', 0, ?, ?)
+        """,
+        RECIPIENT_ID,
+        outboxIds.getAndIncrement(),
+        NOW,
+        NOW);
   }
 
   private int notificationCount() {
