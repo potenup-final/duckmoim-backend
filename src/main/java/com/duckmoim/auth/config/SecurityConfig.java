@@ -65,6 +65,18 @@ public class SecurityConfig {
   private static final String MY_PAGE = "/api/v1/users/me/**";
   private static final String ADMIN_ALL = "/api/v1/admin/**";
 
+  // 알림은 접두어 전체가 「내 것」이다 (API-설계 「2-10. 알림 (Notification) · 2차」).
+  //
+  // 메서드로 가르지 않고 접두어로 묶은 이유 — 남의 알림을 가리킬 수 있는 경로를 두지
+  // 않기로 했고(D-14) 그래서 이 아래에 남이 부르는 엔드포인트가 생기지 않는다. 읽음
+  // 처리(NT-09)도 자기 알림을 바꾸는 것이라 같은 등급이다.
+  //
+  // 경로 자체를 두 벌 적는 것은 `/**` 가 빈 세그먼트를 먹는지가 매처 구현에 달려 있어서다.
+  // 목록 경로가 조용히 anyRequest 로 떨어지면 가입 미완료 유저에게 200 이 나간다.
+  private static final String[] NOTIFICATIONS = {
+    "/api/v1/notifications", "/api/v1/notifications/**"
+  };
+
   // 사람이 아니라 기계가 부르는 경로 (API-설계 「2-8. 적재 (Ingest)」 · D-11).
   //
   // ADMIN_ALL 아래에 두지 않은 이유 — 저 줄은 hasAuthority(ADMIN) 하나로 백오피스
@@ -105,6 +117,8 @@ public class SecurityConfig {
               registry.requestMatchers(HttpMethod.POST, SIGNUP_WRITE).hasAuthority(SIGNUP);
               registry.requestMatchers(HttpMethod.PATCH, SIGNUP_WRITE).hasAuthority(SIGNUP);
               registry.requestMatchers(HttpMethod.DELETE, SIGNUP_WRITE).hasAuthority(SIGNUP);
+
+              registry.requestMatchers(NOTIFICATIONS).hasAuthority(SIGNUP);
 
               registry.requestMatchers(ADMIN_ALL).hasAuthority(ADMIN);
               registry.requestMatchers(INGEST_ALL).hasAuthority(MACHINE);
