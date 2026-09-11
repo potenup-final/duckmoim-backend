@@ -146,6 +146,13 @@ class EndpointGradeTest {
           new Endpoint(HttpMethod.GET, "/api/v1/chat-rooms/404404/messages", Grade.SIGNUP),
           new Endpoint(
               HttpMethod.DELETE, "/api/v1/chat-rooms/404404/messages/404404", Grade.SIGNUP),
+          // 아직 없는 경로다. SIGNUP_READ 가 ** 라서 한 칸 더 깊어도 덮인다는 것을 못박는다
+          // (PR #131 리뷰). 이 표는 손으로 유지하는 것이라 새 경로를 자동으로 잡아 주지
+          // 않고, 그래서 규칙 쪽이 fail-closed 여야 한다 — CH-11 의 스트림, CH-13 의 읽은
+          // 지점, CH-15 의 이미지 서명이 전부 이 깊이다. 판정이 401·403 만 보므로 핸들러가
+          // 없어도 등급 검사에는 문제가 없다 (가입을 마친 계정은 404 이고 그것도 통과다).
+          new Endpoint(
+              HttpMethod.GET, "/api/v1/chat-rooms/404404/messages/404404/nothing", Grade.SIGNUP),
           // 2-6 신고
           new Endpoint(HttpMethod.POST, "/api/v1/reports", Grade.SIGNUP),
 

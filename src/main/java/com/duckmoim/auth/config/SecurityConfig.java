@@ -78,12 +78,22 @@ public class SecurityConfig {
   // 조회지만 SIGNUP 이다 (CH-05 · CH-06). 가입을 마치지 않은 계정은 애초에 방 멤버가 될 수
   // 없다 — 초대 대상이 되려면 댓글을 써야 하고 댓글 작성 자체가 SIGNUP 이다. MY_PAGE 의
   // users/me/posts 와 같은 근거.
-  // 메시지 목록(CH-09)이 /api/v1/chat-rooms/*/messages 라 한 칸 더 깊다. 위 둘의 * 는 한 칸만
-  // 덮으므로 닿지 않고, 그러면 anyRequest().authenticated() 로 떨어져 가입 미완료 계정에게
-  // 열린다 — CH-20 이 쓰기 경로에서 고친 것과 같은 모양의 구멍이다.
-  private static final String[] SIGNUP_READ = {
-    "/api/v1/chat-rooms", "/api/v1/chat-rooms/*", "/api/v1/chat-rooms/*/messages"
-  };
+  //
+  // 방 아래 GET 은 전부 SIGNUP 이라 ** 로 덮는다. * 로 적으면 한 칸 깊어질 때마다 사람이 줄을
+  // 더해야 하고, 빠뜨린 경로는 anyRequest().authenticated() 로 떨어져 가입 미완료 계정에게
+  // 열린다 — STAR-112 가 /chat-rooms/*/messages 에서 실제로 그렇게 났다. EndpointGradeTest
+  // 는 손으로 유지하는 표라 새 경로를 자동으로 잡아 주지 않는다 (아래 NOTIFICATIONS 와 같은
+  // 성질이다).
+  //
+  // SIGNUP_WRITE 가 ** 를 경계한 것과 방향이 반대다. 그쪽은 메서드로 갈려 있어 안 적은
+  // 메서드가 열리는 fail-open 이지만, 여기서 ** 는 새 경로를 SIGNUP 으로 덮는 fail-closed 다.
+  //
+  // 관리자 열람(AD-08)이 이 아래로 들어오지 않는다. 관리자 경로는 /api/v1/admin/** 이고
+  // (CM-17 이 /api/v1/admin/comments/{id} 인 선례), 그것은 ADMIN_ALL 이 따로 덮는다.
+  //
+  // 경로 자체를 두 벌 적는 것은 NOTIFICATIONS 와 같은 이유다 — /** 가 빈 세그먼트를 먹는지가
+  // 매처 구현에 달려 있어, 목록 경로가 조용히 anyRequest 로 떨어질 수 있다.
+  private static final String[] SIGNUP_READ = {"/api/v1/chat-rooms", "/api/v1/chat-rooms/**"};
 
   private static final String[] PUBLIC_LOGIN = {"/api/v1/auth/kakao", "/api/v1/auth/token"};
   private static final String AUTH_TOKEN = "/api/v1/auth/token";
