@@ -146,6 +146,11 @@ class EndpointGradeTest {
 
           // 2-10. 알림 (Notification) · 2차
           new Endpoint(HttpMethod.GET, "/api/v1/notifications", Grade.SIGNUP),
+          // 없는 알림 번호다. 있는 알림을 찌르면 service 가 먼저 답해서 이 줄이 등급이 아니라
+          // 본문을 보게 된다 — 채팅 초대 줄이 없는 글 번호를 쓰는 것과 같은 이유다.
+          new Endpoint(HttpMethod.POST, "/api/v1/notifications/404404/read", Grade.SIGNUP),
+          new Endpoint(HttpMethod.POST, "/api/v1/notifications/read", Grade.SIGNUP),
+          new Endpoint(HttpMethod.GET, "/api/v1/notifications/unread-count", Grade.SIGNUP),
           // 2-7 백오피스
           new Endpoint(HttpMethod.GET, "/api/v1/admin/reports", Grade.ADMIN),
           new Endpoint(HttpMethod.PATCH, "/api/v1/admin/reports/1", Grade.ADMIN),
