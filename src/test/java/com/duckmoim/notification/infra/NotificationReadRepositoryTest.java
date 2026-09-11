@@ -2,9 +2,7 @@ package com.duckmoim.notification.infra;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.duckmoim.notification.domain.Notification;
 import java.time.LocalDateTime;
-import java.util.Optional;
 import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -16,8 +14,8 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * 읽음 처리와 안 읽은 수의 질의 (NT-09 · NT-10).
  *
- * <p>실제 MySQL 로 돈다. 벌크 UPDATE 가 영속성 컨텍스트를 지나지 않아 mock 으로는 「몇 행이 바뀌었나」도 「{@code updated_at} 이 채워졌나」도
- * 볼 수 없고, 테스트 컨벤션이 H2 도 금지했다.
+ * <p>실제 MySQL 로 돈다. 읽음 전이가 둘 다 조건부 UPDATE 라 mock 으로는 「몇 행이 바뀌었나」도 「{@code updated_at} 이 채워졌나」도 볼 수
+ * 없고, 테스트 컨벤션이 H2 도 금지했다.
  *
  * <p><b>여기가 {@code I-24} 를 쓰기 쪽에서 보는 자리다.</b> 지금까지 그 불변식은 조회 질의 하나가 지켰는데 (도메인-모델링.md 「5. 불변식」 · 이중
  * 방어가 없다) 이 티켓이 알림에 쓰기 경로를 처음 연다. 세 질의 모두 남의 행에 닿지 않는 것을 본다.
@@ -39,27 +37,66 @@ class NotificationReadRepositoryTest {
   @Autowired private NotificationRepository notificationRepository;
   @Autowired private JdbcTemplate jdbc;
 
-  @DisplayName("내 알림은 번호와 수신자로 찾힌다.")
+  @DisplayName("내 알림은 번호와 수신자로 있는 것이 확인된다.")
   @Test
-  void findByIdAndRecipientId() {
+  void existsByIdAndRecipientId() {
     long mine = notified(ME);
 
-    Optional<Notification> found = notificationRepository.findByIdAndRecipientId(mine, ME);
-
-    assertThat(found).isPresent();
-    assertThat(found.get().getId()).isEqualTo(mine);
+    assertThat(notificationRepository.existsByIdAndRecipientId(mine, ME)).isTrue();
   }
 
   /**
-   * 남의 알림이 <b>없는 것과 똑같이</b> 비어서 돌아온다. 호출부가 이 빈 값을 404 로 옮기고, 그래서 「그 번호의 알림이 존재한다」가 새지 않는다
+   * 남의 알림이 <b>없는 것과 똑같이</b> {@code false} 로 돌아온다. 호출부가 이 값을 404 로 옮기고, 그래서 「그 번호의 알림이 존재한다」가 새지 않는다
    * (API-설계.md 「5. 결정 사항」 D-14 ②).
    */
-  @DisplayName("남의 알림은 번호를 알아도 찾히지 않는다.")
+  @DisplayName("남의 알림은 번호를 알아도 있는 것으로 확인되지 않는다.")
   @Test
-  void findByIdAndRecipientId_recipientIsNotMe() {
+  void existsByIdAndRecipientId_recipientIsNotMe() {
     long theirs = notified(SOMEONE_ELSE);
 
-    assertThat(notificationRepository.findByIdAndRecipientId(theirs, ME)).isEmpty();
+    assertThat(notificationRepository.existsByIdAndRecipientId(theirs, ME)).isFalse();
+  }
+
+  @DisplayName("개별 읽음은 내 알림 한 건만 읽음으로 바꾼다.")
+  @Test
+  void markRead() {
+    long mine = notified(ME);
+    long another = notified(ME);
+
+    int changed = notificationRepository.markRead(mine, ME, READ_AT);
+
+    assertThat(changed).isEqualTo(1);
+    assertThat(readAtOf(mine)).isEqualTo(READ_AT);
+    assertThat(readAtOf(another)).isNull();
+  }
+
+  /**
+   * <b>여기가 개별 읽음의 가드다.</b> 조건이 SQL 에 있어 MySQL 이 잠근 현재 행에 대고 판정한다 — 메모리에서 판정하면 조회와 커밋 사이에 전체 읽음이
+   * 지나갔을 때 이 단언이 깨진다 ({@code NotificationReadRaceTest}).
+   */
+  @DisplayName("개별 읽음은 이미 읽은 알림의 시각을 건드리지 않는다.")
+  @Test
+  void markRead_keepsFirstStamp() {
+    long already = notified(ME);
+    LocalDateTime first = BASE.plusHours(1);
+    jdbc.update("UPDATE notification SET read_at = ? WHERE id = ?", first, already);
+
+    int changed = notificationRepository.markRead(already, ME, READ_AT);
+
+    assertThat(changed).isZero();
+    assertThat(readAtOf(already)).isEqualTo(first);
+  }
+
+  /** 번호가 맞아도 수신자가 다르면 한 행도 바뀌지 않는다. 조건이 인자가 아니라 질의에 박혀 있다. */
+  @DisplayName("개별 읽음은 남의 알림을 번호로 지목해도 바꾸지 않는다.")
+  @Test
+  void markRead_recipientIsNotMe() {
+    long theirs = notified(SOMEONE_ELSE);
+
+    int changed = notificationRepository.markRead(theirs, ME, READ_AT);
+
+    assertThat(changed).isZero();
+    assertThat(readAtOf(theirs)).isNull();
   }
 
   @DisplayName("전체 읽음은 내 안 읽은 알림만 읽음으로 바꾼다.")

@@ -5,8 +5,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.duckmoim.common.exception.BusinessException;
 import com.duckmoim.notification.exception.NotificationErrorCode;
-import jakarta.persistence.EntityManager;
-import jakarta.persistence.PersistenceContext;
 import java.time.LocalDateTime;
 import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.DisplayName;
@@ -38,9 +36,6 @@ class NotificationReadServiceTest {
 
   @Autowired private NotificationReadService notificationReadService;
   @Autowired private JdbcTemplate jdbc;
-
-  /** {@link #readAtOf} 가 쓴다. 이유는 그쪽에 적혀 있다. */
-  @PersistenceContext private EntityManager entityManager;
 
   @DisplayName("알림 하나를 읽으면 안 읽은 수가 하나 준다.")
   @Test
@@ -154,15 +149,12 @@ class NotificationReadServiceTest {
   }
 
   /**
-   * <b>먼저 flush 한다.</b> 개별 읽음은 영속성 컨텍스트에 올라온 엔티티를 고치고, 그 변경은 커밋이나 JPQL 실행 전까지 DB 에 안 내려간다.
-   * JdbcTemplate 은 같은 커넥션을 쓰면서도 그 대기 중인 변경을 못 봐서, flush 없이 읽으면 방금 찍은 시각이 NULL 로 보인다.
-   *
-   * <p>SQL 로 직접 읽는 것은 <b>도메인이 쥔 값이 아니라 표에 실제로 저장된 값</b>을 보기 위해서다 — 응답에 {@code read_at} 이 나가지 않으므로
+   * SQL 로 직접 읽는 것은 <b>도메인이 쥔 값이 아니라 표에 실제로 저장된 값</b>을 보기 위해서다 — 응답에 {@code read_at} 이 나가지 않으므로
    * (API-설계.md 「2-10. 알림 (Notification) · 2차」) 여기 말고는 확인할 자리가 없다.
+   *
+   * <p>flush 가 필요 없다. 읽음 전이가 조건부 UPDATE 라 영속성 컨텍스트에 머무르는 변경이 없다.
    */
   private LocalDateTime readAtOf(long id) {
-    entityManager.flush();
-
     return jdbc.queryForObject(
         "SELECT read_at FROM notification WHERE id = ?", LocalDateTime.class, id);
   }

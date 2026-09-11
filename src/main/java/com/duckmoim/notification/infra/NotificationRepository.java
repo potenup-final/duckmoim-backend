@@ -2,7 +2,6 @@ package com.duckmoim.notification.infra;
 
 import com.duckmoim.notification.domain.Notification;
 import java.time.LocalDateTime;
-import java.util.Optional;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.Repository;
@@ -23,8 +22,8 @@ import org.springframework.data.repository.query.Param;
  *
  * <p><b>NT-09 · NT-10 이 여는 셋은 전부 수신자 조건을 뗄 수 없게 생겼다.</b> {@code I-24}(알림은 수신자 본인에게만 조회된다)는 이중 방어가
  * 없어 조건 하나가 유일한 방어선인데, 이 티켓이 <b>알림에 쓰기 경로를 처음 연다</b> — 읽기에서만 지키던 방어선을 쓰기에도 세워야 한다. 그래서 조건을 인자로 받아
- * 「넘기면 걸리는」 모양이 아니라, 파생 쿼리는 메서드 이름에 · 벌크는 JPQL 문자열에 박아 둔다 ({@code NotificationQueryRepositoryImpl}
- * 이 같은 이유로 {@code WHERE} 절을 상수에 박은 것과 같다).
+ * 「넘기면 걸리는」 모양이 아니라, 파생 쿼리는 메서드 이름에 · UPDATE 는 JPQL 문자열에 박아 둔다 ({@code
+ * NotificationQueryRepositoryImpl} 이 같은 이유로 {@code WHERE} 절을 상수에 박은 것과 같다).
  */
 public interface NotificationRepository
     extends Repository<Notification, Long>, NotificationQueryRepository {
@@ -36,12 +35,45 @@ public interface NotificationRepository
   boolean existsByOutboxId(Long outboxId);
 
   /**
-   * 읽음으로 바꿀 <b>내</b> 알림 한 건 (NT-09).
+   * 읽음으로 바꿀 <b>내</b> 알림이 있는지 (NT-09).
    *
-   * <p><b>{@code findById} 를 두지 않는다.</b> 수신자까지 걸어야 남의 알림이 비어서 돌아오고, 그때 404 가 난다 (API-설계.md 「5. 결정
-   * 사항」 D-14 ②). 번호만으로 찾는 문을 열어 두면 호출부가 그걸 쓰고 판정을 따로 붙이게 되는데, 그 판정은 빠뜨릴 수 있다.
+   * <p><b>404 를 내기 위해서만 쓴다.</b> 수신자까지 걸어야 남의 알림이 없는 것과 똑같이 {@code false} 로 돌아온다 (API-설계.md 「5. 결정
+   * 사항」 D-14 ②). 번호만으로 묻는 문을 열어 두면 호출부가 그걸 쓰고 판정을 따로 붙이게 되는데, 그 판정은 빠뜨릴 수 있다.
+   *
+   * <p><b>엔티티를 돌려주지 않는다.</b> 불러다 고치는 길이 막혀 있어 ({@link #markRead}) 여기서 필요한 것은 「있나 없나」 하나다.
    */
-  Optional<Notification> findByIdAndRecipientId(Long id, Long recipientId);
+  boolean existsByIdAndRecipientId(Long id, Long recipientId);
+
+  /**
+   * 알림 하나를 읽음으로 바꾼다 (NT-09).
+   *
+   * <p><b>엔티티를 불러다 고치지 않는 이유는 동시성이다.</b> 불러온 {@code readAt} 은 조회 시점에 복사된 스냅숏이라 「이미 읽었나」를 메모리에서
+   * 판정하면, 조회와 커밋 사이에 {@link #markAllRead} 가 지나갔을 때 그 판정이 그대로 통과해 <b>먼저 찍힌 시각을 덮어쓴다.</b> 실제로 재현된다
+   * (PR #123 리뷰). 조건을 SQL 로 내리면 MySQL 이 잠근 현재 행에 대고 판정해서 그 창이 사라진다.
+   *
+   * <p><b>{@link #markAllRead} 와 글자 그대로 같은 가드다</b> — {@code read_at is null}. 개별과 전체가 같은 조건을 쓰는 것이
+   * 「{@code read_at} 은 처음 읽은 시각을 지킨다」(API-설계.md 「2-10. 알림 (Notification) · 2차」)가 지켜지는 방식이다.
+   *
+   * <p><b>비관적 락을 쓰지 않은 이유</b> — {@code SELECT ... FOR UPDATE} 로도 막히지만, 없는 번호를 찌르면 REPEATABLE READ
+   * 에서 갭 락이 잡혀 워커의 알림 INSERT 를 막을 수 있다. {@code I-25} 가 그 모양의 결합을 끊어 낸 자리라 (NT-04) 같은 표에 새 락을 들이지
+   * 않는다.
+   *
+   * <p>0 이 돌아오는 것은 <b>실패가 아니다.</b> 이미 읽은 알림이라는 뜻이고, 그것도 성공이다.
+   *
+   * <p><b>부르는 쪽에 트랜잭션이 있어야 한다</b> — service 의 {@code @Transactional} 안에서만 부른다.
+   *
+   * @return 실제로 바뀐 행 수. 0 이면 이미 읽은 알림이다
+   */
+  @Modifying(clearAutomatically = true)
+  @Query(
+      "update Notification n set n.readAt = :now, n.updatedAt = :now"
+          + " where n.id = :id"
+          + " and n.recipientId = :recipientId"
+          + " and n.readAt is null")
+  int markRead(
+      @Param("id") Long id,
+      @Param("recipientId") Long recipientId,
+      @Param("now") LocalDateTime now);
 
   /**
    * 내 안 읽은 알림 건수 (NT-10). 배지에 그대로 나간다.
