@@ -250,6 +250,22 @@ class ChatRoomTest {
     assertThat(room.isWritable(meetAtUtc, clock)).isTrue();
   }
 
+  /**
+   * 정각을 짚는다 (CH-08 · STAR-111).
+   *
+   * <p>위의 세 검사는 ±1초·1시간이라 <b>경계 그 순간</b>을 지나지 않는다. 명세가 「만남시각 + 7일 <i>경과</i> 후」라고 적었으므로 정각은 아직 경과가
+   * 아니고, 그래서 판정이 {@code isAfter} 여야 한다. {@code isBefore} 로 뒤집히면 마지막 한 마디가 조용히 막히는데 다른 검사는 전부 초록불이다.
+   */
+  @DisplayName("만남시각 + 7일 정각에는 아직 채팅이 가능하다.")
+  @Test
+  void isWritableAtWindowEnd() {
+    ChatRoom room = ChatRoom.openFor(POST_ID, HOST_ID);
+    LocalDateTime meetAtUtc = LocalDateTime.now(ZoneOffset.UTC);
+    Clock clock = Clock.fixed(instantOf(meetAtUtc.plusDays(ChatRoom.WRITABLE_WINDOW_DAYS)), KST);
+
+    assertThat(room.isWritable(meetAtUtc, clock)).isTrue();
+  }
+
   private static Instant instantOf(LocalDateTime dateTime) {
     return dateTime.toInstant(ZoneOffset.UTC);
   }

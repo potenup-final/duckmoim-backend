@@ -137,6 +137,10 @@ class EndpointGradeTest {
           // 멤버가 될 수 없어서다 — users/me/posts 와 같은 근거.
           new Endpoint(HttpMethod.GET, "/api/v1/chat-rooms", Grade.SIGNUP),
           new Endpoint(HttpMethod.GET, "/api/v1/chat-rooms/404404", Grade.SIGNUP),
+          // 메시지 전송 (CH-07 · CH-08). 같은 SIGNUP 이지만 위 둘과 다른 줄로 걸린다 —
+          // 저쪽은 GET 이라 SIGNUP_READ, 이쪽은 POST 라 SIGNUP_WRITE 다.
+          // 방 멤버인지는 관문이 아니라 service 가 본다.
+          new Endpoint(HttpMethod.POST, "/api/v1/chat-rooms/404404/messages", Grade.SIGNUP),
           // 2-6 신고
           new Endpoint(HttpMethod.POST, "/api/v1/reports", Grade.SIGNUP),
 
