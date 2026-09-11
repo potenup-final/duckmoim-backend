@@ -73,23 +73,15 @@ jobs:
           jira_get "$KEY" > issue.json
           gh pr view "$PR" --json body --jq '.body // ""' > body.txt
 
-          # The mirrored GitHub issue, so the body can carry `Closes #N` and the
-          # issue closes itself on merge.
-          num=$(gh issue list --state all --search "\"[$KEY]\" in:title" \
-                  --json number,title \
-                  --jq "first(.[] | select(.title | startswith(\"[$KEY]\")) | .number) // empty")
-
           jq -n --slurpfile issue issue.json \
                 --rawfile body body.txt \
-                --arg num "$num" \
-                '{issue: $issue[0], body: $body,
-                  issue_number: (if $num == "" then null else ($num | tonumber) end)}' \
+                '{issue: $issue[0], body: $body}' \
             > payload.json
 
           python3 .github/scripts/pr_body.py < payload.json > new_body.md
           gh pr edit "$PR" --body-file new_body.md
 
-          echo "::notice::PR #$PR 본문 갱신 (Jira $KEY${num:+, closes #$num})"
+          echo "::notice::PR #$PR 본문 갱신 (Jira $KEY)"
 
       # Without this the ticket is stranded in 검토 중 with no PR to review —
       # the board claims it is under review and nobody is told otherwise.

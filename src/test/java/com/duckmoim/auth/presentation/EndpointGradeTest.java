@@ -79,6 +79,17 @@ class EndpointGradeTest {
   /** HOST 는 관문이 판정하지 않는다. 방장 여부는 service 가 보므로 관문에서는 SIGNUP 으로 받는다. */
   private static final List<Endpoint> MATRIX =
       List.of(
+          // 인프라. 사람이 아니라 ALB 와 Alloy 가 부르고, 그래서 토큰이 없다.
+          // 위키 「엔드포인트 목록」에는 /api/health 만 있다 — actuator 줄은 이 저장소가
+          // 먼저 열었고 위키 반영은 별도 클론에서 따라온다 (STAR-92).
+          //
+          // /actuator/prometheus 는 여기 없다. @SpringBootTest 가
+          // management.defaults.metrics.export.enabled=false 를 기본으로 넣어 이 컨텍스트에는
+          // 그 엔드포인트가 아예 없고, 그러면 404 가 나서 PUBLIC 줄이 「막히지 않았다」로
+          // 통과한다 — 인가를 하나도 검사하지 않은 채 초록불이 된다. 그 경로는
+          // ActuatorExposureTest 가 수출을 되살린 컨텍스트에서 본다.
+          new Endpoint(HttpMethod.GET, "/api/health", Grade.PUBLIC),
+          new Endpoint(HttpMethod.GET, "/actuator/health", Grade.PUBLIC),
           // 2-1 인증
           new Endpoint(HttpMethod.POST, "/api/v1/auth/kakao", Grade.PUBLIC),
           new Endpoint(HttpMethod.POST, "/api/v1/auth/token", Grade.PUBLIC),
@@ -113,6 +124,15 @@ class EndpointGradeTest {
           new Endpoint(HttpMethod.POST, "/api/v1/posts/1/comments", Grade.SIGNUP),
           new Endpoint(HttpMethod.PATCH, "/api/v1/comments/1", Grade.SIGNUP),
           new Endpoint(HttpMethod.DELETE, "/api/v1/comments/1", Grade.SIGNUP),
+          // 채팅 (2차). 위키 「엔드포인트 목록」이 1차 MVP 문서라 이 줄의 정본이 아직 없다 —
+          // 저장소가 먼저 열고 위키 반영은 별도 클론에서 따라온다 (STAR-92 가 actuator 줄에
+          // 한 것과 같다).
+          //
+          // 없는 글 번호다. 시드에 있는 글을 찌르면 방장이 아닌 요청자에게 service 가 403 을
+          // 내고 관문의 403 과 구분되지 않는다 — POST /posts/404404/close 와 같은 이유다.
+          // 요청에 본문이 없어 사실은 그 앞에서 끝나지만, 번호를 없는 것으로 두는 편이
+          // 본문이 붙는 날에도 이 줄이 계속 등급만 보게 한다.
+          new Endpoint(HttpMethod.POST, "/api/v1/posts/404404/chat-room/members", Grade.SIGNUP),
           // 2-6 신고
           new Endpoint(HttpMethod.POST, "/api/v1/reports", Grade.SIGNUP),
           // 2-7 백오피스

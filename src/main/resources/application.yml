@@ -11,6 +11,33 @@ spring:
   jpa:
     open-in-view: false
 
+# 헬스체크와 지표. 두 소비자가 있다 — ALB 대상 그룹의 상태 검사와 ci-cd.yml 의 배포 전환
+# 게이트다. 둘 다 /actuator/health 를 보고, 그 값이 DB 커넥션까지 확인한 결과여야
+# 「DB 에 못 붙는 버전으로 전환」이 막힌다.
+management:
+  endpoints:
+    web:
+      exposure:
+        # 이 둘만 연다. "*" 로 열면 /actuator/env 와 /actuator/configprops 가
+        # DB_PASSWORD · JWT_SECRET · INGEST_KEY 를 평문으로 돌려주는데, 8080 이
+        # 0.0.0.0/0 이라 여는 즉시 인터넷에 노출된다.
+        include: health,prometheus
+  endpoint:
+    health:
+      # 지표 이름과 실패 사유가 그대로 나가면 내부 구성이 드러난다. 상태 검사는
+      # UP/DOWN 만 알면 되고, 무엇이 왜 죽었는지는 로그와 대시보드에서 본다.
+      show-details: never
+  health:
+    diskspace:
+      # 기본 임계는 여유 10MB 이고 루트 볼륨이 8GB 다. 걸리면 두 인스턴스가 같은 속도로
+      # 차서 동시에 DOWN 이 되고, ALB 는 healthy 대상이 0 이 되어 전부 503 을 낸다 —
+      # DB 가 멀쩡한데도 그렇다. 상태 검사는 「요청을 처리할 수 있는가」만 판정한다.
+      enabled: false
+  metrics:
+    tags:
+      # 두 인스턴스의 지표가 한 곳에 모이므로 어느 앱의 것인지 이름을 붙여 둔다.
+      application: duckmoim
+
 springdoc:
   api-docs:
     enabled: true
@@ -64,6 +91,24 @@ duckmoim:
     post-close:
       cron: ${POST_CLOSE_CRON:0 */5 * * * *}
       chunk: 200
+
+  # 알림 발송 워커 (NT-02 · NT-03).
+  #
+  # 10초인 근거 — 마감 배치와 반대다. 알림이 늦으면 그것이 곧 사용자가 보는 지연이고,
+  # 「댓글 달렸다」를 5분 뒤에 받으면 다시 부르는 효과가 사라진다. 대신 대부분의 실행이
+  # 0건이라 그때는 로그를 남기지 않는다.
+  #
+  # backoff 는 실패 뒤 다음 시도까지 기다리는 간격이다. 지금 쓰이는 것은 앞의 둘 —
+  # max-attempts 가 셋이라 세 번째 실패는 기다리지 않고 DLQ 로 간다. 25m 를 남긴 것은
+  # 5배수 모양을 잃지 않으려는 것이고, 상한을 올리면 그대로 쓰인다.
+  #
+  # max-attempts 를 셋으로 둔 근거는 NT-03 의 검증 기준 「3회 실패 건이 DLQ 에 있다」다.
+  notification:
+    worker:
+      cron: ${NOTIFICATION_WORKER_CRON:*/10 * * * * *}
+      chunk: 100
+      max-attempts: 3
+      backoff: 1m,5m,25m
 
   # 카카오 로그인 (AU-01). 우리 로그인은 이것 하나뿐이다.
   #
