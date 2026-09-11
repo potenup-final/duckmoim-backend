@@ -44,12 +44,27 @@ public class SanctionGateConfig implements WebMvcConfigurer {
    * <p><b>전송 service 에는 제재 판정이 없다.</b> 있어야 하는 것이 아니라 없는 것이 맞다 — 판정 자리를 관문 하나로 모으는 것이 I-14 의 설계이고,
    * 서비스마다 적으면 하나를 빠뜨렸을 때 아무도 모른다.
    *
-   * <p><b>CH-04 퇴장이 붙는 날 예외를 넣어야 한다.</b> 퇴장은 {@code DELETE} 라 이 목록에 걸리는데, 정지당한 사람이 방을 나가지 못하는 것은
+   * <p><b>그래서 퇴장(CH-04)을 아래에서 도로 뺀다.</b> 퇴장은 {@code DELETE} 라 이 목록에 걸리는데, 정지당한 사람이 방을 나가지 못하는 것은
    * 신고와 탈퇴를 일부러 뺀 판단과 같은 줄에 있다 — 제재가 막는 것은 <b>새로 쓰는 일</b>이지 관계를 끊는 일이 아니다.
    */
   private static final String[] SANCTIONED_WRITE = {
     "/api/v1/posts/**", "/api/v1/comments/**", "/api/v1/chat-rooms/**"
   };
+
+  /**
+   * 위 접두어 아래이면서 막지 않는 경로 (CH-04).
+   *
+   * <p><b>제재가 막는 것은 새로 쓰는 일이지 관계를 끊는 일이 아니다</b> (도메인-모델링.md 「3.3 경계를 넘는 불변식」). 신고({@code
+   * /api/v1/reports})와 탈퇴를 목록에서 뺀 것과 같은 판단이고, 방을 나가는 것은 그 둘에 가깝다 — 정지당한 사람을 대화방에 가둬 두는 것이 제재의 목적일 수
+   * 없다.
+   *
+   * <p><b>경로로 빼고 메서드로 빼지 않는다.</b> 인터셉터의 제외 목록이 경로 단위라 그렇기도 하지만, 그 편이 안전한 방향이기도 하다 — 이 경로에 사는 것은 퇴장
+   * {@code DELETE} 하나이고, 여기에 쓰기를 새로 얹는 일은 없다. 반대로 메서드로 빼면 앞으로 생기는 모든 {@code DELETE} 가 함께 열린다.
+   *
+   * <p><b>{@code SecurityConfig} 에는 같은 예외가 없다.</b> 그쪽은 등급이라 나가기도 {@code SIGNUP} 이 맞다 — 가입을 마치지 않은
+   * 계정은 애초에 방 멤버가 아니라 나갈 방도 없다. 두 목록이 여기서만 갈리는 이유가 그것이다.
+   */
+  private static final String[] SANCTIONED_EXCEPT = {"/api/v1/chat-rooms/*/members/me"};
 
   private final ObjectProvider<SanctionQueryService> sanctionQueryService;
 
@@ -59,6 +74,7 @@ public class SanctionGateConfig implements WebMvcConfigurer {
         service ->
             registry
                 .addInterceptor(new SanctionGateInterceptor(service))
-                .addPathPatterns(SANCTIONED_WRITE));
+                .addPathPatterns(SANCTIONED_WRITE)
+                .excludePathPatterns(SANCTIONED_EXCEPT));
   }
 }
