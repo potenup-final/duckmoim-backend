@@ -3,6 +3,7 @@ package com.duckmoim.notification.service;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -39,7 +40,16 @@ class NotificationWorkerContentionTest {
 
   private static final Logger log = LoggerFactory.getLogger(NotificationWorkerContentionTest.class);
 
-  private static final LocalDateTime NOW = LocalDateTime.of(2026, 9, 12, 0, 0);
+  /**
+   * 이 검사들이 워커에게 「사이클 시작 시각」이라고 넘기는 값.
+   *
+   * <p><b>미래 상수를 쓸 수 없다.</b> 리스는 <b>거는 순간의 시계</b>에서 재므로(NT-04), 여기에 내일 날짜를 넣으면 방금 건 리스가 그보다 과거가 되어
+   * 「남이 선점한 건은 집히지 않는다」가 코드와 무관한 이유로 뒤집힌다.
+   *
+   * <p><b>{@code Clock} 빈을 고정하지 않는 이유는 컨텍스트 하나가 커넥션을 더 쓰기 때문이다.</b> 이 클래스는 시각의 <b>절대값</b>이 아니라 리스와의
+   * 앞뒤만 보므로 실제 시계로 충분하다.
+   */
+  private static final LocalDateTime NOW = LocalDateTime.now(ZoneOffset.UTC);
 
   /** 한 워커가 한 번에 집는 건수. 운영 기본값과 같다. */
   private static final int CHUNK = 100;
@@ -137,11 +147,31 @@ class NotificationWorkerContentionTest {
 
     List<Long> mine = notificationDispatchService.claimSendableIds(NOW, CHUNK);
     List<Long> beforeExpiry = notificationDispatchService.claimSendableIds(NOW, CHUNK);
-    List<Long> afterExpiry =
-        notificationDispatchService.claimSendableIds(NOW.plusMinutes(1), CHUNK);
+    // 리스(30초)보다 넉넉히 뒤다. 검사가 오래 걸려도 「아직 안 지났다」로 뒤집히지 않는다.
+    List<Long> afterExpiry = notificationDispatchService.claimSendableIds(NOW.plusHours(1), CHUNK);
 
     assertThat(beforeExpiry).isEmpty();
     assertThat(afterExpiry).as("리스가 지나면 다시 집힌다").isEqualTo(mine);
+  }
+
+  /**
+   * 리스는 <b>집는 순간</b>부터 잰다 (NT-04).
+   *
+   * <p>넘어오는 {@code nowInUtc} 는 <b>사이클이 시작한 시각</b>이다. 그 값으로 리스를 계산하면 드레인이 길어졌을 때 <b>써 넣는 순간 이미 지난
+   * 시각</b>이 적히고, 다른 워커의 조회 조건이 곧바로 참이 되어 선점이 없던 상태로 돌아간다.
+   *
+   * <p><b>사이클이 1분 전에 시작한 상황을 그대로 넣는다.</b> 리스(30초)보다 길어야 그 자리가 드러난다 — 위 검사들은 사이클 시작과 집는 시각이 같아 이 결함을
+   * 지나친다.
+   */
+  @DisplayName("사이클이 길어져도 리스는 집는 순간부터 잰다.")
+  @Test
+  void claimSendableIds_leaseStartsAtClaimTime() {
+    givenPendingOutbox(1);
+
+    List<Long> claimed = notificationDispatchService.claimSendableIds(NOW.minusMinutes(1), CHUNK);
+
+    assertThat(claimed).hasSize(1);
+    assertThat(leaseOf(claimed.get(0))).as("이미 지난 시각을 리스로 적으면 남이 곧바로 집는다").isAfter(NOW);
   }
 
   @DisplayName("SKIP LOCKED 로 집는 동안 아웃박스 발행이 얼마나 밀리는지 잰다.")
@@ -314,6 +344,14 @@ class NotificationWorkerContentionTest {
         outboxIds.getAndIncrement(),
         NOW,
         NOW);
+  }
+
+  /** 선점 표시는 {@code next_attempt_at} 하나다 — 상태도 시도 횟수도 안 바뀐다. */
+  private LocalDateTime leaseOf(long outboxId) {
+    return jdbc.queryForObject(
+        "SELECT next_attempt_at FROM notification_outbox WHERE id = ?",
+        LocalDateTime.class,
+        outboxId);
   }
 
   private int notificationCount() {

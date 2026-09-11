@@ -6,8 +6,10 @@ import com.duckmoim.notification.domain.Notification;
 import com.duckmoim.notification.domain.NotificationOutboxDlq;
 import com.duckmoim.notification.infra.NotificationOutboxDlqRepository;
 import com.duckmoim.notification.infra.NotificationRepository;
+import java.time.Clock;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.PageRequest;
@@ -52,10 +54,19 @@ public class NotificationDispatchService {
    */
   private final Duration lease;
 
+  /**
+   * 리스를 <b>거는 그 순간</b>의 시각을 얻으려고 받는다 (NT-04).
+   *
+   * <p>부르는 쪽이 넘기는 {@code nowInUtc} 는 <b>사이클이 시작한 시각</b>이라 쓸 수 없다. {@code NotificationDispatchBatch}
+   * 가 한 사이클에 청크를 최대 100번 돌리므로, 그 값으로 리스를 계산하면 뒤쪽 청크에서는 <b>이미 지나간 시각</b>이 적힌다.
+   */
+  private final Clock clock;
+
   public NotificationDispatchService(
       NotificationOutboxRepository outboxRepository,
       NotificationRepository notificationRepository,
       NotificationOutboxDlqRepository dlqRepository,
+      Clock clock,
       @Value("${duckmoim.notification.worker.backoff}") List<Duration> backoff,
       @Value("${duckmoim.notification.worker.max-attempts}") int maxAttempts,
       @Value("${duckmoim.notification.worker.lease}") Duration lease) {
@@ -63,6 +74,7 @@ public class NotificationDispatchService {
     this.outboxRepository = outboxRepository;
     this.notificationRepository = notificationRepository;
     this.dlqRepository = dlqRepository;
+    this.clock = clock;
     this.backoff = backoff;
     this.maxAttempts = maxAttempts;
     this.lease = lease;
@@ -81,13 +93,20 @@ public class NotificationDispatchService {
    * 읽는다.
    *
    * <p>{@code Pageable} 을 시그니처에 두지 않는다 — 아키텍처 컨벤션이 service 의 공개 시그니처에 Spring Data 타입을 금지했다.
+   *
+   * <p><b>리스는 {@code nowInUtc} 가 아니라 지금 시각에서 잰다.</b> 넘어오는 값은 <b>사이클이 시작한 시각</b>이고 드레인은 최대 100청크를
+   * 도는데, 그 값으로 계산하면 뒤쪽 청크에서 <b>써 넣는 순간 이미 지난 시각</b>이 적힌다. 그러면 다른 워커의 조회 조건 {@code nextAttemptAt <=
+   * now} 가 곧바로 참이 되어 선점이 없던 상태로 되돌아간다 — <b>적체가 쌓였을 때만</b> 일어나므로 NT-04 가 필요한 바로 그 순간에 꺼진다.
+   *
+   * <p><b>조회에 쓰는 {@code nowInUtc} 는 고정인 채 둔다.</b> 그것은 「이 사이클이 보는 세계」를 정하는 값이라, 드레인 도중 백오프가 풀린 건이 같은
+   * 사이클에 끼어드는 것을 막는다.
    */
   @Transactional
   public List<Long> claimSendableIds(LocalDateTime nowInUtc, int chunk) {
     List<NotificationOutbox> claimed =
         outboxRepository.findSendableForUpdate(nowInUtc, maxAttempts, PageRequest.ofSize(chunk));
 
-    LocalDateTime leaseUntil = nowInUtc.plus(lease);
+    LocalDateTime leaseUntil = LocalDateTime.ofInstant(clock.instant(), ZoneOffset.UTC).plus(lease);
     claimed.forEach(outbox -> outbox.claim(leaseUntil));
 
     return claimed.stream().map(NotificationOutbox::getId).toList();
