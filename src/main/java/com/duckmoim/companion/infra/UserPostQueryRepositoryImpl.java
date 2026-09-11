@@ -2,6 +2,7 @@ package com.duckmoim.companion.infra;
 
 import com.duckmoim.companion.domain.UserPostCursor;
 import com.duckmoim.companion.domain.UserPostListQuery;
+import com.duckmoim.identity.domain.SignupStatus;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import jakarta.persistence.TypedQuery;
@@ -14,8 +15,15 @@ import java.util.List;
  * {@code eventId} 가 외부 식별자라 {@code Event} 를 왼쪽 조인한다. 그 문장을 그대로 재사용하지 않고 여기 다시 적은 이유는 <b>정렬과 커서가 다르기
  * 때문</b>이고, 상수를 공유하면 한쪽 정렬을 고칠 때 다른 쪽이 조용히 따라 바뀐다.
  *
- * <p><b>상태로 거르지 않는다.</b> 마감된 글도 내역에 남아야 한다 — 모집글은 소프트 삭제가 없고(결정 D-3) 상태가 {@code OPEN}·{@code
+ * <p><b>모집글 상태로 거르지 않는다.</b> 마감된 글도 내역에 남아야 한다 — 모집글은 소프트 삭제가 없고(결정 D-3) 상태가 {@code OPEN}·{@code
  * CLOSED} 둘이다. 그래서 {@code V23} 인덱스에도 {@code status} 가 없다.
+ *
+ * <p><b>탈퇴한 소유자의 내역은 빈 페이지다</b> (AU-11). {@code GET /users/&#123;userId&#125;} 가 404 인데 그 사람의 글 목록만
+ * 계속 나오면 프로필이 닫힌 의미가 없다. 404 로 올리지 않고 빈 페이지로 맞추는 이유는 이 경로가 <b>없는 회원번호에도 200 과 빈 페이지</b>를 주기 때문이다 —
+ * 탈퇴만 404 로 갈라 놓으면 탈퇴자와 없는 회원을 구분해 주는 신호가 생긴다.
+ *
+ * <p><b>전체 목록({@code CompanionPostQueryRepositoryImpl})에는 걸지 않는 조건이다.</b> 그쪽에서 글을 빼면 「작성 댓글은 자리표시자
+ * 유지」와 결정 D-3 에 반한다. 여기서 닫는 것은 <b>탈퇴자 프로필을 경유하는 목록</b> 하나다.
  *
  * <p>커서를 행 값 비교로 적지 않은 것은 JPQL 에 행 값 생성자가 없어서다. 풀어 쓴 {@code OR} 형태가 {@code V23} 의 인덱스 모양을 판단한 기준이다.
  */
@@ -24,11 +32,12 @@ public class UserPostQueryRepositoryImpl implements UserPostQueryRepository {
   private static final String SELECT_USER_POST =
       """
       SELECT new com.duckmoim.companion.infra.AuthoredPost(
-                 p, u.nickname, u.profileImageUrl, u.lastSeenAt, e.externalId)
+                 p, u.nickname, u.profileImageUrl, u.lastSeenAt, e.externalId, u.status)
         FROM CompanionPost p
         JOIN User u ON u.id = p.hostId
         LEFT JOIN Event e ON e.id = p.eventId
        WHERE p.hostId = :hostId
+         AND u.status <> :withdrawn
       """;
 
   /** 튜플 비교를 풀어 쓴 것이다. createdAt 이 같을 때 id 가 순서를 정한다 (V23). */
@@ -49,7 +58,10 @@ public class UserPostQueryRepositoryImpl implements UserPostQueryRepository {
             + " ORDER BY p.createdAt DESC, p.id DESC";
 
     TypedQuery<AuthoredPost> typed =
-        entityManager.createQuery(jpql, AuthoredPost.class).setParameter("hostId", query.hostId());
+        entityManager
+            .createQuery(jpql, AuthoredPost.class)
+            .setParameter("hostId", query.hostId())
+            .setParameter("withdrawn", SignupStatus.WITHDRAWN);
 
     if (query.hasCursor()) {
       UserPostCursor cursor = query.cursor();

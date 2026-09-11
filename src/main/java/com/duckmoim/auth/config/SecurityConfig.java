@@ -65,9 +65,17 @@ public class SecurityConfig {
     "/api/v1/posts/*/comments"
   };
 
+  // /api/v1/chat-rooms/** 는 메시지 전송(CH-07)이다. 조회(CH-05 · CH-06)는 GET 이라 이 줄이
+  // 덮지 않고, 그쪽은 같은 SIGNUP 이되 별도로 걸린다 — 여기 GET 을 섞으면 앞으로 열리는
+  // 채팅 조회 경로가 이 배열의 ** 아래로 조용히 들어온다.
   private static final String[] SIGNUP_WRITE = {
-    "/api/v1/posts/**", "/api/v1/comments/**", "/api/v1/reports"
+    "/api/v1/posts/**", "/api/v1/comments/**", "/api/v1/reports", "/api/v1/chat-rooms/**"
   };
+
+  // 조회지만 SIGNUP 이다 (CH-05 · CH-06). 가입을 마치지 않은 계정은 애초에 방 멤버가 될 수
+  // 없다 — 초대 대상이 되려면 댓글을 써야 하고 댓글 작성 자체가 SIGNUP 이다. MY_PAGE 의
+  // users/me/posts 와 같은 근거.
+  private static final String[] SIGNUP_READ = {"/api/v1/chat-rooms", "/api/v1/chat-rooms/*"};
 
   private static final String[] PUBLIC_LOGIN = {"/api/v1/auth/kakao", "/api/v1/auth/token"};
   private static final String AUTH_TOKEN = "/api/v1/auth/token";
@@ -137,6 +145,7 @@ public class SecurityConfig {
               registry.requestMatchers(MY_PAGE).hasAuthority(SIGNUP);
 
               registry.requestMatchers(HttpMethod.GET, PUBLIC_READ).permitAll();
+              registry.requestMatchers(HttpMethod.GET, SIGNUP_READ).hasAuthority(SIGNUP);
 
               registry.requestMatchers(HttpMethod.POST, SIGNUP_WRITE).hasAuthority(SIGNUP);
               registry.requestMatchers(HttpMethod.PATCH, SIGNUP_WRITE).hasAuthority(SIGNUP);

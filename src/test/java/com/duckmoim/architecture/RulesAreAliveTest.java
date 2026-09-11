@@ -6,8 +6,10 @@ import com.tngtech.archunit.core.domain.JavaClasses;
 import com.tngtech.archunit.core.importer.ClassFileImporter;
 import com.tngtech.archunit.lang.ArchRule;
 import com.tngtech.archunit.lang.EvaluationResult;
+import java.nio.file.Path;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 /**
  * 아키텍처 규칙이 <b>실제로 위반을 잡는지</b> 검사한다.
@@ -23,6 +25,9 @@ import org.junit.jupiter.api.Test;
 class RulesAreAliveTest {
 
   private static final String FIXTURE_PACKAGE = "com.duckmoim.architecture.fixture";
+
+  /** {@code installGitHooks} 가 {@code core.hooksPath} 로 심는 자리 (STAR-130). */
+  private static final String HOOKS_DIR = ".githooks";
 
   private static EvaluationResult evaluateOnFixtures(ArchRule rule) {
     JavaClasses fixtures = new ClassFileImporter().importPackages(FIXTURE_PACKAGE);
@@ -115,5 +120,72 @@ class RulesAreAliveTest {
     assertThat(result.getFailureReport().getDetails())
         .as("메서드 안에서 쓰는 것은 허용이다 (아키텍처 컨벤션 · service 금지)")
         .noneMatch(detail -> detail.contains("countInternally"));
+  }
+
+  /**
+   * 위키 핀 게이트의 생존 증명 (STAR-130).
+   *
+   * <p>ArchUnit 규칙이 아니라 git 인덱스의 상태를 보는 검사라, 픽스처도 클래스가 아니라 저장소다 ({@link StagedWikiPinRepository}).
+   * 그 밖은 위와 같다 — 위반을 만들어 두고 게이트가 그것을 잡는지, 그리고 <b>과하게 잡지는 않는지</b> 본다.
+   */
+  @DisplayName("인덱스에 위키 핀이 실려 있으면 서브모듈 핀 검사가 잡는다.")
+  @Test
+  void wikiSubmodulePinIsNotStaged(@TempDir Path tempDir) {
+    Path repo = StagedWikiPinRepository.create(tempDir);
+
+    assertThat(SubmodulePinTest.stagedPinMismatch(repo))
+        .as("검사가 위반 픽스처를 잡지 못했다. 인덱스와 HEAD 를 비교하는 자리가 어긋났다")
+        .isPresent();
+  }
+
+  @DisplayName("핀을 인덱스에서 빼면 서브모듈 핀 검사가 잡지 않는다.")
+  @Test
+  void wikiSubmodulePinIsNotStaged_afterUnstaging(@TempDir Path tempDir) {
+    Path repo = StagedWikiPinRepository.create(tempDir);
+    StagedWikiPinRepository.unstagePin(repo);
+
+    assertThat(SubmodulePinTest.stagedPinMismatch(repo))
+        .as("핀이 어긋나지 않았는데 잡았다. 늘 잡는 검사는 아무것도 증명하지 않는다")
+        .isEmpty();
+  }
+
+  /**
+   * 훅을 직접 실행하지 않고 <b>git 이 부르게 한다.</b> 그래서 이 검사는 훅의 내용만이 아니라 git 이 그것을 훅으로 인정하는지까지 본다 — 실행 권한이 빠지면
+   * git 이 조용히 건너뛰므로 커밋이 통과하고, 여기서 빨간불이 난다.
+   */
+  @DisplayName("인덱스에 위키 핀이 실린 채로 커밋하면 pre-commit 훅이 막는다.")
+  @Test
+  void preCommitRejectsStagedWikiPin(@TempDir Path tempDir) {
+    Path repo = StagedWikiPinRepository.create(tempDir);
+
+    StagedWikiPinRepository.Execution commit = commitWithProjectHooks(repo);
+
+    assertThat(commit.exitCode()).as("훅이 커밋을 막지 못했다. 출력: %s", commit.output()).isNotZero();
+    assertThat(commit.output()).contains("위키 서브모듈 핀");
+  }
+
+  @DisplayName("핀을 인덱스에서 빼면 pre-commit 훅이 커밋을 통과시킨다.")
+  @Test
+  void preCommitRejectsStagedWikiPin_afterUnstaging(@TempDir Path tempDir) {
+    Path repo = StagedWikiPinRepository.create(tempDir);
+    StagedWikiPinRepository.unstagePin(repo);
+
+    StagedWikiPinRepository.Execution commit = commitWithProjectHooks(repo);
+
+    assertThat(commit.exitCode())
+        .as("핀이 어긋나지 않았는데 막았다. 늘 막는 훅은 다음에 --no-verify 로 꺼진다. 출력: %s", commit.output())
+        .isZero();
+  }
+
+  /** 픽스처 저장소에서 커밋을 시도하되, 훅은 <b>이 저장소의 것</b>을 쓰게 한다. */
+  private static StagedWikiPinRepository.Execution commitWithProjectHooks(Path repo) {
+    Path hooks = Path.of(HOOKS_DIR).toAbsolutePath();
+
+    assertThat(hooks.resolve("pre-commit"))
+        .as("%s 에 pre-commit 훅이 있어야 한다 (STAR-130)", HOOKS_DIR)
+        .isRegularFile();
+
+    return StagedWikiPinRepository.git(
+        repo, "-c", "core.hooksPath=" + hooks, "commit", "--quiet", "-m", "핀과 무관한 변경");
   }
 }
