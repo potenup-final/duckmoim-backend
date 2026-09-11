@@ -13,9 +13,11 @@ import org.springframework.data.repository.Repository;
  * 나면 그 트랜잭션이 롤백 표시가 붙어 같은 트랜잭션에서 상태를 바꿀 수 없다. 그래서 먼저 물어보고, 제약은 경쟁이 정말 붙었을 때의 뒷막이로 둔다 (도메인 5장의 이중
  * 방어와 같은 모양이다).
  *
- * <p>목록 조회는 여기 없다. 커서와 정렬을 정하는 쪽이 NT-08 이다.
+ * <p><b>목록 조회는 커스텀 프래그먼트다</b> (NT-08). 커서 조건이 선택이라 파생 쿼리 메서드로 감당되지 않아 {@link
+ * NotificationQueryRepository} 가 따로 있고, 여기서 함께 상속해 service 에 저장소 하나만 주입되게 한다.
  */
-public interface NotificationRepository extends Repository<Notification, Long> {
+public interface NotificationRepository
+    extends Repository<Notification, Long>, NotificationQueryRepository {
 
   /** 알림 한 건을 만든다. */
   Notification save(Notification notification);
