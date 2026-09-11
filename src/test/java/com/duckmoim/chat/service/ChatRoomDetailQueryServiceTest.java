@@ -13,6 +13,7 @@ import com.duckmoim.identity.domain.AuthorDisplay;
 import com.duckmoim.identity.domain.SignupStatus;
 import java.time.Clock;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -41,10 +42,14 @@ class ChatRoomDetailQueryServiceTest {
   @TestConfiguration
   static class FixedClockConfig {
 
+    /**
+     * 시각만 고정하고 <b>존은 운영과 같은 KST 로 둔다</b> ({@code ClockConfig}). UTC 로 두면 만남시각의 기준(UTC)과 우연히 맞아떨어져,
+     * 판정이 벽시계를 쓰는 결함이 여기서도 통과한다.
+     */
     @Bean
     @Primary
     Clock fixedClock() {
-      return Clock.fixed(NOW.toInstant(ZoneOffset.UTC), ZoneOffset.UTC);
+      return Clock.fixed(NOW.toInstant(ZoneOffset.UTC), ZoneId.of("Asia/Seoul"));
     }
   }
 

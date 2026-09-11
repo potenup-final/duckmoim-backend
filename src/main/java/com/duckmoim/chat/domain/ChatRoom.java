@@ -12,7 +12,9 @@ import jakarta.persistence.Id;
 import jakarta.persistence.OneToMany;
 import jakarta.persistence.Table;
 import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -172,13 +174,23 @@ public class ChatRoom extends BaseEntity {
   /**
    * 지금 쓸 수 있는 방인가 (CH-06 · CH-08).
    *
-   * <p><b>{@code meetAt} 을 파라미터로 받는다.</b> 이 애그리게이트는 만남시각을 갖지 않는다 — 클래스 주석이 이미 적은 대로 「쓸 수 있는지 여부는
+   * <p><b>{@code meetAtUtc} 를 파라미터로 받는다.</b> 이 애그리게이트는 만남시각을 갖지 않는다 — 클래스 주석이 이미 적은 대로 「쓸 수 있는지 여부는
    * 모집글의 만남시각에서 계산한다」이고, 그 값은 {@code CompanionPost} 가 쥔다.
    *
    * <p>{@code Clock} 을 주입받지 않고 인자로 받는 것은 {@code AuthorDisplay}·{@code LastSeen} 과 같은 이유다 — domain 은
    * 프레임워크에 묶이지 않는다.
+   *
+   * <p><b>{@code LocalDateTime.now(clock)} 과 비교하지 않는다.</b> {@code ClockConfig} 의 시계가 {@code
+   * Asia/Seoul} 이라 (행사 종료일 판정이 KST 여야 해서 그렇게 정해졌다) 그 벽시계를 UTC 로 저장된 만남시각과 견주면 창이 <b>아홉 시간 일찍
+   * 닫힌다.</b> 두 값을 {@code Instant} 로 맞춰 기준을 하나로 만든다. {@code MeetTimePassedCloseService.closeChunk} 가
+   * 같은 함정을 파라미터 이름({@code nowInUtc})으로 막아 둔 자리다.
+   *
+   * @param meetAtUtc <b>UTC 기준</b> 만남시각. {@code CompanionPost} 가 그 기준으로 저장한다 (도메인-모델링.md 「4. 엔티티 ·
+   *     값 객체 · 식별자」)
    */
-  public boolean isWritable(LocalDateTime meetAt, Clock clock) {
-    return !LocalDateTime.now(clock).isAfter(meetAt.plusDays(WRITABLE_WINDOW_DAYS));
+  public boolean isWritable(LocalDateTime meetAtUtc, Clock clock) {
+    Instant deadline = meetAtUtc.plusDays(WRITABLE_WINDOW_DAYS).toInstant(ZoneOffset.UTC);
+
+    return !clock.instant().isAfter(deadline);
   }
 }
