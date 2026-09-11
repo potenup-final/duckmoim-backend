@@ -63,13 +63,7 @@ public class UserPostQueryService {
    */
   private PostView toView(AuthoredPost authored, Map<Long, Long> commentCounts) {
     CompanionPost post = authored.post();
-    AuthorDisplay host =
-        AuthorDisplay.of(
-            authored.hostStatus(),
-            authored.nickname(),
-            authored.profileImageUrl(),
-            authored.lastSeenAt(),
-            clock);
+    AuthorDisplay host = authored.author(clock);
 
     return new PostView(
         post.getId(),

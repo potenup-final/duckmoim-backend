@@ -1,7 +1,9 @@
 package com.duckmoim.companion.infra;
 
 import com.duckmoim.companion.domain.CompanionPost;
+import com.duckmoim.identity.domain.AuthorDisplay;
 import com.duckmoim.identity.domain.SignupStatus;
+import java.time.Clock;
 import java.time.LocalDateTime;
 
 /**
@@ -29,4 +31,14 @@ public record AuthoredPost(
     String profileImageUrl,
     LocalDateTime lastSeenAt,
     String eventExternalId,
-    SignupStatus hostStatus) {}
+    SignupStatus hostStatus) {
+
+  /**
+   * 방장 블록을 응답에 나갈 모양으로 조립한다.
+   *
+   * <p>네 개의 원시 값 대신 이 메서드 하나를 부르게 해서, 인자 순서를 틀릴 자리를 프로젝션 안에 한 번만 남긴다 (PR #106 리뷰).
+   */
+  public AuthorDisplay author(Clock clock) {
+    return AuthorDisplay.of(hostStatus, nickname, profileImageUrl, lastSeenAt, clock);
+  }
+}

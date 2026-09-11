@@ -58,13 +58,7 @@ public class AdminCommentReadService {
 
     auditLogRecorder.record(adminUserId, AuditKind.SECRET_READ, commentId, detailOf(reportId));
 
-    AuthorDisplay author =
-        AuthorDisplay.of(
-            authored.authorStatus(),
-            authored.nickname(),
-            authored.profileImageUrl(),
-            authored.lastSeenAt(),
-            clock);
+    AuthorDisplay author = authored.author(clock);
 
     return new AdminCommentView(
         authored.comment(), author.nickname(), author.profileImageUrl(), author.lastSeen());

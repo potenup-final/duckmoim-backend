@@ -84,13 +84,7 @@ public class CompanionPostQueryService {
   /** 방장 값은 {@link AuthorDisplay} 를 지난 것만 싣는다. 탈퇴한 방장은 여기서 자리표시자가 된다 (AU-11). */
   private PostView toView(AuthoredPost authored, Map<Long, Long> commentCounts) {
     CompanionPost post = authored.post();
-    AuthorDisplay host =
-        AuthorDisplay.of(
-            authored.hostStatus(),
-            authored.nickname(),
-            authored.profileImageUrl(),
-            authored.lastSeenAt(),
-            clock);
+    AuthorDisplay host = authored.author(clock);
 
     return new PostView(
         post.getId(),

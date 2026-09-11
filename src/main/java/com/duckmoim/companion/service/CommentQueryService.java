@@ -104,13 +104,7 @@ public class CommentQueryService {
 
   /** 작성자 값은 {@link AuthorDisplay} 를 지난 것만 싣는다. 탈퇴한 작성자는 여기서 자리표시자가 된다 (AU-11). */
   private CommentView toView(AuthoredComment authored, List<CommentView> replies) {
-    AuthorDisplay author =
-        AuthorDisplay.of(
-            authored.authorStatus(),
-            authored.nickname(),
-            authored.profileImageUrl(),
-            authored.lastSeenAt(),
-            clock);
+    AuthorDisplay author = authored.author(clock);
 
     return new CommentView(
         authored.comment(),
