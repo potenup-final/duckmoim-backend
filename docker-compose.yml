@@ -30,6 +30,48 @@ services:
       retries: 20
       start_period: 30s
 
+  # SSE 팬아웃과 인스턴스 간 공유 상태 (CH-10 · NT-07).
+  #
+  # **이 파일은 로컬 전용이다.** 운영 EC2 는 compose 를 쓰지 않는다 — ci-cd.yml 이
+  # docker run --name duckmoim-app 으로 직접 띄운다. 여기서 compose up 을 하면 쓰지도
+  # 않는 mysql 컨테이너가 함께 떠서, RDS 를 쓰는 서버에서 400MB 를 헛되이 먹는다.
+  # 운영 Redis 는 EC2 한 대에 docker run 으로 따로 띄우고 두 대가 사설 IP 로 붙는다 —
+  # 두 대에 각각 띄우면 채널이 갈려서 팬아웃이 안 된다.
+  redis:
+    image: redis:7.4-alpine
+    container_name: duckmoim-redis
+    restart: unless-stopped
+
+    # 호스트 쪽만 6380 이다. mysql 을 3307 로 민 것과 같은 이유로, 개발자 PC 의
+    # 네이티브 Redis 와 부딪히지 않아야 한다.
+    ports:
+      - "${REDIS_PORT:-6380}:6379"
+
+    command:
+      - redis-server
+      # 디스크에 쓰지 않는다. 여기 있는 것은 전부 다시 만들어지는 값이고(팬아웃 채널과
+      # 「지금 보고 있는 방」), 정본은 MySQL 이다. 스냅샷을 남기면 되살릴 이유가 없는
+      # 상태가 디스크에 남고 재기동 때 낡은 값이 살아난다.
+      - --save
+      - ""
+      - --appendonly
+      - "no"
+      # 상한을 못박는다. 운영 EC2 는 4GB 인데 JVM 이 MaxRAMPercentage=70 으로 2.8GB,
+      # Alloy 가 ~100MB 를 쓰고 있어 여유가 ~1.1GB 뿐이다.
+      - --maxmemory
+      - 256mb
+      # 가득 차면 「쓰기 거부」가 아니라 「오래된 것 버리기」다. 저장한 값이 전부
+      # 다시 만들어지는 종류라 버리는 쪽이 항상 덜 아프다 — noeviction 을 고르면
+      # 프레즌스 갱신이 실패하면서 그 실패가 요청 경로로 올라온다.
+      - --maxmemory-policy
+      - allkeys-lru
+
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
 volumes:
   mysql-data:
     name: duckmoim-mysql-data

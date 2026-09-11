@@ -12,6 +12,8 @@ import com.duckmoim.auth.service.AuthenticationService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.env.Environment;
+import org.springframework.core.env.Profiles;
 import org.springframework.http.HttpMethod;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -37,9 +39,17 @@ public class SecurityConfig {
     "/error",
     "/v3/api-docs/**",
     "/swagger-ui/**",
-    "/swagger-ui.html",
-    "/api/v1/dev/token"
+    "/swagger-ui.html"
   };
+
+  // 개발용 토큰 발급 (API-설계 「2-9. 운영·개발 (요구사항에서 나오지 않은 것)」).
+  //
+  // INFRA 와 나란히 두지 않는다 — 저 배열은 모든 프로파일에서 열리고, 이 경로는 요청한
+  // 회원번호로 admin: true 토큰까지 찍어준다. 컨트롤러의 @Profile("local") 하나가 유일한
+  // 방어이던 상태라 프로파일 설정이 한 번 어긋나면 관리자 토큰 발급기가 공개된다.
+  // 그 문 안에 비밀 댓글 본문이 있다 (CM-17).
+  private static final String DEV_TOKEN = "/api/v1/dev/token";
+  private static final String LOCAL = "local";
 
   private static final String[] AUTH_READ = {
     "/api/v1/users/me", "/api/v1/users/nickname-availability"
@@ -83,6 +93,7 @@ public class SecurityConfig {
       HttpSecurity http,
       AuthenticationService authenticationService,
       @Value("${duckmoim.ingest.key}") String ingestKey,
+      Environment environment,
       RestAuthenticationEntryPoint authenticationEntryPoint,
       RestAccessDeniedHandler accessDeniedHandler)
       throws Exception {
@@ -97,6 +108,13 @@ public class SecurityConfig {
         .authorizeHttpRequests(
             registry -> {
               registry.requestMatchers(INFRA).permitAll();
+
+              // local 에서만 등록한다. 다른 프로파일에서는 어느 규칙에도 안 걸려
+              // anyRequest().authenticated() 로 떨어지고, 토큰 없는 요청은 401 이다
+              // (없는 경로의 존재 여부를 비인증 요청에 알려주지 않는다 — D-13).
+              if (environment.acceptsProfiles(Profiles.of(LOCAL))) {
+                registry.requestMatchers(HttpMethod.POST, DEV_TOKEN).permitAll();
+              }
 
               registry.requestMatchers(HttpMethod.POST, PUBLIC_LOGIN).permitAll();
               registry.requestMatchers(HttpMethod.DELETE, AUTH_TOKEN).authenticated();

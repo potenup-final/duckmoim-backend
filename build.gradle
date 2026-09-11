@@ -33,6 +33,15 @@ dependencies {
 	implementation 'io.micrometer:micrometer-registry-prometheus'
 
 	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+
+	// SSE 팬아웃(CH-10)과 인스턴스 간 공유 상태(NT-07)의 통로다. 인스턴스가 둘이라 한쪽이
+	// 메모리에 들고 있는 SSE 목록을 다른 쪽이 볼 수 없고, 그래서 EC2-blue 에 붙은 사람이
+	// 보낸 메시지가 EC2-green 에 붙은 사람에게 닿지 않는다.
+	//
+	// **여기 저장하는 것은 전부 다시 만들어지는 값이다.** 메시지의 정본은 MySQL 이고 Redis 는
+	// 「지금 붙어 있는 사람에게 밀어주는 통로」일 뿐이라, 통째로 날아가도 새로고침과 재연결로
+	// 복구된다. 그 성질 때문에 ElastiCache(월 $12~) 대신 EC2 도커 한 대를 고를 수 있었다.
+	implementation 'org.springframework.boot:spring-boot-starter-data-redis'
 	runtimeOnly 'com.mysql:mysql-connector-j'
 	implementation 'org.flywaydb:flyway-core'
 	implementation 'org.flywaydb:flyway-mysql'
@@ -75,13 +84,24 @@ tasks.named('test') {
 	systemProperty 'spring.datasource.url', 'jdbc:tc:mysql:8.4:///duckmoim'
 	systemProperty 'spring.datasource.driver-class-name', 'org.testcontainers.jdbc.ContainerDatabaseDriver'
 
-	// 테스트마다 @SpringBootTest 컨텍스트가 캐시되고(Spring 이 재사용을 위해 스위트가
-	// 끝날 때까지 안 닫는다), 컨텍스트마다 HikariCP 풀이 하나씩 생긴다. 기본 풀 크기(10)
-	// 그대로면 컨텍스트가 16개만 쌓여도 최대 160 커넥션이라 MySQL 기본 max_connections
-	// (151) 을 넘는다 — 실측: NotificationDispatchBatchTest 가 그 순간에 걸려 죽었다.
-	// 테스트는 순차 실행(병렬 아님)이라 풀 하나가 동시에 여러 커넥션을 쓸 일이 없다.
-	systemProperty 'spring.datasource.hikari.maximum-pool-size', '2'
-	systemProperty 'spring.datasource.hikari.minimum-idle', '2'
+	// 컨텍스트 하나가 커넥션을 열 상한이다. 기본값이 10 이라 그냥 두면 이렇게 된다.
+	//
+	//   @SpringBootTest 는 구성이 다르면 컨텍스트를 따로 띄우고, 뜬 것은 캐시에 남아
+	//   테스트가 끝날 때까지 살아 있다. 풀도 같이 산다. MySQL 컨테이너는 한 대이고
+	//   max_connections 기본값이 151 이라, 컨텍스트가 16개가 되는 순간 160 을 요구해서
+	//   **그 시점에 뜨려던 컨텍스트가 "Too many connections" 로 죽는다.**
+	//
+	// 실제로 STAR-110 이 테스트 클래스 둘을 더하면서 14 → 16 이 되어 넘겼다. 터진 곳은
+	// 새 테스트가 아니라 **하필 그때 뜨려던 남의 테스트**였다 (프로필 이미지 · 알림 워커).
+	// 원인과 증상이 갈려 있어서 다음에 또 겪으면 찾는 데 오래 걸린다.
+	//
+	// 5 로 줄이는 데 무리가 없는 이유 — 테스트 하나는 스레드 하나에서 돌고, 여러 커넥션이
+	// 동시에 필요한 것은 잠금 경합을 보는 테스트뿐이다. 그런 테스트가 생기면 그 클래스에서만
+	// 올린다.
+	//
+	// STAR-100 이 같은 벽에 따로 부딪혀 이 자리를 2 로 고쳤다가 여기서 만났다 (터진 곳은
+	// NotificationDispatchBatchTest 였다 — 역시 남의 테스트다). 둘 중 develop 의 5 를 남긴다.
+	systemProperty 'spring.datasource.hikari.maximum-pool-size', '5'
 
 	// 마감 배치를 테스트에서 돌지 않게 한다 (PO-14).
 	//
