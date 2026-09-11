@@ -46,6 +46,16 @@ management:
       # UP/DOWN 만 알면 되고, 무엇이 왜 죽었는지는 로그와 대시보드에서 본다.
       show-details: never
   health:
+    redis:
+      # **이 한 줄이 이 티켓의 규칙을 인프라에 새기는 자리다.**
+      #
+      # Actuator 는 Redis 를 자동으로 헬스 기여자에 넣는다. 그대로 두면 Redis 한 대가
+      # 죽는 순간 두 인스턴스가 동시에 DOWN 이 되고, ALB 의 healthy 대상이 0 이 되어
+      # 전 요청이 503 이 된다 — DB 도 앱도 멀쩡하고 메시지 전송·조회가 되는데도 그렇다.
+      #
+      # diskspace 를 끈 것과 같은 근거다. 상태 검사는 「요청을 처리할 수 있는가」만
+      # 판정한다. Redis 가 죽어서 멈추는 것은 실시간 팬아웃 하나뿐이다.
+      enabled: false
     diskspace:
       # 기본 임계는 여유 10MB 이고 루트 볼륨이 8GB 다. 걸리면 두 인스턴스가 같은 속도로
       # 차서 동시에 DOWN 이 되고, ALB 는 healthy 대상이 0 이 되어 전부 503 을 낸다 —
