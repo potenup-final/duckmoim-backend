@@ -110,6 +110,38 @@ class NotificationWorkerContentionTest {
         .isGreaterThanOrEqualTo(200);
   }
 
+  @DisplayName("남이 선점한 건은 집히지 않는다.")
+  @Test
+  void claimSendableIds_alreadyClaimed() {
+    givenPendingOutbox(3);
+
+    List<Long> mine = notificationDispatchService.claimSendableIds(NOW, CHUNK);
+    List<Long> theirs = notificationDispatchService.claimSendableIds(NOW, CHUNK);
+
+    assertThat(mine).hasSize(3);
+    assertThat(theirs).as("먼저 집은 워커가 다 가져갔으면 뒤는 빈손이다").isEmpty();
+  }
+
+  /**
+   * 선점이 영구 점유가 되면 안 된다.
+   *
+   * <p>{@code CLAIMED} 같은 상태로 표시했다면 워커가 죽은 순간 그 건이 표에 박제되고, 빼내는 장치를 따로 만들어야 한다. 리스는 시각이라 지나면 저절로
+   * 풀린다 — 이 검사가 그 성질을 지킨다.
+   */
+  @DisplayName("선점한 워커가 죽어도 리스가 풀리면 다시 집힌다.")
+  @Test
+  void claimSendableIds_afterLeaseExpires() {
+    givenPendingOutbox(1);
+
+    List<Long> mine = notificationDispatchService.claimSendableIds(NOW, CHUNK);
+    List<Long> beforeExpiry = notificationDispatchService.claimSendableIds(NOW, CHUNK);
+    List<Long> afterExpiry =
+        notificationDispatchService.claimSendableIds(NOW.plusMinutes(1), CHUNK);
+
+    assertThat(beforeExpiry).isEmpty();
+    assertThat(afterExpiry).as("리스가 지나면 다시 집힌다").isEqualTo(mine);
+  }
+
   /** 워커를 동시에 띄워 한 명도 먼저 출발하지 않게 한다. 순차로 돌면 경쟁이 아예 안 생긴다. */
   private Run runWorkers(int workers) {
     ExecutorService pool = Executors.newFixedThreadPool(workers);
@@ -159,7 +191,7 @@ class NotificationWorkerContentionTest {
     int collided = 0;
 
     for (int round = 0; round < MAX_ROUNDS; round++) {
-      List<Long> ids = notificationDispatchService.findSendableIds(NOW, CHUNK);
+      List<Long> ids = notificationDispatchService.claimSendableIds(NOW, CHUNK);
       if (ids.isEmpty()) {
         break;
       }
