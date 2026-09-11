@@ -137,6 +137,13 @@ duckmoim:
       chunk: 100
       max-attempts: 3
       backoff: 1m,5m,25m
+      # 선점한 건을 남이 못 집게 막아 두는 시간 (NT-04). 한 건의 발송이 밀리초라 넉넉하고,
+      # 가장 짧은 백오프(1분)보다 짧아 재시도 간격과 뒤섞이지 않는다. 워커가 죽으면 이 시간
+      # 뒤에 그 건이 저절로 다시 집힌다.
+      lease: 30s
+    # 적체 관측 (NT-05). 발송 주기와 따로 두는 이유는 NotificationBacklogBatch 주석에 있다.
+    backlog:
+      cron: ${NOTIFICATION_BACKLOG_CRON:0 * * * * *}
 
   # 카카오 로그인 (AU-01). 우리 로그인은 이것 하나뿐이다.
   #

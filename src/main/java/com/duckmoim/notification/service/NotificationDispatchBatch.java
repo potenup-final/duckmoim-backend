@@ -21,12 +21,12 @@ import org.springframework.stereotype.Service;
  * <p><b>여기는 트랜잭션을 열지 않는다.</b> 건마다 트랜잭션이 따로여서 (실패 기록이 롤백에 함께 지워지면 안 된다) 반복만 진다. 트랜잭션 경계는 {@link
  * NotificationDispatchService} 다.
  *
- * <p><b>선점이 없다.</b> 인스턴스가 둘이면 두 워커가 같은 건을 집을 수 있다 (NT-04 가 넣는다). 알림함이 두 벌이 되는 것은 {@code
- * notification} 표의 {@code outbox_id} 유니크 제약이 막는다 — <b>남는 낭비는 헛일이지 중복 발송이 아니다.</b>
+ * <p><b>선점은 집는 쪽이 한다</b> (NT-04). {@link NotificationDispatchService#claimSendableIds} 가 잠그고 읽은 뒤
+ * 리스를 적어서, 두 워커가 같은 건을 집지 않는다.
  *
- * <p><b>그 헛일이 조용히 끝나야 한다.</b> 뒤에 집은 워커는 두 갈래로 끝난다 — 앞선 워커가 이미 커밋했으면 {@link
- * NotificationDispatchService#dispatch} 가 「보낼 것이 아니다」로 넘어가고, 커밋이 그 사이에 끼면 유니크 제약에 걸려 롤백된 뒤 실패 기록도
- * 「남이 보냈다」로 넘어간다. 둘 다 예외가 아니다. 예외로 다루면 주기가 끝나고, 실패로 세면 전달된 알림이 DLQ 로 간다.
+ * <p><b>그래도 겹칠 자리가 남는다.</b> 리스가 만료된 뒤에 앞선 워커가 살아 돌아오는 경우다. 뒤에 집은 워커는 두 갈래로 끝난다 — 앞선 워커가 이미 커밋했으면
+ * {@link NotificationDispatchService#dispatch} 가 「보낼 것이 아니다」로 넘어가고, 커밋이 그 사이에 끼면 유니크 제약에 걸려 롤백된 뒤
+ * 실패 기록도 「남이 보냈다」로 넘어간다. 둘 다 예외가 아니다. 예외로 다루면 주기가 끝나고, 실패로 세면 전달된 알림이 DLQ 로 간다.
  */
 @Service
 @Slf4j
@@ -85,7 +85,7 @@ public class NotificationDispatchBatch {
     int sent = 0;
 
     for (int chunks = 0; chunks < MAX_CHUNKS; chunks++) {
-      List<Long> ids = notificationDispatchService.findSendableIds(nowInUtc, chunk);
+      List<Long> ids = notificationDispatchService.claimSendableIds(nowInUtc, chunk);
 
       for (Long outboxId : ids) {
         if (dispatchOne(outboxId, nowInUtc)) {
