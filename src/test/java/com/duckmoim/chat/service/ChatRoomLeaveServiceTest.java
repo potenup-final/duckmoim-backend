@@ -28,6 +28,9 @@ import org.springframework.transaction.annotation.Transactional;
  * <p>명세의 한 줄이 「방장의 퇴장 시도 시 409」 이고, 방장이 누구인지는 모집글에만 있어 방 하나로는 판정이 끝나지 않는다. 비멤버·이미 나간 사람의 403 은 방
  * 안에서 끝나 {@code ChatRoomTest} 가 본다 — 여기서는 <b>모집글에서 읽은 방장이 실제로 넘어가는지</b>를 본다.
  *
+ * <p><b>퇴장이 남긴 결과도 여기서 본다</b> — 재초대 409(CH-02a) · 목록에서 사라짐(CH-05) · 상세 403(CH-18). 셋 다 <b>퇴장이 있어야
+ * 비로소 닿는 자리</b>라, 각 티켓이 아니라 이 티켓이 확인한다. 특히 CH-02a 는 퇴장이 행을 지우는 순간 조용히 200 으로 열린다.
+ *
  * <p><b>모집글 작성부터 지난다.</b> 방이 그 부수효과로 생기고 (CH-01) 방장이 누구인지가 모집글에만 있다. {@code
  * ChatRoomInviteServiceTest} 와 같은 구성이라 컨텍스트를 나눠 쓴다.
  */
@@ -44,6 +47,8 @@ class ChatRoomLeaveServiceTest {
 
   @Autowired private ChatRoomLeaveService chatRoomLeaveService;
   @Autowired private ChatRoomInviteService chatRoomInviteService;
+  @Autowired private ChatRoomListQueryService chatRoomListQueryService;
+  @Autowired private ChatRoomDetailQueryService chatRoomDetailQueryService;
   @Autowired private CompanionPostCommandService companionPostCommandService;
   @Autowired private ChatRoomRepository chatRoomRepository;
   @Autowired private JdbcTemplate jdbcTemplate;
@@ -107,13 +112,65 @@ class ChatRoomLeaveServiceTest {
         .isEqualTo(ChatErrorCode.CHAT_ROOM_NOT_FOUND);
   }
 
+  /**
+   * CH-02a 의 검증 기준 「퇴장한 유저를 다시 초대하면 409」.
+   *
+   * <p><b>이 검사가 성립하려면 퇴장이 있어야 한다.</b> {@code ChatRoomTest} 에도 같은 규칙이 있지만 그쪽은 방 하나 안의 이야기이고, 여기서는
+   * 나가기와 초대가 <b>각자의 트랜잭션</b>을 지나 DB 에 남은 이력으로 판정되는지를 본다 — 퇴장이 행을 지우면 초대받은 적 없는 사람과 같아져 이 자리가 200 으로
+   * 열린다.
+   */
+  @DisplayName("퇴장한 유저를 다시 초대하면 409 다.")
+  @Test
+  void leftMemberCannotBeInvitedAgain() {
+    WrittenCompanionPost written = companionPostCommandService.create(command());
+    aComment().postId(written.id()).authorId(MEMBER_ID).insert(jdbcTemplate);
+    chatRoomInviteService.invite(written.id(), MEMBER_ID, HOST_ID);
+    chatRoomLeaveService.leave(roomIdOf(written.id()), MEMBER_ID);
+
+    assertThatThrownBy(() -> chatRoomInviteService.invite(written.id(), MEMBER_ID, HOST_ID))
+        .isInstanceOf(BusinessException.class)
+        .extracting("errorCode")
+        .isEqualTo(ChatErrorCode.CHAT_MEMBER_LEFT);
+  }
+
+  /** CH-05 의 검증 기준 「나간 방은 목록에 없다」. 목록은 전용 쿼리라 애그리게이트와 따로 걸러야 한다. */
+  @DisplayName("나간 방은 내 방 목록에 없다.")
+  @Test
+  void leftRoomIsNotListed() {
+    long roomId = roomWithMember();
+
+    chatRoomLeaveService.leave(roomId, MEMBER_ID);
+
+    assertThat(chatRoomListQueryService.findRooms(MEMBER_ID))
+        .extracting(ChatRoomSummaryView::roomId)
+        .doesNotContain(roomId);
+  }
+
+  /** CH-18 의 검증 기준 중 방 화면 쪽. 나간 사람은 멤버가 아니라 (I-18) 상세도 열리지 않는다. */
+  @DisplayName("나간 사람은 그 방의 상세를 볼 수 없다.")
+  @Test
+  void leftMemberCannotReadRoom() {
+    long roomId = roomWithMember();
+
+    chatRoomLeaveService.leave(roomId, MEMBER_ID);
+
+    assertThatThrownBy(() -> chatRoomDetailQueryService.findRoom(roomId, MEMBER_ID))
+        .isInstanceOf(BusinessException.class)
+        .extracting("errorCode")
+        .isEqualTo(ChatErrorCode.CHAT_ROOM_ACCESS_DENIED);
+  }
+
   /** 방장 + 초대받은 멤버 하나짜리 방. 초대는 댓글 작성자만 받으므로 댓글부터 넣는다 (CH-02). */
   private long roomWithMember() {
     WrittenCompanionPost written = companionPostCommandService.create(command());
     aComment().postId(written.id()).authorId(MEMBER_ID).insert(jdbcTemplate);
     chatRoomInviteService.invite(written.id(), MEMBER_ID, HOST_ID);
 
-    return chatRoomRepository.findByPostId(written.id()).orElseThrow().getId();
+    return roomIdOf(written.id());
+  }
+
+  private long roomIdOf(long postId) {
+    return chatRoomRepository.findByPostId(postId).orElseThrow().getId();
   }
 
   private List<Long> currentMemberIdsOf(long roomId) {
