@@ -1,0 +1,68 @@
+#!/bin/sh
+# Refuse a commit that carries a changed wiki submodule pin (STAR-130).
+#
+# This repository does not track the wiki pin: the build pulls --remote on every
+# run, so the recorded value is never read. When a pin does land in a commit the
+# branches drift apart, and GitHub locks the merge button because it cannot
+# reach the objects of a PRIVATE submodule — zero code conflicts, no visible
+# cause. STAR-55 (PR #45) lost a day to that.
+#
+# `ignore = all` in .gitmodules stops git from *noticing* the pin, which covers
+# `git add -A`, `git add .`, `git add docs/wiki` and `git commit -a`. It does
+# not cover `git add -f`, a direct `git update-index` (what IDE source-control
+# panels use), or an entry that is already staged — git documents that last one
+# as an explicit exception. This hook is the one place that sees every vector,
+# because all of them end at the same commit.
+#
+# The check compares the raw gitlink SHAs rather than asking `git diff --cached`
+# — with `ignore = all` a staged pin produces *empty* diff output, so a
+# diff-based check passes in silence. Measured on git 2.54.0.
+#
+# A hook alone is not the gate: `--no-verify` skips it and a fresh clone needs
+# `core.hooksPath` set (installGitHooks does that). SubmodulePinTest runs the
+# same comparison inside `./gradlew check`.
+#
+# Enable once per clone:
+#   git config core.hooksPath .githooks
+
+path='docs/wiki'
+
+git_dir=$(git rev-parse --git-dir 2>/dev/null) || exit 0
+
+# Nothing to compare against: the initial commit, or a branch that split off
+# before the wiki submodule existed. SubmodulePinTest skips those trees too.
+head_pin=$(git rev-parse --verify --quiet "HEAD:$path") || exit 0
+
+# Only a gitlink counts. An empty result means the pin is not staged at all,
+# which is the normal state.
+staged_pin=$(git ls-files --stage -- "$path" | awk '$1 == "160000" { print $2 }')
+[ -n "$staged_pin" ] || exit 0
+
+[ "$staged_pin" = "$head_pin" ] && exit 0
+
+# A merge carries the other side's pin along, and refusing that would leave the
+# merge impossible to conclude. Allow only a value one of the parents already
+# held — exempting merges wholesale would let a pin nobody committed ride in on
+# a conflict resolution, which is exactly the vector this hook exists for.
+if [ -e "$git_dir/MERGE_HEAD" ]; then
+  while read -r parent; do
+    parent_pin=$(git rev-parse --verify --quiet "$parent:$path") || continue
+    [ "$staged_pin" = "$parent_pin" ] && exit 0
+  done < "$git_dir/MERGE_HEAD"
+fi
+
+cat >&2 <<EOF
+위키 서브모듈 핀이 인덱스에 실려 있어 커밋을 멈춥니다.
+
+  HEAD    $head_pin
+  인덱스  $staged_pin
+
+이 저장소는 위키 핀을 관리하지 않습니다. 빌드가 매번 최신을 당겨오므로 핀에 담긴
+값은 쓰이지 않고, 브랜치마다 갈리면 GitHub 에서 PR 머지가 잠깁니다.
+
+인덱스에서 빼고 다시 커밋하세요.
+
+  git restore --staged $path
+EOF
+
+exit 1
