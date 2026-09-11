@@ -12,6 +12,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.OneToMany;
 import jakarta.persistence.Table;
 import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -56,8 +57,8 @@ public class ChatRoom extends BaseEntity {
   /**
    * 채팅 가능 구간 (CH-08 · 도메인-모델링.md 「{@code ChatRoom} ※ 2차」 라이프사이클).
    *
-   * <p>만남시각부터 이 일수가 지나면 방은 읽기 전용이다. 방 상세(CH-06)의 {@code writable} 이 보여주는 값이고, 전송을 막는 409 도 같은 판정을
-   * 쓴다 (CH-08 · {@code ChatMessageSendService}).
+   * <p>만남시각부터 이 일수가 지나면 방은 읽기 전용이다. 여기서는 CH-06(방 상세)이 보여줄 여부만 계산한다 — 전송을 막는 409 자체는 CH-08 티켓의 몫이고,
+   * {@code Message} 가 아직 없어 만들 자리도 없다.
    */
   public static final int WRITABLE_WINDOW_DAYS = 7;
 
@@ -162,38 +163,34 @@ public class ChatRoom extends BaseEntity {
   }
 
   /**
-   * 지금 이 방의 멤버인가 (CH-06 · CH-07 · I-18).
+   * 지금 이 방의 멤버인가 (CH-06 · I-18).
    *
-   * <p>나간 사람은 행이 남아 있어도(CH-04) 아니다 — {@code currentMembers} 와 같은 기준이다. 그래서 퇴장한 사람의 전송이 403 으로 막힌다
-   * (CH-18 의 「퇴장 후 메시지 조회 403」과 같은 선).
+   * <p>나간 사람은 행이 남아 있어도(CH-04) 아니다 — {@code currentMembers} 와 같은 기준이다.
    */
   public boolean isMember(Long userId) {
     return memberOf(userId).map(ChatRoomMember::isJoined).orElse(false);
   }
 
   /**
-   * 지금 쓸 수 있는 방인가 (CH-06 · CH-08 · I-21).
+   * 지금 쓸 수 있는 방인가 (CH-06 · CH-08).
    *
-   * <p><b>{@code meetAt} 을 파라미터로 받는다.</b> 이 애그리게이트는 만남시각을 갖지 않는다 — 클래스 주석이 이미 적은 대로 「쓸 수 있는지 여부는
+   * <p><b>{@code meetAtUtc} 를 파라미터로 받는다.</b> 이 애그리게이트는 만남시각을 갖지 않는다 — 클래스 주석이 이미 적은 대로 「쓸 수 있는지 여부는
    * 모집글의 만남시각에서 계산한다」이고, 그 값은 {@code CompanionPost} 가 쥔다.
-   *
-   * <p><b>모집글 상태를 보지 않는다.</b> 도메인-모델링.md 6장의 전이표가 {@code CLOSED} 행에 「만남시각 + 7일까지 가능」을 적었다 — 방장이 「모집
-   * 완료」를 누르는 순간이 조율의 시작이라 그때 대화를 막으면 기능이 무너진다. {@code PostStatus} 를 여기서 참조하면 그 결정이 코드에서 조용히 뒤집힌다.
    *
    * <p>{@code Clock} 을 주입받지 않고 인자로 받는 것은 {@code AuthorDisplay}·{@code LastSeen} 과 같은 이유다 — domain 은
    * 프레임워크에 묶이지 않는다.
    *
-   * <p><b>{@code LocalDateTime.now(clock)} 을 쓰지 않는다.</b> {@code ClockConfig} 의 시계가 {@code
-   * Asia/Seoul} 이고 (행사 종료일 판정이 KST 여야 해서 그렇게 정해졌다) {@code meet_at} 은 UTC 로 저장된다 ({@code
-   * CompanionPost#toUtc}). 그대로 비교하면 아홉 시간 어긋나 <b>만남 후 6일 15시간부터 방이 읽기 전용이 된다</b> — 사용자는 마지막 날 대화를
-   * 잃고, 경계 테스트를 KST 기준으로 짜면 그 손실이 초록불 뒤에 숨는다.
+   * <p><b>{@code LocalDateTime.now(clock)} 과 비교하지 않는다.</b> {@code ClockConfig} 의 시계가 {@code
+   * Asia/Seoul} 이라 (행사 종료일 판정이 KST 여야 해서 그렇게 정해졌다) 그 벽시계를 UTC 로 저장된 만남시각과 견주면 창이 <b>아홉 시간 일찍
+   * 닫힌다.</b> 두 값을 {@code Instant} 로 맞춰 기준을 하나로 만든다. {@code MeetTimePassedCloseService.closeChunk} 가
+   * 같은 함정을 파라미터 이름({@code nowInUtc})으로 막아 둔 자리다.
    *
-   * <p>{@code MeetTimePassedCloseBatch#nowInUtc} 가 같은 함정을 같은 컬럼에서 이미 겪고 자바독으로 남겼다 — 그쪽은 어긋나는 방향이
-   * 반대라 「아직 만나지 않은 글을 전부 닫는」 형태로 나타났다. {@code AuditLogRecorder} 도 같은 변환을 쓴다.
+   * @param meetAtUtc <b>UTC 기준</b> 만남시각. {@code CompanionPost} 가 그 기준으로 저장한다 (도메인-모델링.md 「4. 엔티티 ·
+   *     값 객체 · 식별자」)
    */
-  public boolean isWritable(LocalDateTime meetAt, Clock clock) {
-    LocalDateTime nowInUtc = LocalDateTime.ofInstant(clock.instant(), ZoneOffset.UTC);
+  public boolean isWritable(LocalDateTime meetAtUtc, Clock clock) {
+    Instant deadline = meetAtUtc.plusDays(WRITABLE_WINDOW_DAYS).toInstant(ZoneOffset.UTC);
 
-    return !nowInUtc.isAfter(meetAt.plusDays(WRITABLE_WINDOW_DAYS));
+    return !clock.instant().isAfter(deadline);
   }
 }

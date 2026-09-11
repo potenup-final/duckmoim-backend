@@ -213,6 +213,43 @@ Gradle 만으로는 늦다: [1] 컨텍스트 확보가 빌드보다 앞이다. �
 PR #45 가 그랬다. `SubmodulePinTest` 가 `.gitmodules` 의 그 한 줄을 지킨다
 (STAR-76).
 
+### 설정은 발견을 막을 뿐이다
+
+그 한 줄을 심고도 재발했다. PR #103 의 `8c95eac` — 자바 파일 하나만 고친 커밋에
+핀이 함께 실렸고, `develop` 에 이미 있던 다섯 개에 이어 여섯 번째가 될 뻔했다.
+
+**`ignore = all` 이 막는 것은 git 이 핀 변경을 *발견*하는 일이다.** 인덱스에 한 번
+들어간 핀은 그 설정의 밖이고, git 문서가 그것을 예외로 명시해 두었다 — *staged 된
+경우에는 status · commit 출력에 나타난다*.
+
+| 경로 | `.gitmodules` 의 `ignore = all` |
+|---|---|
+| `git add -A` · `git add .` · `git add docs/wiki` · `git commit -a` | 막는다 |
+| `git add -f docs/wiki` | **못 막는다** |
+| `git update-index` 직접 조작 (IDE 소스컨트롤 패널이 쓰는 방식) | **못 막는다** |
+| 이미 인덱스에 들어간 상태 | **못 막는다** |
+
+**`git add docs/wiki` 가 아무 말 없이 무시된다는 점이 우회를 부른다.** 에러도
+경고도 없으니 다음에 손이 가는 것이 `-f` 다. 막힌 줄 모르고 더 센 명령을 쓰게
+만드는 설계였다.
+
+STAR-130 이 게이트 둘을 세웠다. 설정은 그대로 두고 **상태를 보는 자리**를 더한
+것이다.
+
+| 게이트 | 무엇을 보나 | 뚫리는 자리 |
+|---|---|---|
+| `.githooks/pre-commit` | 커밋 순간 인덱스와 HEAD 의 핀 | `--no-verify` · `core.hooksPath` 미설정 |
+| `SubmodulePinTest` | `.gitmodules` 의 한 줄 **＋** 인덱스의 핀 | CI 가 PR 에서 안 도므로 로컬 `check` 뿐 |
+
+둘 다 **인덱스와 HEAD 의 gitlink 를 직접 비교한다.** `git diff --cached` 를 쓰면
+안 된다 — `ignore = all` 이 diff 까지 가려서 핀이 스테이징된 상태에서도 출력이
+비어 있고, 그렇게 짠 검사는 조용히 통과한다. 게이트가 있는 척만 하는 상태가
+되는데, 그 사실이 드러나는 것은 다음에 핀이 실려 머지가 잠길 때다.
+
+`RulesAreAliveTest` 가 임시 저장소에 핀을 갈라 놓고 둘 다 실제로 잡는지 본다.
+훅은 직접 실행하지 않고 `core.hooksPath` 로 **git 이 부르게** 하는데, 실행 권한이
+빠지면 git 이 훅을 조용히 건너뛰기 때문이다.
+
 **세팅을 빌드에 매달면 늦다.** 예전에는 `initWiki` · `installGitHooks` 가 전부
 `compileJava` 에 붙어 있었다. [1] 컨텍스트 확보는 구현보다 앞이라, 위키를 채워주는
 장치가 위키가 필요한 순간보다 늦게 돌았다. 게다가 `initWiki` 는 조건이 "비어 있을

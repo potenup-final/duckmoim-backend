@@ -9,7 +9,7 @@ import com.duckmoim.companion.exception.PostErrorCode;
 import com.duckmoim.companion.infra.AuthoredPost;
 import com.duckmoim.companion.infra.CommentRepository;
 import com.duckmoim.companion.infra.CompanionPostRepository;
-import com.duckmoim.identity.domain.LastSeen;
+import com.duckmoim.identity.domain.AuthorDisplay;
 import java.time.Clock;
 import java.util.List;
 import java.util.Map;
@@ -81,8 +81,10 @@ public class CompanionPostQueryService {
         page.stream().map(authored -> authored.post().getId()).toList());
   }
 
+  /** 방장 값은 {@link AuthorDisplay} 를 지난 것만 싣는다. 탈퇴한 방장은 여기서 자리표시자가 된다 (AU-11). */
   private PostView toView(AuthoredPost authored, Map<Long, Long> commentCounts) {
     CompanionPost post = authored.post();
+    AuthorDisplay host = authored.author(clock);
 
     return new PostView(
         post.getId(),
@@ -98,9 +100,9 @@ public class CompanionPostQueryService {
         post.getCreatedAt(),
         post.getMeetPoint(),
         post.getHostId(),
-        authored.nickname(),
-        authored.profileImageUrl(),
-        LastSeen.from(authored.lastSeenAt(), clock),
+        host.nickname(),
+        host.profileImageUrl(),
+        host.lastSeen(),
         // 댓글이 없는 모집글은 집계에 아예 없다. GROUP BY 는 행이 없는 그룹을 만들지 않는다
         commentCounts.getOrDefault(post.getId(), 0L));
   }

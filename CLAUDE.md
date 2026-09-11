@@ -249,8 +249,33 @@ Jira 정보는 `pr_body.py` 가 마커 사이에 자동으로 붙인다. 요구�
 | 로컬 config | 깨끗 | **핀 실림** |
 | `.gitmodules` | 깨끗 | 안 실림 |
 
-`SubmodulePinTest` 가 그 한 줄을 지킨다. `configureWikiIgnore` 태스크가 심는
-로컬 config 는 이제 중복이고, git 판본이 다를 때를 위해 남겨 둔 것이다.
+`configureWikiIgnore` 태스크가 심는 로컬 config 는 이제 중복이고, git 판본이
+다를 때를 위해 남겨 둔 것이다.
+
+**그 한 줄로 끝나지 않는다.** `ignore = all` 은 git 이 핀을 *발견*하는 것을 막을
+뿐이라 **이미 인덱스에 들어간 핀에는 무력하다** — git 문서가 명시한 예외다.
+STAR-76 뒤에도 PR #103 의 `8c95eac` 에서 재발했다 (STAR-130).
+
+| 경로 | `.gitmodules` 의 `ignore = all` |
+|---|---|
+| `git add -A` · `git add .` · `git add docs/wiki` · `git commit -a` | 막는다 |
+| `git add -f docs/wiki` | **못 막는다** |
+| `git update-index` 직접 조작 (IDE 소스컨트롤 패널이 쓰는 방식) | **못 막는다** |
+| 이미 인덱스에 들어간 상태 | **못 막는다** |
+
+`git add docs/wiki` 가 에러도 경고도 없이 무시된다는 점이 우회를 부른다. 아무
+말이 없으니 다음에 손이 가는 것이 `-f` 다.
+
+그래서 게이트가 둘이다. 하나로는 모자라서 둘인 것이지 중복이 아니다.
+
+| 게이트 | 무엇을 보나 | 뚫리는 자리 |
+|---|---|---|
+| `.githooks/pre-commit` | 커밋 순간 인덱스와 HEAD 의 핀 | `--no-verify` · `core.hooksPath` 미설정 |
+| `SubmodulePinTest` | `.gitmodules` 의 한 줄 **＋** 인덱스의 핀 | CI 가 PR 에서 안 도므로 로컬 `check` 뿐 |
+
+**핀 검사를 `git diff --cached` 로 짜지 않는다.** `ignore = all` 이 diff 까지
+가려서, 핀이 스테이징돼 있어도 출력이 비어 있다. 인덱스와 HEAD 의 gitlink 를
+직접 비교한다.
 
 ## 데이터베이스
 
