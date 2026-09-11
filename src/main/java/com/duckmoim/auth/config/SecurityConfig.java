@@ -59,6 +59,11 @@ public class SecurityConfig {
     "/api/v1/posts/**", "/api/v1/comments/**", "/api/v1/reports"
   };
 
+  // 조회지만 SIGNUP 이다 (CH-05 · CH-06). 가입을 마치지 않은 계정은 애초에 방 멤버가 될 수
+  // 없다 — 초대 대상이 되려면 댓글을 써야 하고 댓글 작성 자체가 SIGNUP 이다. MY_PAGE 의
+  // users/me/posts 와 같은 근거.
+  private static final String[] SIGNUP_READ = {"/api/v1/chat-rooms", "/api/v1/chat-rooms/*"};
+
   private static final String[] PUBLIC_LOGIN = {"/api/v1/auth/kakao", "/api/v1/auth/token"};
   private static final String AUTH_TOKEN = "/api/v1/auth/token";
   private static final String SIGNUP_INFO = "/api/v1/users/me/signup-info";
@@ -101,6 +106,7 @@ public class SecurityConfig {
               registry.requestMatchers(MY_PAGE).hasAuthority(SIGNUP);
 
               registry.requestMatchers(HttpMethod.GET, PUBLIC_READ).permitAll();
+              registry.requestMatchers(HttpMethod.GET, SIGNUP_READ).hasAuthority(SIGNUP);
 
               registry.requestMatchers(HttpMethod.POST, SIGNUP_WRITE).hasAuthority(SIGNUP);
               registry.requestMatchers(HttpMethod.PATCH, SIGNUP_WRITE).hasAuthority(SIGNUP);
