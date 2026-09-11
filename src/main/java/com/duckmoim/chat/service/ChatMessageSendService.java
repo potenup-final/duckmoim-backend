@@ -1,6 +1,8 @@
 package com.duckmoim.chat.service;
 
+import com.duckmoim.chat.exception.ChatErrorCode;
 import com.duckmoim.chat.infra.ChatMessageRepository;
+import com.duckmoim.common.exception.BusinessException;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -46,9 +48,12 @@ public class ChatMessageSendService {
    * <p><b>방 존재·멤버·구간 판정을 여기서 하지 않는다.</b> 전부 {@link ChatMessageWriter} 안이다. 다만 <b>빠른 길로 빠지면 그 판정을
    * 지나지 않는다</b> — 이미 저장된 메시지가 있다는 것은 그때 판정을 통과했다는 뜻이고, 같은 요청에 대한 답이 시간에 따라 갈리면 재시도가 안전하지 않게 된다. 방에서
    * 나간 뒤 재시도한 클라이언트가 403 대신 자기 메시지를 돌려받는데, <b>이미 보낸 자기 메시지라 새로 새는 것이 없다.</b>
+   *
+   * <p><b>다만 찾아온 행이 이 요청의 재시도가 맞는지는 대조한다</b> — {@link #requireSameRequest}. 방이나 본문이 다르면 재시도가 아니라
+   * 식별자 재사용이고, 그대로 돌려주면 이번에 보낸 말이 200 과 함께 사라진다.
    */
   public SentMessage send(Long roomId, Long senderId, String clientMessageId, String content) {
-    return alreadySent(senderId, clientMessageId)
+    return alreadySent(roomId, senderId, clientMessageId, content)
         .orElseGet(() -> writeOrTakeExisting(roomId, senderId, clientMessageId, content));
   }
 
@@ -64,13 +69,44 @@ public class ChatMessageSendService {
       // 못 찾으면 그 예외를 그대로 올린다. 이 표의 유니크 제약이 하나뿐이라 「위반했는데 그 행이
       // 없다」는 우리가 아는 원인이 없고, 새 에러 코드를 지어 덮으면 모르는 고장이 아는 고장으로
       // 둔갑한다. 500 으로 나가면서 로그에 스택이 남는 편이 낫다.
-      return alreadySent(senderId, clientMessageId).orElseThrow(() -> e);
+      return alreadySent(roomId, senderId, clientMessageId, content).orElseThrow(() -> e);
     }
   }
 
-  private Optional<SentMessage> alreadySent(Long senderId, String clientMessageId) {
+  private Optional<SentMessage> alreadySent(
+      Long roomId, Long senderId, String clientMessageId, String content) {
+
     return chatMessageRepository
         .findBySenderIdAndClientMessageId(senderId, clientMessageId)
-        .map(SentMessage::from);
+        .map(SentMessage::from)
+        .map(sent -> requireSameRequest(sent, roomId, content));
+  }
+
+  /**
+   * 찾아온 행이 <b>이 요청의 재시도가 맞는지</b> 대조한다 (PR #125 리뷰).
+   *
+   * <p><b>이 대조가 없으면 사용자의 말이 200 과 함께 사라진다.</b>
+   *
+   * <pre>
+   * A방에 "8시에 봬요"  (식별자 abc)  →  저장
+   * B방에 "저 못 가요"  (abc 재사용)  →  200 { roomId: A, content: "8시에 봬요" }
+   *                                     B방에는 아무것도 안 남고 아무 신호도 없다
+   * </pre>
+   *
+   * <p><b>조회 조건에 {@code roomId} 를 더하는 방식으로는 못 고친다.</b> 유니크 제약이 {@code (sender_id,
+   * client_message_id)} 라 B방 INSERT 가 제약에 걸리고, 방까지 따지는 재조회는 그 행을 못 찾아 {@code orElseThrow} 의 500 이
+   * 된다. 유니크에 {@code room_id} 를 더하는 것은 반대로 「한 건만 저장된다」(I-20)를 깬다 — <b>찾은 뒤에 대조하는 것</b>만 남는다.
+   *
+   * <p>멱등 키의 일반 규칙과 같다 — <b>같은 키 + 같은 파라미터면 원래 응답, 같은 키 + 다른 파라미터면 에러.</b> 파라미터가 둘이라 방과 본문을 함께 본다.
+   *
+   * <p><b>사람이 만들 수 있는 상황이 아니다.</b> 앱이 전송마다 새 식별자를 만들면 절대 나지 않는다. 그래도 409 로 돌려주는 이유는, 앱이 그 약속을 어겼을 때
+   * <b>화면에 「전송 실패」가 뜨는 것</b>이 말이 조용히 사라지는 것보다 낫기 때문이다.
+   */
+  private SentMessage requireSameRequest(SentMessage sent, Long roomId, String content) {
+    if (!sent.roomId().equals(roomId) || !sent.content().equals(content)) {
+      throw new BusinessException(ChatErrorCode.CHAT_CLIENT_MESSAGE_ID_REUSED);
+    }
+
+    return sent;
   }
 }

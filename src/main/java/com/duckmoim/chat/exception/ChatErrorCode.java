@@ -37,7 +37,8 @@ public enum ChatErrorCode implements ErrorCode {
   CHAT_MEMBER_LEFT(HttpStatus.CONFLICT, "스스로 나간 사람은 다시 초대할 수 없습니다."),
   CHAT_ROOM_MEMBER_LIMIT_EXCEEDED(HttpStatus.CONFLICT, "채팅방 인원이 상한에 찼습니다."),
   CHAT_ROOM_ACCESS_DENIED(HttpStatus.FORBIDDEN, "채팅방 멤버만 이용할 수 있습니다."),
-  CHAT_ROOM_READ_ONLY(HttpStatus.CONFLICT, "만남 후 7일이 지나 더 이상 메시지를 보낼 수 없습니다.");
+  CHAT_ROOM_READ_ONLY(HttpStatus.CONFLICT, "만남 후 7일이 지나 더 이상 메시지를 보낼 수 없습니다."),
+  CHAT_CLIENT_MESSAGE_ID_REUSED(HttpStatus.CONFLICT, "이미 다른 메시지에 쓴 식별자입니다.");
 
   private final HttpStatus status;
   private final String message;

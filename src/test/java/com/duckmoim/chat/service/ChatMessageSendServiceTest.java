@@ -126,6 +126,49 @@ class ChatMessageSendServiceTest {
     assertThat(hosts.content()).isEqualTo("방장 말");
   }
 
+  /**
+   * PR #125 리뷰가 잡은 자리다.
+   *
+   * <p>대조가 없으면 <b>B방에 보낸 말이 200 과 함께 사라진다</b> — 응답에는 A방 메시지가 실리고 B방에는 아무것도 안 남으며 아무 신호도 없다.
+   */
+  @DisplayName("다른 방에 같은 클라이언트 식별자를 쓰면 409 다.")
+  @Test
+  void sendWithSameClientMessageIdToAnotherRoom() {
+    standAt(MEET_AT_UTC.plusDays(1));
+    long roomA = openRoomWithMember();
+    long roomB = openRoomWithMember();
+    String clientMessageId = newClientId();
+
+    chatMessageSendService.send(roomA, MEMBER_ID, clientMessageId, "8시에 봬요");
+
+    assertThatThrownBy(
+            () -> chatMessageSendService.send(roomB, MEMBER_ID, clientMessageId, "저 못 가요"))
+        .isInstanceOf(BusinessException.class)
+        .extracting("errorCode")
+        .isEqualTo(ChatErrorCode.CHAT_CLIENT_MESSAGE_ID_REUSED);
+
+    assertThat(countMessagesOf(roomB)).isZero();
+  }
+
+  /** 방이 같아도 본문이 다르면 재시도가 아니다. 멱등 키 규칙의 「같은 키 + 다른 파라미터」가 방 하나에도 그대로 적용된다. */
+  @DisplayName("같은 방에서 본문만 바꿔 같은 식별자를 쓰면 409 다.")
+  @Test
+  void sendWithSameClientMessageIdAndDifferentContent() {
+    standAt(MEET_AT_UTC.plusDays(1));
+    long roomId = openRoomWithMember();
+    String clientMessageId = newClientId();
+
+    chatMessageSendService.send(roomId, MEMBER_ID, clientMessageId, "8시에 봬요");
+
+    assertThatThrownBy(
+            () -> chatMessageSendService.send(roomId, MEMBER_ID, clientMessageId, "9시로 바꿔요"))
+        .isInstanceOf(BusinessException.class)
+        .extracting("errorCode")
+        .isEqualTo(ChatErrorCode.CHAT_CLIENT_MESSAGE_ID_REUSED);
+
+    assertThat(countMessagesOf(roomId)).isEqualTo(1);
+  }
+
   @DisplayName("방 멤버가 아닌 사람의 전송은 403 이다.")
   @Test
   void sendByNonMember() {
