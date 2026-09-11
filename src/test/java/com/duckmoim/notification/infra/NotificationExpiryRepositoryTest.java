@@ -18,7 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * <p>실제 MySQL 로 돈다. 삭제가 벌크라 mock 으로는 몇 행이 지워졌는지 볼 수 없고, 테스트 컨벤션이 H2 도 금지했다.
  *
- * <p><b>기준이 생성 시각이라는 것이 이 검사의 요지다.</b> 읽음 여부는 아무 영향이 없다 (도메인-모델링.md 「6. 상태 전이」).
+ * <p><b>기준이 생성 시각이라는 것이 이 검사의 요지다.</b> 읽음 여부는 아무 영향이 없다 (도메인-모델링.md 「6. 라이프사이클」).
  */
 @SpringBootTest
 @Transactional

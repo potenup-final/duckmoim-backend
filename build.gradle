@@ -125,6 +125,7 @@ tasks.named('test') {
 	// 스케줄 등록 검사(NotificationDispatchBatchTest.isScheduled)는 등록 여부만 보므로
 	// 이렇게 꺼도 초록불이다. 배치를 실제로 돌리는 검사는 메서드를 직접 부른다.
 	systemProperty 'duckmoim.notification.worker.cron', '0 0 0 1 1 *'
+	systemProperty 'duckmoim.notification.expiry.cron', '0 0 0 1 1 *'
 
 	// 위반 픽스처는 아키텍처 규칙을 일부러 어기는 클래스라 테스트로 실행하지 않는다.
 	// 이름을 *Test 로 안 지으면 안 잡힐 거라 봤지만, Gradle 은 클래스 파일을 훑어
