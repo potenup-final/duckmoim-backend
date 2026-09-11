@@ -7,7 +7,13 @@ import com.duckmoim.common.domain.NotificationKind;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
-/** 알림 한 건이 만들어지는 규칙 (NT-02). 도메인이라 컨텍스트 없이 돈다. */
+/**
+ * 알림 한 건이 만들어지는 규칙 (NT-02). 도메인이라 컨텍스트 없이 돈다.
+ *
+ * <p><b>읽음 전이가 여기 없다.</b> 「이미 읽었나」를 메모리에서 판정하면 조회와 커밋 사이에 전체 읽음이 지나갔을 때 먼저 찍힌 시각을 덮어쓴다. 그래서 조건부
+ * UPDATE 가 쥐고 있고, 검사도 MySQL 위에 있다 ({@code NotificationReadRepositoryTest} · {@code
+ * NotificationReadRaceTest}).
+ */
 class NotificationTest {
 
   @DisplayName("알림은 안 읽은 상태로 만들어진다.")
