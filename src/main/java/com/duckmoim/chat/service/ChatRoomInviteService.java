@@ -9,6 +9,7 @@ import com.duckmoim.companion.domain.CompanionPost;
 import com.duckmoim.companion.infra.CommentRepository;
 import com.duckmoim.companion.infra.CompanionPostRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -42,6 +43,17 @@ public class ChatRoomInviteService {
    * <p><b>{@code CHAT_ROOM_NOT_FOUND} 가 없는 모집글도 덮는다.</b> 방은 모집글 하나에 하나라 (CH-01) 글이 없으면 방도 없고, 요청자에게
    * 두 경우의 차이가 없다. 다만 <b>글은 있는데 방이 없는 경우</b>가 남아 있다 — 배포 창에서 구버전이 받은 글이 그렇다 ({@code
    * ChatRoomRepository} 의 각주). CH-06 이 그 자리의 계약을 정하기 전까지 초대도 같은 404 로 답한다.
+   *
+   * <p><b>같은 방장의 중복 클릭이 500 으로 새는 것을 여기서 막는다</b> (PR #103 리뷰). {@link ChatRoom#invite} 의 자바독이 이미 적어
+   * 둔 대로, 두 요청이 나란히 조회를 지나면 {@code uq_chat_room_member} 가 두 번째 INSERT 를 거부한다. 그 위반은 {@code flush}
+   * 시점에야 터지고 flush 는 이 메서드가 반환된 뒤 트랜잭션 커밋에서 자동으로 일어나므로, 메서드 본문을 아무리 감싸도 잡히지 않는다 — {@code
+   * chatRoomRepository.flush()} 로 그 시점을 이 메서드 안으로 당겨와야 잡을 수 있다.
+   *
+   * <p><b>101명 상한 레이스는 그대로 감수한다.</b> {@link ChatRoom#invite} 가 이미 내린 판단이고 여기서 바꾸지 않는다 — 잡는 것은
+   * {@code uq_chat_room_member} 위반 하나뿐이고, 지금 펜딩 변경이 멤버 추가 하나라 다른 제약 위반을 잘못 삼킬 여지가 없다.
+   *
+   * <p>번역 패턴은 {@code UserService#completeSignup}·{@code ReportCommandService#report} 와 같다 — 저장소의
+   * {@code flush()} 를 명시적으로 불러 커밋 시점의 실패를 메서드 안으로 끌어온다.
    */
   @Transactional
   public ChatRoomInvitation invite(Long postId, Long inviteeId, Long requesterId) {
@@ -54,6 +66,14 @@ public class ChatRoomInviteService {
     requireCommenter(postId, inviteeId);
 
     room.invite(inviteeId);
+
+    try {
+      chatRoomRepository.flush();
+    } catch (DataIntegrityViolationException e) {
+      // uq_chat_room_member. 같은 방장이 두 번 눌러 둘 다 조회를 지난 경우다 — 먼저 커밋된 쪽이 이미 멤버로
+      // 만들었으므로, 순차로 왔을 때와 같은 답을 준다.
+      throw new BusinessException(ChatErrorCode.CHAT_ALREADY_MEMBER);
+    }
 
     return ChatRoomInvitation.from(room);
   }
