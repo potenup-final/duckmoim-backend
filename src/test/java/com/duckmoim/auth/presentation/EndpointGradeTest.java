@@ -124,6 +124,15 @@ class EndpointGradeTest {
           new Endpoint(HttpMethod.POST, "/api/v1/posts/1/comments", Grade.SIGNUP),
           new Endpoint(HttpMethod.PATCH, "/api/v1/comments/1", Grade.SIGNUP),
           new Endpoint(HttpMethod.DELETE, "/api/v1/comments/1", Grade.SIGNUP),
+          // 채팅 (2차). 위키 「엔드포인트 목록」이 1차 MVP 문서라 이 줄의 정본이 아직 없다 —
+          // 저장소가 먼저 열고 위키 반영은 별도 클론에서 따라온다 (STAR-92 가 actuator 줄에
+          // 한 것과 같다).
+          //
+          // 없는 글 번호다. 시드에 있는 글을 찌르면 방장이 아닌 요청자에게 service 가 403 을
+          // 내고 관문의 403 과 구분되지 않는다 — POST /posts/404404/close 와 같은 이유다.
+          // 요청에 본문이 없어 사실은 그 앞에서 끝나지만, 번호를 없는 것으로 두는 편이
+          // 본문이 붙는 날에도 이 줄이 계속 등급만 보게 한다.
+          new Endpoint(HttpMethod.POST, "/api/v1/posts/404404/chat-room/members", Grade.SIGNUP),
           // 2-6 신고
           new Endpoint(HttpMethod.POST, "/api/v1/reports", Grade.SIGNUP),
           // 2-7 백오피스
