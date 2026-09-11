@@ -137,6 +137,11 @@ class EndpointGradeTest {
           // 멤버가 될 수 없어서다 — users/me/posts 와 같은 근거.
           new Endpoint(HttpMethod.GET, "/api/v1/chat-rooms", Grade.SIGNUP),
           new Endpoint(HttpMethod.GET, "/api/v1/chat-rooms/404404", Grade.SIGNUP),
+          // 채팅방 아래 쓰기 (CH-20). 아직 컨트롤러가 없는 자리다 — CH-07 메시지 전송이
+          // 붙는다. 클래스 각주의 「컨트롤러가 없어도 정확하다」에 기대어 미리 올린다:
+          // 이 줄이 없으면 채팅 쓰기가 anyRequest 로 떨어져도 표가 초록불이라, 가입 미완료
+          // 계정에게 열린 것을 아무도 모른다. 컨트롤러가 붙는 날 경로만 실물로 바꾼다.
+          new Endpoint(HttpMethod.POST, "/api/v1/chat-rooms/404404/messages", Grade.SIGNUP),
           // 2-6 신고
           new Endpoint(HttpMethod.POST, "/api/v1/reports", Grade.SIGNUP),
 

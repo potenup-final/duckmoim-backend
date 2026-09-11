@@ -65,8 +65,15 @@ public class SecurityConfig {
     "/api/v1/posts/*/comments"
   };
 
+  // 채팅방 아래 쓰기도 SIGNUP 이다 (CH-20). API-설계 「2-11. 채팅 (Chat) · 2차」가 채팅 셋을
+  // 모두 SIGNUP 으로 정했고, 쓰기라면 더 말할 것이 없다. 이 줄이 없으면 채팅 쓰기가
+  // anyRequest().authenticated() 로 떨어져 가입 미완료 계정에게 열린다 — 등급이 빠진 것이
+  // 아니라 「더 느슨한 등급으로 조용히 통과」하는 모양이라 눈에 띄지 않는다.
+  //
+  // SanctionGateConfig 의 SANCTIONED_WRITE 와 같은 목록이어야 한다. 둘을 나란히 두는 이유가
+  // 그쪽 각주에 있다.
   private static final String[] SIGNUP_WRITE = {
-    "/api/v1/posts/**", "/api/v1/comments/**", "/api/v1/reports"
+    "/api/v1/posts/**", "/api/v1/comments/**", "/api/v1/chat-rooms/**", "/api/v1/reports"
   };
 
   // 조회지만 SIGNUP 이다 (CH-05 · CH-06). 가입을 마치지 않은 계정은 애초에 방 멤버가 될 수
