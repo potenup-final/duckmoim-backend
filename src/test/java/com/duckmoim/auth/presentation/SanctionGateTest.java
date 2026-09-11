@@ -123,7 +123,7 @@ class SanctionGateTest {
    * <p>도메인 3.3 이 <i>"제재 중 유저의 채팅 쓰기 차단 | Safety → Chat | I-14 와 같은 정책 객체를 채팅 경로에도 건다"</i> 로 2차 항목을
    * 열어 뒀다. 판정은 그대로 {@code SanctionPolicy} 가 하므로, 이 검사가 보는 것은 <b>경로 등록이 실제로 걸렸는가</b> 하나다.
    *
-   * <p><b>메시지 전송 엔드포인트는 아직 없다</b> (CH-07). 클래스 각주의 「없는 자원을 향해 쏜다」를 그대로 쓴다 — 막히면 403, 통과하면 404 다.
+   * <p><b>없는 방 번호로 쏜다</b> (CH-07 의 전송 경로). 막히면 403 이고, 통과하면 본문이 비어 400 으로 끝난다 — 모집글 쪽과 같은 모양이다.
    */
   @DisplayName("제재 중 유저가 채팅 메시지를 보내면 403 이다.")
   @ParameterizedTest(name = "{0}")
@@ -155,7 +155,7 @@ class SanctionGateTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{}")
                 .headers(bearer()))
-        .andExpect(status().isNotFound());
+        .andExpect(status().isBadRequest());
   }
 
   @DisplayName("제재가 없으면 채팅 쓰기가 관문에서 막히지 않는다.")
@@ -167,7 +167,7 @@ class SanctionGateTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{}")
                 .headers(bearer()))
-        .andExpect(status().isNotFound());
+        .andExpect(status().isBadRequest());
   }
 
   /** 등록 경로에 조회가 함께 걸린다. 메서드를 안 가리면 경고받은 사람이 남의 글도 못 본다. */
