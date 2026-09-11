@@ -68,6 +68,9 @@ public class SecurityConfig {
   // /api/v1/chat-rooms/** 는 메시지 전송(CH-07)이다. 조회(CH-05 · CH-06)는 GET 이라 이 줄이
   // 덮지 않고, 그쪽은 같은 SIGNUP 이되 별도로 걸린다 — 여기 GET 을 섞으면 앞으로 열리는
   // 채팅 조회 경로가 이 배열의 ** 아래로 조용히 들어온다.
+  //
+  // SanctionGateConfig 의 SANCTIONED_WRITE 와 같은 목록이어야 한다 (CH-20). 신고만 그쪽에
+  // 없고, 왜 없는지가 그쪽 각주에 있다.
   private static final String[] SIGNUP_WRITE = {
     "/api/v1/posts/**", "/api/v1/comments/**", "/api/v1/reports", "/api/v1/chat-rooms/**"
   };

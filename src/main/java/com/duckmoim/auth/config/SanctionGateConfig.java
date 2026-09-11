@@ -33,12 +33,23 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 public class SanctionGateConfig implements WebMvcConfigurer {
 
   /**
-   * I-14 가 막는 것은 <b>신규 모집글과 댓글</b>이다 (도메인-모델링.md 「5. 불변식」).
+   * I-14 가 막는 것은 <b>신규 모집글과 댓글</b>이고, 2차부터 <b>채팅 쓰기</b>가 는다 (도메인-모델링.md 「5. 불변식」 · 「3. 애그리게이트 경계」).
    *
    * <p>신고({@code /api/v1/reports})는 {@code SecurityConfig} 의 쓰기 목록에 있지만 여기 없다. 제재당한 사람이 남을 신고하는 길까지
    * 막으면 1차 안전장치가 신고뿐인데 그 창구가 좁아진다 — 불변식의 문장도 모집글·댓글 둘로 한정돼 있다.
+   *
+   * <p><b>채팅은 방 아래 전체를 건다</b> (CH-20). 인터셉터가 「읽기가 아니면 막는다」로 뒤집혀 있어, 쓰기 메서드가 하나 늘었을 때 조용히 열리는 쪽이 아니라
+   * 막히는 쪽으로 기운다. 지금 이 접두어 아래 쓰기는 메시지 전송 하나다 (CH-07).
+   *
+   * <p><b>전송 service 에는 제재 판정이 없다.</b> 있어야 하는 것이 아니라 없는 것이 맞다 — 판정 자리를 관문 하나로 모으는 것이 I-14 의 설계이고,
+   * 서비스마다 적으면 하나를 빠뜨렸을 때 아무도 모른다.
+   *
+   * <p><b>CH-04 퇴장이 붙는 날 예외를 넣어야 한다.</b> 퇴장은 {@code DELETE} 라 이 목록에 걸리는데, 정지당한 사람이 방을 나가지 못하는 것은
+   * 신고와 탈퇴를 일부러 뺀 판단과 같은 줄에 있다 — 제재가 막는 것은 <b>새로 쓰는 일</b>이지 관계를 끊는 일이 아니다.
    */
-  private static final String[] SANCTIONED_WRITE = {"/api/v1/posts/**", "/api/v1/comments/**"};
+  private static final String[] SANCTIONED_WRITE = {
+    "/api/v1/posts/**", "/api/v1/comments/**", "/api/v1/chat-rooms/**"
+  };
 
   private final ObjectProvider<SanctionQueryService> sanctionQueryService;
 
