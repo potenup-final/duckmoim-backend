@@ -11,8 +11,11 @@ import org.springframework.http.HttpStatus;
  * <p><b>정본에 채팅 enum 이 아직 없다.</b> API-설계.md 가 1차 MVP 문서이고 채팅은 2차라, 표에 여섯 줄을 더하는 것이 아니라 <b>표가 열어 둔
  * 자리에 새 enum 을 낸다</b> — 「도메인별 enum 으로 나눈다. 중앙 집중 enum 은 두지 않는다」 가 그 규칙이다. 위키 반영은 별도 클론에서 따라온다.
  *
- * <p><b>이 티켓이 쓰는 것만 있다.</b> 퇴장(CH-04) · 전송(CH-07) · 채팅 가능 구간(CH-08)의 코드는 그 티켓이 더한다 — 미리 지어내면 쓰지 않는
- * 상수가 남고, 그 상수가 다음 담당의 기준선이 된다.
+ * <p><b>쓰는 것만 있다.</b> 퇴장(CH-04)의 코드는 그 티켓이 더한다 — 미리 지어내면 쓰지 않는 상수가 남고, 그 상수가 다음 담당의 기준선이 된다.
+ *
+ * <p><b>{@code CHAT_ROOM_ACCESS_DENIED} 는 404 가 아니라 403 이다.</b> API-설계.md 1장의 일반 원칙(「리소스의 존재 자체를
+ * 숨겨야 하면 403 이 아니라 404」)과 반대 방향인데, CH-06 의 검증 기준이 「멤버가 아니면 403」으로 명시했다 — 요구사항이 명시적으로 정한 자리는 일반 원칙보다
+ * 앞선다. CH-07 의 「비멤버 전송 시 403」도 같은 코드를 쓴다.
  *
  * <p><b>409 가 셋이다.</b> 셋 다 「대상은 있는데 지금 그 명령이 성립하지 않는다」 이고, 서로 다른 이름인 이유는 화면이 달리 답해야 하기 때문이다 — 이미
  * 멤버면 초대 버튼을 감추면 되고, 나간 사람이면 다시는 못 부른다는 것을 말해야 하고, 상한이면 방이 꽉 찬 것이라 초대 대상과 무관하다.
@@ -28,7 +31,9 @@ public enum ChatErrorCode implements ErrorCode {
   CHAT_INVITEE_NOT_COMMENTER(HttpStatus.BAD_REQUEST, "댓글을 쓴 사람만 초대할 수 있습니다."),
   CHAT_ALREADY_MEMBER(HttpStatus.CONFLICT, "이미 채팅방 멤버입니다."),
   CHAT_MEMBER_LEFT(HttpStatus.CONFLICT, "스스로 나간 사람은 다시 초대할 수 없습니다."),
-  CHAT_ROOM_MEMBER_LIMIT_EXCEEDED(HttpStatus.CONFLICT, "채팅방 인원이 상한에 찼습니다.");
+  CHAT_ROOM_MEMBER_LIMIT_EXCEEDED(HttpStatus.CONFLICT, "채팅방 인원이 상한에 찼습니다."),
+  CHAT_ROOM_ACCESS_DENIED(HttpStatus.FORBIDDEN, "채팅방 멤버만 이용할 수 있습니다."),
+  CHAT_ROOM_READ_ONLY(HttpStatus.CONFLICT, "만남 후 7일이 지나 더 이상 메시지를 보낼 수 없습니다.");
 
   private final HttpStatus status;
   private final String message;
