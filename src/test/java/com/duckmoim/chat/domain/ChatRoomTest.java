@@ -15,13 +15,15 @@ import java.util.List;
 import java.util.stream.IntStream;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.springframework.test.util.ReflectionTestUtils;
 
 /**
- * 방 개설과 초대의 검증 기준 중 도메인이 지는 것 (CH-01 · CH-02 · CH-02a · CH-03).
+ * 방 개설 · 초대 · 퇴장의 검증 기준 중 도메인이 지는 것 (CH-01 · CH-02 · CH-02a · CH-03 · CH-04).
  *
  * <p><b>초대의 셋만 여기 있다</b> — 이미 멤버, 나간 사람, 인원 상한. 방장인지(403)와 댓글을 썼는지(400)는 모집글과 댓글이 아는 사실이라 {@code
  * ChatRoomInviteServiceTest} 가 본다.
+ *
+ * <p><b>퇴장은 셋 다 여기다</b> — 방장(409), 비멤버(403), 이미 나간 사람(403). 방장 여부는 밖에서 오지만 {@code hostId} 가 인자라 판정
+ * 자체는 도메인 안이고, 그 값을 모집글에서 읽어 오는 부분만 {@code ChatRoomLeaveServiceTest} 가 본다.
  *
  * <p>「방은 모집글 하나에 하나다」(I-16)는 여기 없다. 도메인-모델링.md 「5. 불변식」이 이중 방어를 유니크 제약으로 정해 DB 가 지므로 통합 테스트에서 본다
  * ({@code ChatRoomRepositoryTest}).
@@ -106,14 +108,15 @@ class ChatRoomTest {
   /**
    * CH-02a. 나간 사람의 행이 남아 있어야 성립하는 규칙이라, 퇴장(CH-04)이 행을 지우는 순간 이 검사가 조용히 통과하게 된다.
    *
-   * <p>퇴장 명령이 아직 없어 {@code leftAt} 을 리플렉션으로 채운다. CH-04 가 들어오면 그 명령으로 바꾼다.
+   * <p><b>퇴장을 진짜 명령으로 만든다.</b> 전에는 {@code leftAt} 을 리플렉션으로 채웠는데, 그러면 「퇴장이 이력을 남긴다」가 아니라 「누군가 그 필드를
+   * 채우면」 만 검사하게 된다 — 명령이 행을 지우도록 바뀌어도 이 검사는 초록불이었다.
    */
   @DisplayName("스스로 나간 사람은 다시 초대할 수 없다.")
   @Test
   void inviteLeftMember() {
     ChatRoom room = ChatRoom.openFor(POST_ID, HOST_ID);
     room.invite(GUEST_ID);
-    markLeft(room, GUEST_ID);
+    room.leave(GUEST_ID, HOST_ID);
 
     assertThatThrownBy(() -> room.invite(GUEST_ID))
         .isInstanceOf(BusinessException.class)
@@ -150,7 +153,7 @@ class ChatRoomTest {
   @Test
   void leftMemberFreesSeat() {
     ChatRoom room = fullRoom();
-    markLeft(room, GUEST_ID);
+    room.leave(GUEST_ID, HOST_ID);
 
     room.invite(9999L);
 
@@ -165,14 +168,72 @@ class ChatRoomTest {
     return room;
   }
 
-  private static void markLeft(ChatRoom room, long userId) {
-    ChatRoomMember member =
-        room.getMembers().stream()
-            .filter(each -> each.getUserId() == userId)
-            .findFirst()
-            .orElseThrow();
+  @DisplayName("멤버가 나가면 현재 멤버에서 빠진다.")
+  @Test
+  void leave() {
+    ChatRoom room = ChatRoom.openFor(POST_ID, HOST_ID);
+    room.invite(GUEST_ID);
 
-    ReflectionTestUtils.setField(member, "leftAt", LocalDateTime.now(ZoneOffset.UTC));
+    room.leave(GUEST_ID, HOST_ID);
+
+    assertThat(room.currentMembers())
+        .extracting(ChatRoomMember::getUserId)
+        .containsExactly(HOST_ID);
+  }
+
+  /**
+   * I-19 의 이중 방어가 「퇴장 이력 조회」 라, 행이 남는 것 자체가 재초대 차단(CH-02a)의 조건이다.
+   *
+   * <p>{@code currentMembers} 가 아니라 {@code getMembers} 로 본다 — 앞의 것으로 보면 「빠졌다」와 「지워졌다」가 구분되지 않는다.
+   */
+  @DisplayName("나간 사람의 행은 지워지지 않고 나간 시각이 남는다.")
+  @Test
+  void leaveKeepsRow() {
+    ChatRoom room = ChatRoom.openFor(POST_ID, HOST_ID);
+    room.invite(GUEST_ID);
+
+    ChatRoomMember left = room.leave(GUEST_ID, HOST_ID);
+
+    assertThat(room.getMembers()).extracting(ChatRoomMember::getUserId).contains(GUEST_ID);
+    assertThat(left.getLeftAt()).isNotNull();
+    assertThat(left.isJoined()).isFalse();
+  }
+
+  /** CH-04 의 검증 기준. 방장이 빠지면 초대할 수 있는 사람이 사라지고 방장을 넘기는 절차가 2차에 없다. */
+  @DisplayName("방장은 방을 나갈 수 없다.")
+  @Test
+  void leave_requesterIsHost() {
+    ChatRoom room = ChatRoom.openFor(POST_ID, HOST_ID);
+
+    assertThatThrownBy(() -> room.leave(HOST_ID, HOST_ID))
+        .isInstanceOf(BusinessException.class)
+        .extracting("errorCode")
+        .isEqualTo(ChatErrorCode.CHAT_ROOM_HOST_CANNOT_LEAVE);
+  }
+
+  @DisplayName("초대받은 적 없는 사람은 방을 나갈 수 없다.")
+  @Test
+  void leave_requesterIsNotMember() {
+    ChatRoom room = ChatRoom.openFor(POST_ID, HOST_ID);
+
+    assertThatThrownBy(() -> room.leave(GUEST_ID, HOST_ID))
+        .isInstanceOf(BusinessException.class)
+        .extracting("errorCode")
+        .isEqualTo(ChatErrorCode.CHAT_ROOM_ACCESS_DENIED);
+  }
+
+  /** 나간 사람은 이미 멤버가 아니라 (CH-18) 비멤버와 같은 자리에서 걸린다. 나간 시각이 뒤로 밀리지 않는다. */
+  @DisplayName("이미 나간 사람이 다시 나가면 403 이다.")
+  @Test
+  void leave_requesterAlreadyLeft() {
+    ChatRoom room = ChatRoom.openFor(POST_ID, HOST_ID);
+    room.invite(GUEST_ID);
+    room.leave(GUEST_ID, HOST_ID);
+
+    assertThatThrownBy(() -> room.leave(GUEST_ID, HOST_ID))
+        .isInstanceOf(BusinessException.class)
+        .extracting("errorCode")
+        .isEqualTo(ChatErrorCode.CHAT_ROOM_ACCESS_DENIED);
   }
 
   @DisplayName("멤버 목록을 밖에서 고칠 수 없다.")
@@ -196,7 +257,7 @@ class ChatRoomTest {
   void isMemberFalseAfterLeaving() {
     ChatRoom room = ChatRoom.openFor(POST_ID, HOST_ID);
     room.invite(GUEST_ID);
-    markLeft(room, GUEST_ID);
+    room.leave(GUEST_ID, HOST_ID);
 
     assertThat(room.isMember(GUEST_ID)).isFalse();
   }

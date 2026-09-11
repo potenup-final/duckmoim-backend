@@ -70,6 +70,22 @@ public class ChatRoomMember {
     return new ChatRoomMember(room, userId);
   }
 
+  /**
+   * 방을 나간다 (CH-04).
+   *
+   * <p><b>행을 지우지 않고 {@code leftAt} 을 채운다.</b> 클래스 주석이 이미 적은 대로 I-19 의 이중 방어가 「퇴장 이력 조회」 라, 지우는 순간
+   * 스스로 나간 것과 초대받은 적 없는 것이 구분되지 않고 재초대 차단(CH-02a)이 조용히 무너진다.
+   *
+   * <p><b>나갈 수 있는지는 여기서 보지 않는다.</b> 방장인지는 모집글이 아는 사실이고 (이 애그리게이트는 방장을 갖지 않는다) 멤버인지는 방이 쥔 목록이라, 둘 다
+   * {@link ChatRoom#leave} 가 판정한 뒤 부른다.
+   *
+   * <p><b>다시 부르면 나간 시각이 밀린다.</b> 그 자리를 막는 것도 {@link ChatRoom#leave} 다 — 나간 사람은 이미 멤버가 아니라 403 에서
+   * 끝난다.
+   */
+  void leave() {
+    this.leftAt = LocalDateTime.now(ZoneOffset.UTC);
+  }
+
   /** 나가지 않은 멤버인가 (CH-18). */
   public boolean isJoined() {
     return leftAt == null;
