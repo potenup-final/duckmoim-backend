@@ -5,8 +5,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.duckmoim.chat.exception.ChatErrorCode;
 import com.duckmoim.common.exception.BusinessException;
+import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.stream.IntStream;
 import org.junit.jupiter.api.DisplayName;
@@ -23,6 +27,12 @@ import org.springframework.test.util.ReflectionTestUtils;
  * ({@code ChatRoomRepositoryTest}).
  */
 class ChatRoomTest {
+
+  /**
+   * 운영의 시계 존이다 ({@code ClockConfig}). 시계를 UTC 로 고정하면 만남시각의 기준(UTC)과 우연히 맞아떨어져, 판정이 벽시계를 쓰는 결함을 아래
+   * 검사들이 놓친다.
+   */
+  private static final ZoneId KST = ZoneId.of("Asia/Seoul");
 
   private static final long POST_ID = 1L;
   private static final long HOST_ID = 7L;
@@ -171,5 +181,76 @@ class ChatRoomTest {
     List<ChatRoomMember> members = ChatRoom.openFor(POST_ID, HOST_ID).getMembers();
 
     assertThatThrownBy(() -> members.remove(0)).isInstanceOf(UnsupportedOperationException.class);
+  }
+
+  @DisplayName("현재 멤버는 방 멤버로 판정된다.")
+  @Test
+  void isMemberTrue() {
+    ChatRoom room = ChatRoom.openFor(POST_ID, HOST_ID);
+
+    assertThat(room.isMember(HOST_ID)).isTrue();
+  }
+
+  @DisplayName("나간 사람은 방 멤버가 아니다.")
+  @Test
+  void isMemberFalseAfterLeaving() {
+    ChatRoom room = ChatRoom.openFor(POST_ID, HOST_ID);
+    room.invite(GUEST_ID);
+    markLeft(room, GUEST_ID);
+
+    assertThat(room.isMember(GUEST_ID)).isFalse();
+  }
+
+  @DisplayName("초대받은 적 없는 사람은 방 멤버가 아니다.")
+  @Test
+  void isMemberFalseForStranger() {
+    ChatRoom room = ChatRoom.openFor(POST_ID, HOST_ID);
+
+    assertThat(room.isMember(GUEST_ID)).isFalse();
+  }
+
+  @DisplayName("만남시각 + 7일 이내면 채팅이 가능하다.")
+  @Test
+  void isWritableWithinWindow() {
+    ChatRoom room = ChatRoom.openFor(POST_ID, HOST_ID);
+    LocalDateTime meetAtUtc = LocalDateTime.now(ZoneOffset.UTC);
+    Clock clock = Clock.fixed(instantOf(meetAtUtc).plusSeconds(1), KST);
+
+    assertThat(room.isWritable(meetAtUtc, clock)).isTrue();
+  }
+
+  @DisplayName("만남시각 + 7일이 지나면 읽기 전용이다.")
+  @Test
+  void isWritableAfterWindow() {
+    ChatRoom room = ChatRoom.openFor(POST_ID, HOST_ID);
+    LocalDateTime meetAtUtc = LocalDateTime.now(ZoneOffset.UTC);
+    Clock clock =
+        Clock.fixed(
+            instantOf(meetAtUtc.plusDays(ChatRoom.WRITABLE_WINDOW_DAYS)).plusSeconds(1), KST);
+
+    assertThat(room.isWritable(meetAtUtc, clock)).isFalse();
+  }
+
+  /**
+   * 마감 아홉 시간 안쪽을 짚는다. 위의 두 검사는 ±1초라 시계와 만남시각의 <b>기준</b>이 어긋나도 뒤집히지 않는다 — 아홉 시간은 그 여유 안에서 소화된다.
+   *
+   * <p>운영 시계가 KST 벽시계라(ClockConfig) UTC 로 저장된 만남시각과 벽시계로 견주면 창이 아홉 시간 일찍 닫힌다. 그 결함은 「마감 한 시간 전」처럼
+   * 아홉 시간 띠 안에서만 드러난다.
+   */
+  @DisplayName("만남시각 + 7일 한 시간 전이면 아직 채팅이 가능하다.")
+  @Test
+  void isWritableJustBeforeWindowEnds() {
+    ChatRoom room = ChatRoom.openFor(POST_ID, HOST_ID);
+    LocalDateTime meetAtUtc = LocalDateTime.now(ZoneOffset.UTC);
+    Clock clock =
+        Clock.fixed(
+            instantOf(meetAtUtc.plusDays(ChatRoom.WRITABLE_WINDOW_DAYS)).minus(1, ChronoUnit.HOURS),
+            KST);
+
+    assertThat(room.isWritable(meetAtUtc, clock)).isTrue();
+  }
+
+  private static Instant instantOf(LocalDateTime dateTime) {
+    return dateTime.toInstant(ZoneOffset.UTC);
   }
 }

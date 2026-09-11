@@ -133,6 +133,10 @@ class EndpointGradeTest {
           // 요청에 본문이 없어 사실은 그 앞에서 끝나지만, 번호를 없는 것으로 두는 편이
           // 본문이 붙는 날에도 이 줄이 계속 등급만 보게 한다.
           new Endpoint(HttpMethod.POST, "/api/v1/posts/404404/chat-room/members", Grade.SIGNUP),
+          // 방 목록·상세 (CH-05 · CH-06). SIGNUP 인 것은 가입 미완료 계정이 애초에 방
+          // 멤버가 될 수 없어서다 — users/me/posts 와 같은 근거.
+          new Endpoint(HttpMethod.GET, "/api/v1/chat-rooms", Grade.SIGNUP),
+          new Endpoint(HttpMethod.GET, "/api/v1/chat-rooms/404404", Grade.SIGNUP),
           // 2-6 신고
           new Endpoint(HttpMethod.POST, "/api/v1/reports", Grade.SIGNUP),
 

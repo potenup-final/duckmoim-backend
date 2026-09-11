@@ -26,7 +26,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
  * 404 로 나타난다. 빈 경우를 어떻게 답할지는 <b>CH-06 의 계약이 정한다</b> — 404 로 답하는 쪽과 조회 시점에 만들어 주는 쪽이 있고, 후자는 읽기 경로가
  * 쓰기를 하게 되어 공짜가 아니다. 이 PR 은 그 결정을 하지 않는다.
  */
-public interface ChatRoomRepository extends JpaRepository<ChatRoom, Long> {
+public interface ChatRoomRepository extends JpaRepository<ChatRoom, Long>, ChatRoomQueryRepository {
 
   /**
    * 모집글의 방을 애그리게이트째로 읽는다.

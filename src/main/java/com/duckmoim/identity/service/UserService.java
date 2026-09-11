@@ -2,6 +2,7 @@ package com.duckmoim.identity.service;
 
 import com.duckmoim.auth.service.AuthService;
 import com.duckmoim.common.exception.BusinessException;
+import com.duckmoim.identity.domain.AuthorDisplay;
 import com.duckmoim.identity.domain.Profile;
 import com.duckmoim.identity.domain.SignupInfo;
 import com.duckmoim.identity.domain.User;
@@ -172,8 +173,14 @@ public class UserService {
     }
   }
 
+  /**
+   * <b>탈퇴 자리표시자도 예약어로 막는다.</b> {@code withdraw} 가 닉네임 컬럼을 비우므로 {@code uk_user_nickname} 이 이 문구를
+   * 점유하지 않는다 — 살아 있는 회원이 가입·수정으로 그대로 가져갈 수 있고, 그러면 응답의 「탈퇴한 회원」이 진짜 탈퇴자인지 이 문구를 쓰는 산 사람인지 구별할 수단이
+   * 없어진다 (PR #106 리뷰).
+   */
   private void requireNicknameAvailable(String nickname) {
-    if (userRepository.existsByNickname(nickname)) {
+    if (AuthorDisplay.WITHDRAWN_NICKNAME.equals(nickname)
+        || userRepository.existsByNickname(nickname)) {
       throw new BusinessException(UserErrorCode.USER_NICKNAME_DUPLICATED);
     }
   }
