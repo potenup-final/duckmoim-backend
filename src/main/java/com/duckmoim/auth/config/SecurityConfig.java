@@ -75,7 +75,12 @@ public class SecurityConfig {
   // 조회지만 SIGNUP 이다 (CH-05 · CH-06). 가입을 마치지 않은 계정은 애초에 방 멤버가 될 수
   // 없다 — 초대 대상이 되려면 댓글을 써야 하고 댓글 작성 자체가 SIGNUP 이다. MY_PAGE 의
   // users/me/posts 와 같은 근거.
-  private static final String[] SIGNUP_READ = {"/api/v1/chat-rooms", "/api/v1/chat-rooms/*"};
+  // 메시지 목록(CH-09)이 /api/v1/chat-rooms/*/messages 라 한 칸 더 깊다. 위 둘의 * 는 한 칸만
+  // 덮으므로 닿지 않고, 그러면 anyRequest().authenticated() 로 떨어져 가입 미완료 계정에게
+  // 열린다 — CH-20 이 쓰기 경로에서 고친 것과 같은 모양의 구멍이다.
+  private static final String[] SIGNUP_READ = {
+    "/api/v1/chat-rooms", "/api/v1/chat-rooms/*", "/api/v1/chat-rooms/*/messages"
+  };
 
   private static final String[] PUBLIC_LOGIN = {"/api/v1/auth/kakao", "/api/v1/auth/token"};
   private static final String AUTH_TOKEN = "/api/v1/auth/token";

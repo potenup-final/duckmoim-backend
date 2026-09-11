@@ -141,6 +141,11 @@ class EndpointGradeTest {
           // 저쪽은 GET 이라 SIGNUP_READ, 이쪽은 POST 라 SIGNUP_WRITE 다.
           // 방 멤버인지는 관문이 아니라 service 가 본다.
           new Endpoint(HttpMethod.POST, "/api/v1/chat-rooms/404404/messages", Grade.SIGNUP),
+          // 목록·삭제 (CH-09 · CH-12). GET 은 SIGNUP_READ 가, DELETE 는 SIGNUP_WRITE 가 덮는다 —
+          // 같은 등급인데 다른 배열이라 둘 다 표에 올린다.
+          new Endpoint(HttpMethod.GET, "/api/v1/chat-rooms/404404/messages", Grade.SIGNUP),
+          new Endpoint(
+              HttpMethod.DELETE, "/api/v1/chat-rooms/404404/messages/404404", Grade.SIGNUP),
           // 2-6 신고
           new Endpoint(HttpMethod.POST, "/api/v1/reports", Grade.SIGNUP),
 
