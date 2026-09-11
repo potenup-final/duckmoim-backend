@@ -57,7 +57,7 @@ public class Notification extends BaseEntity {
   /**
    * 읽은 시각. NULL 이면 안 읽은 것이다.
    *
-   * <p>채우는 쪽은 읽음 처리(NT-09)다. 이 티켓은 안 읽은 상태로 만들기만 한다.
+   * <p>채우는 쪽은 {@link #markRead} 다 (NT-09). 만들어질 때는 늘 NULL 이다.
    */
   @Column(name = "read_at")
   private LocalDateTime readAt;
@@ -92,5 +92,27 @@ public class Notification extends BaseEntity {
   /** 안 읽은 알림인지. 목록과 배지가 이것으로 갈린다 (NT-08 · NT-10). */
   public boolean isUnread() {
     return readAt == null;
+  }
+
+  /**
+   * 읽음으로 바꾼다 (NT-09).
+   *
+   * <p><b>이미 읽은 알림이면 아무것도 하지 않는다.</b> 예외를 던지지 않는 것은 이 동작이 배지를 지우는 일이기 때문이다 — 같은 알림을 두 번 눌러도, 목록을 열어
+   * 둔 채 다른 탭에서 전체 읽음을 해도 결과가 같아야 한다. 도메인 6장의 전이가 {@code UNREAD → READ} 한 방향뿐이라 되돌아갈 자리도 없다
+   * (API-설계.md 「2-10. 알림 (Notification) · 2차」).
+   *
+   * <p><b>덮어쓰지 않는 것이 핵심이다.</b> 시각을 남기는 이유가 나중에 「언제 읽었나」를 되돌아보기 위해서인데, 두 번째 호출이 값을 갱신하면 그 시각은 「마지막으로
+   * 읽음 요청이 온 때」가 되어 남긴 이유가 사라진다.
+   *
+   * @param readAtInUtc 저장은 UTC 다. 표기는 presentation 이 정한다
+   */
+  public void markRead(LocalDateTime readAtInUtc) {
+    Objects.requireNonNull(readAtInUtc, "읽은 시각이 필요하다.");
+
+    if (readAt != null) {
+      return;
+    }
+
+    this.readAt = readAtInUtc;
   }
 }
