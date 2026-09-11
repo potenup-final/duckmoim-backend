@@ -119,6 +119,17 @@ tasks.named('test') {
 	inputs.files('.gitmodules')
 			.withPathSensitivity(PathSensitivity.RELATIVE)
 			.withPropertyName('gitmodules')
+
+	// 그 검사에 상태 검사가 붙으면서(STAR-130) 인덱스도 입력이 됐다. 안 걸면 핀을
+	// 스테이징한 채로 check 를 돌려도 test 가 UP-TO-DATE 로 건너뛰어 초록불이 나온다 —
+	// 위와 똑같이, 검사가 정작 위반이 생긴 순간에만 안 도는 모양이다.
+	//
+	// 대가는 git add 와 인덱스를 다시 쓰는 git status 가 test 를 무르게 만드는 것이다.
+	// 루프에서 커밋은 check 뒤에 오고 다음 항목은 어차피 소스를 고치므로, 실제로 다시
+	// 도는 횟수는 거의 늘지 않는다.
+	inputs.files('.git/index')
+			.withPathSensitivity(PathSensitivity.RELATIVE)
+			.withPropertyName('gitIndex')
 }
 
 // API 문서용 스펙 추출. 컨텍스트가 떠야 스펙이 나오고, 그 컨텍스트를 띄우는 수단이
