@@ -98,6 +98,37 @@ class UserPostQueryServiceTest {
     assertThat(slice.nextCursor()).isNull();
   }
 
+  /**
+   * 프로필 단건이 404 인데 그 사람의 글 목록만 계속 나오면 프로필을 닫은 의미가 없다 (AU-11).
+   *
+   * <p>404 가 아니라 빈 페이지인 것은 위 {@code findUserPosts_unknownUser} 와 같은 이유다 — 탈퇴만 갈라 놓으면 탈퇴자와 없는 회원을
+   * 구분해 주는 신호가 생긴다.
+   */
+  @DisplayName("탈퇴한 회원의 모집글 목록은 빈 페이지다.")
+  @Test
+  void findUserPosts_withdrawnUser() {
+    insertMine("탈퇴 전에 쓴 글", BASE);
+    withdraw(ME);
+
+    UserPostSlice slice = userPostQueryService.findUserPosts(query(20));
+
+    assertThat(slice.posts()).isEmpty();
+    assertThat(slice.hasNext()).isFalse();
+    assertThat(slice.nextCursor()).isNull();
+  }
+
+  /** {@code User.withdraw} 가 남기는 모양 그대로다 — 상태와 시각을 찍고 닉네임 · 사진을 비운다 (AU-11). */
+  private void withdraw(long userId) {
+    jdbc.update(
+        """
+        UPDATE user
+           SET status = 'WITHDRAWN', withdrawn_at = now(), nickname = NULL,
+               profile_image_url = NULL
+         WHERE id = ?
+        """,
+        userId);
+  }
+
   private long insertMine(String title, LocalDateTime createdAt) {
     return aCompanionPost().title(title).hostId(ME).createdAt(createdAt).insert(jdbc);
   }

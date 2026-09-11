@@ -160,6 +160,44 @@ class CommentQueryServiceTest {
     assertThat(slice.nextCursor().id()).isEqualTo(dropped);
   }
 
+  /** 닉네임이 {@code NULL} 이 될 뿐이면 목록에 이름 없는 작성자로 뜬다 (AU-11 「닉네임 익명화」). */
+  @DisplayName("탈퇴한 작성자의 닉네임은 자리표시자로 나온다.")
+  @Test
+  void findComments_anonymizesWithdrawnAuthor() {
+    withdraw(AUTHOR_ID);
+    root(BASE, CommentStatus.ACTIVE);
+
+    CommentView view = commentQueryService.findComments(query(20)).roots().get(0);
+
+    assertThat(view.nickname()).isEqualTo("탈퇴한 회원");
+  }
+
+  /** 작성 댓글은 자리표시자로 남는다 (AU-11). 지우면 매달린 대댓글이 고아가 되는 것과 같은 이유다 (CM-11). */
+  @DisplayName("탈퇴한 작성자의 댓글도 목록에는 남는다.")
+  @Test
+  void findComments_keepsWithdrawnAuthorComment() {
+    withdraw(AUTHOR_ID);
+    long rootId = root(BASE, CommentStatus.ACTIVE);
+
+    CommentSlice slice = commentQueryService.findComments(query(20));
+
+    assertThat(idsOf(slice.roots())).containsExactly(rootId);
+  }
+
+  /** 대댓글 작성자만 탈퇴한 경우다. 익명화를 루트에만 걸면 여기서 실명이 샌다. */
+  @DisplayName("탈퇴한 대댓글 작성자도 자리표시자로 나온다.")
+  @Test
+  void findComments_anonymizesWithdrawnReplier() {
+    withdraw(REPLIER_ID);
+    long rootId = root(BASE, CommentStatus.ACTIVE);
+    reply(rootId, BASE.plusMinutes(1), CommentStatus.ACTIVE);
+
+    CommentView root = commentQueryService.findComments(query(20)).roots().get(0);
+
+    assertThat(root.nickname()).isEqualTo("댓글덕후");
+    assertThat(root.replies().get(0).nickname()).isEqualTo("탈퇴한 회원");
+  }
+
   @DisplayName("없는 모집글의 댓글은 조회할 수 없다.")
   @Test
   void findComments_postIsMissing() {
@@ -186,6 +224,18 @@ class CommentQueryServiceTest {
         .createdAt(createdAt)
         .status(status)
         .insert(jdbc);
+  }
+
+  /** {@code User.withdraw} 가 남기는 모양 그대로다 — 상태와 시각을 찍고 닉네임 · 사진을 비운다 (AU-11). */
+  private void withdraw(long userId) {
+    jdbc.update(
+        """
+        UPDATE user
+           SET status = 'WITHDRAWN', withdrawn_at = ?, nickname = NULL, profile_image_url = NULL
+         WHERE id = ?
+        """,
+        BASE,
+        userId);
   }
 
   private CommentListQuery query(int size) {
