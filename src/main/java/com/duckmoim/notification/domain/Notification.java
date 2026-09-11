@@ -57,7 +57,8 @@ public class Notification extends BaseEntity {
   /**
    * 읽은 시각. NULL 이면 안 읽은 것이다.
    *
-   * <p>채우는 쪽은 읽음 처리(NT-09)다. 이 티켓은 안 읽은 상태로 만들기만 한다.
+   * <p><b>이 값을 바꾸는 전이가 여기 없다.</b> NT-09 의 읽음 처리는 {@code NotificationRepository} 의 조건부 UPDATE 가 쥔다 —
+   * 이유는 그쪽에 적혀 있다. 만들어질 때는 늘 NULL 이다.
    */
   @Column(name = "read_at")
   private LocalDateTime readAt;

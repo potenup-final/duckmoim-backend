@@ -11,6 +11,10 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.OneToMany;
 import jakarta.persistence.Table;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -49,6 +53,14 @@ public class ChatRoom extends BaseEntity {
    * <p><b>방장을 포함해 센다.</b> I-17 이 「방 멤버는 100명을 넘지 않는다」 이고 방장도 멤버다 (CH-01). 그래서 초대로 늘어나는 자리는 99 다.
    */
   public static final int MEMBER_LIMIT = 100;
+
+  /**
+   * 채팅 가능 구간 (CH-08 · 도메인-모델링.md 「{@code ChatRoom} ※ 2차」 라이프사이클).
+   *
+   * <p>만남시각부터 이 일수가 지나면 방은 읽기 전용이다. 여기서는 CH-06(방 상세)이 보여줄 여부만 계산한다 — 전송을 막는 409 자체는 CH-08 티켓의 몫이고,
+   * {@code Message} 가 아직 없어 만들 자리도 없다.
+   */
+  public static final int WRITABLE_WINDOW_DAYS = 7;
 
   @Id
   @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -148,5 +160,37 @@ public class ChatRoom extends BaseEntity {
 
   public List<ChatRoomMember> getMembers() {
     return Collections.unmodifiableList(members);
+  }
+
+  /**
+   * 지금 이 방의 멤버인가 (CH-06 · I-18).
+   *
+   * <p>나간 사람은 행이 남아 있어도(CH-04) 아니다 — {@code currentMembers} 와 같은 기준이다.
+   */
+  public boolean isMember(Long userId) {
+    return memberOf(userId).map(ChatRoomMember::isJoined).orElse(false);
+  }
+
+  /**
+   * 지금 쓸 수 있는 방인가 (CH-06 · CH-08).
+   *
+   * <p><b>{@code meetAtUtc} 를 파라미터로 받는다.</b> 이 애그리게이트는 만남시각을 갖지 않는다 — 클래스 주석이 이미 적은 대로 「쓸 수 있는지 여부는
+   * 모집글의 만남시각에서 계산한다」이고, 그 값은 {@code CompanionPost} 가 쥔다.
+   *
+   * <p>{@code Clock} 을 주입받지 않고 인자로 받는 것은 {@code AuthorDisplay}·{@code LastSeen} 과 같은 이유다 — domain 은
+   * 프레임워크에 묶이지 않는다.
+   *
+   * <p><b>{@code LocalDateTime.now(clock)} 과 비교하지 않는다.</b> {@code ClockConfig} 의 시계가 {@code
+   * Asia/Seoul} 이라 (행사 종료일 판정이 KST 여야 해서 그렇게 정해졌다) 그 벽시계를 UTC 로 저장된 만남시각과 견주면 창이 <b>아홉 시간 일찍
+   * 닫힌다.</b> 두 값을 {@code Instant} 로 맞춰 기준을 하나로 만든다. {@code MeetTimePassedCloseService.closeChunk} 가
+   * 같은 함정을 파라미터 이름({@code nowInUtc})으로 막아 둔 자리다.
+   *
+   * @param meetAtUtc <b>UTC 기준</b> 만남시각. {@code CompanionPost} 가 그 기준으로 저장한다 (도메인-모델링.md 「4. 엔티티 ·
+   *     값 객체 · 식별자」)
+   */
+  public boolean isWritable(LocalDateTime meetAtUtc, Clock clock) {
+    Instant deadline = meetAtUtc.plusDays(WRITABLE_WINDOW_DAYS).toInstant(ZoneOffset.UTC);
+
+    return !clock.instant().isAfter(deadline);
   }
 }

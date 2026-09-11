@@ -1,6 +1,9 @@
 package com.duckmoim.companion.infra;
 
 import com.duckmoim.companion.domain.CompanionPost;
+import com.duckmoim.identity.domain.AuthorDisplay;
+import com.duckmoim.identity.domain.SignupStatus;
+import java.time.Clock;
 import java.time.LocalDateTime;
 
 /**
@@ -19,10 +22,23 @@ import java.time.LocalDateTime;
  *
  * @param eventExternalId 행사를 안 고른 글은 {@code null} 이다. 그때는 {@code post} 의 행사명 · 이미지도 함께 {@code null}
  *     이다 (화면-계약.md 「모집글 · 댓글 (PO · CM)」)
+ * @param hostStatus 익명화 판정의 입력이다 (AU-11). 조인해 온 값을 그대로 싣고, 자리표시자로 바꾸는 것은 {@code AuthorDisplay} 가
+ *     한다. <b>{@code nickname} 이 {@code null} 인지로 대신하지 않는 이유가 거기 적혀 있다</b>
  */
 public record AuthoredPost(
     CompanionPost post,
     String nickname,
     String profileImageUrl,
     LocalDateTime lastSeenAt,
-    String eventExternalId) {}
+    String eventExternalId,
+    SignupStatus hostStatus) {
+
+  /**
+   * 방장 블록을 응답에 나갈 모양으로 조립한다.
+   *
+   * <p>네 개의 원시 값 대신 이 메서드 하나를 부르게 해서, 인자 순서를 틀릴 자리를 프로젝션 안에 한 번만 남긴다 (PR #106 리뷰).
+   */
+  public AuthorDisplay author(Clock clock) {
+    return AuthorDisplay.of(hostStatus, nickname, profileImageUrl, lastSeenAt, clock);
+  }
+}

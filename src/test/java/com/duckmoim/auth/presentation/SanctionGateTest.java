@@ -117,10 +117,69 @@ class SanctionGateTest {
         .andExpect(status().isBadRequest());
   }
 
+  /**
+   * 채팅 쓰기도 같은 관문에서 막힌다 (CH-20).
+   *
+   * <p>도메인 3.3 이 <i>"제재 중 유저의 채팅 쓰기 차단 | Safety → Chat | I-14 와 같은 정책 객체를 채팅 경로에도 건다"</i> 로 2차 항목을
+   * 열어 뒀다. 판정은 그대로 {@code SanctionPolicy} 가 하므로, 이 검사가 보는 것은 <b>경로 등록이 실제로 걸렸는가</b> 하나다.
+   *
+   * <p><b>없는 방 번호로 쏜다</b> (CH-07 의 전송 경로). 막히면 403 이고, 통과하면 본문이 비어 400 으로 끝난다 — 모집글 쪽과 같은 모양이다.
+   */
+  @DisplayName("제재 중 유저가 채팅 메시지를 보내면 403 이다.")
+  @ParameterizedTest(name = "{0}")
+  @EnumSource(
+      value = SanctionKind.class,
+      names = {"AGE_HOLD", "SUSPENDED", "BANNED"})
+  void blocksChatWriting(SanctionKind kind) throws Exception {
+    sanction(kind);
+
+    mockMvc
+        .perform(
+            post("/api/v1/chat-rooms/404404/messages")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{}")
+                .headers(bearer()))
+        .andExpect(status().isForbidden())
+        .andExpect(jsonPath("$.code").value("USER_SANCTIONED"));
+  }
+
+  /** 경고는 채팅에서도 막지 않는다. 도메인 6장 제재 축 표의 「쓰기」 열이 모든 경로에 같게 적용된다. */
+  @DisplayName("경고받은 유저의 채팅 쓰기는 막지 않는다.")
+  @Test
+  void allowsWarnedChatWriting() throws Exception {
+    sanction(SanctionKind.WARNED);
+
+    mockMvc
+        .perform(
+            post("/api/v1/chat-rooms/404404/messages")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{}")
+                .headers(bearer()))
+        .andExpect(status().isBadRequest());
+  }
+
+  @DisplayName("제재가 없으면 채팅 쓰기가 관문에서 막히지 않는다.")
+  @Test
+  void allowsUnsanctionedChatWriting() throws Exception {
+    mockMvc
+        .perform(
+            post("/api/v1/chat-rooms/404404/messages")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{}")
+                .headers(bearer()))
+        .andExpect(status().isBadRequest());
+  }
+
   /** 등록 경로에 조회가 함께 걸린다. 메서드를 안 가리면 경고받은 사람이 남의 글도 못 본다. */
   @DisplayName("제재 중에도 읽기는 막지 않는다.")
   @ParameterizedTest
-  @ValueSource(strings = {"/api/v1/posts", "/api/v1/posts/1/comments"})
+  @ValueSource(
+      strings = {
+        "/api/v1/posts",
+        "/api/v1/posts/1/comments",
+        "/api/v1/chat-rooms",
+        "/api/v1/chat-rooms/404404"
+      })
   void allowsReading(String path) throws Exception {
     sanction(SanctionKind.BANNED);
 

@@ -158,6 +158,58 @@ class CompanionPostQueryServiceTest {
     assertThat(view.lastSeen()).isNull();
   }
 
+  /** 닉네임이 {@code NULL} 이 될 뿐이면 목록에 이름 없는 작성자로 뜬다 (AU-11 「닉네임 익명화」). */
+  @DisplayName("탈퇴한 방장의 닉네임은 자리표시자로 나온다.")
+  @Test
+  void findPosts_anonymizesWithdrawnHost() {
+    withdraw(HOST_ID);
+    post(MEET_AT);
+
+    PostView view = companionPostQueryService.findPosts(query(null, null, 20)).posts().get(0);
+
+    assertThat(view.nickname()).isEqualTo("탈퇴한 회원");
+  }
+
+  /**
+   * 사진이 이름보다 더 식별적이고, 최근 접속을 남기면 <b>「탈퇴한 회원 · 오늘 접속」</b> 이 뜬다 — {@code last_seen_at} 이 탈퇴 시점 값으로 남기
+   * 때문이다. 그 함정을 그대로 재현하려고 방금 접속한 값을 넣어 둔다.
+   */
+  @DisplayName("탈퇴한 방장의 프로필 이미지와 최근 접속은 나오지 않는다.")
+  @Test
+  void findPosts_hidesWithdrawnHostTrace() {
+    jdbc.update("UPDATE user SET last_seen_at = ? WHERE id = ?", NOW, HOST_ID);
+    withdraw(HOST_ID);
+    post(MEET_AT);
+
+    PostView view = companionPostQueryService.findPosts(query(null, null, 20)).posts().get(0);
+
+    assertThat(view.profileImageUrl()).isNull();
+    assertThat(view.lastSeen()).isNull();
+  }
+
+  /** 요구사항이 「자리표시자 유지」이고 결정 D-3 이 모집글 삭제를 두지 않았다. 글이 사라지는 것은 반대 방향이다. */
+  @DisplayName("탈퇴한 방장의 글도 전체 목록에는 남는다.")
+  @Test
+  void findPosts_keepsWithdrawnHostPost() {
+    withdraw(HOST_ID);
+    long postId = post(MEET_AT);
+
+    PostSlice slice = companionPostQueryService.findPosts(query(null, null, 20));
+
+    assertThat(idsOf(slice)).containsExactly(postId);
+  }
+
+  @DisplayName("상세의 방장이 탈퇴했으면 자리표시자로 나온다.")
+  @Test
+  void findPost_anonymizesWithdrawnHost() {
+    withdraw(HOST_ID);
+    long postId = post(MEET_AT);
+
+    PostView view = companionPostQueryService.findPost(postId);
+
+    assertThat(view.nickname()).isEqualTo("탈퇴한 회원");
+  }
+
   @DisplayName("댓글 수를 조회 시점에 세어 함께 내린다.")
   @Test
   void findPosts_countsComments() {
@@ -254,6 +306,18 @@ class CompanionPostQueryServiceTest {
 
   private long post(LocalDateTime meetAt) {
     return aCompanionPost().meetAt(meetAt).hostId(HOST_ID).insert(jdbc);
+  }
+
+  /** {@code User.withdraw} 가 남기는 모양 그대로다 — 상태와 시각을 찍고 닉네임 · 사진을 비운다 (AU-11). */
+  private void withdraw(long userId) {
+    jdbc.update(
+        """
+        UPDATE user
+           SET status = 'WITHDRAWN', withdrawn_at = ?, nickname = NULL, profile_image_url = NULL
+         WHERE id = ?
+        """,
+        NOW,
+        userId);
   }
 
   private static PostListQuery query(PostStatus status, PostCursor cursor, int size) {

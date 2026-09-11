@@ -11,6 +11,24 @@ spring:
   jpa:
     open-in-view: false
 
+  # SSE 팬아웃과 인스턴스 간 공유 상태 (CH-10 · NT-07). 로컬은 docker-compose 의
+  # duckmoim-redis 이고, 운영은 EC2 한 대에 뜬 컨테이너에 두 대가 사설 IP 로 붙는다.
+  #
+  # prod 에 기본값을 남긴다 — JWT_SECRET 과 달리 「없으면 기동 실패」로 두지 않는다.
+  # Redis 는 없어도 채팅의 본 기능(전송·조회)이 돌아야 하는 부속이라, 연결 정보가 비었다고
+  # 서비스 전체를 못 뜨게 하는 것은 이 티켓이 정한 규칙과 반대다.
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6380}
+      # 비어 있으면 인증 없이 붙는다. 운영은 requirepass 를 걸고 이 값을 채운다.
+      password: ${REDIS_PASSWORD:}
+      # **둘 다 짧아야 한다.** Redis 가 죽은 것이 아니라 느려졌을 때, 기본값(무한 대기)이면
+      # 팬아웃을 부른 톰캣 스레드가 그대로 묶인다. 스레드가 다 묶이면 Redis 와 무관한
+      # 요청까지 멈춰서, 「부가 기능의 장애가 본 기능을 죽인다」가 그대로 일어난다.
+      timeout: 1s
+      connect-timeout: 1s
+
 # 헬스체크와 지표. 두 소비자가 있다 — ALB 대상 그룹의 상태 검사와 ci-cd.yml 의 배포 전환
 # 게이트다. 둘 다 /actuator/health 를 보고, 그 값이 DB 커넥션까지 확인한 결과여야
 # 「DB 에 못 붙는 버전으로 전환」이 막힌다.
@@ -28,6 +46,16 @@ management:
       # UP/DOWN 만 알면 되고, 무엇이 왜 죽었는지는 로그와 대시보드에서 본다.
       show-details: never
   health:
+    redis:
+      # **이 한 줄이 이 티켓의 규칙을 인프라에 새기는 자리다.**
+      #
+      # Actuator 는 Redis 를 자동으로 헬스 기여자에 넣는다. 그대로 두면 Redis 한 대가
+      # 죽는 순간 두 인스턴스가 동시에 DOWN 이 되고, ALB 의 healthy 대상이 0 이 되어
+      # 전 요청이 503 이 된다 — DB 도 앱도 멀쩡하고 메시지 전송·조회가 되는데도 그렇다.
+      #
+      # diskspace 를 끈 것과 같은 근거다. 상태 검사는 「요청을 처리할 수 있는가」만
+      # 판정한다. Redis 가 죽어서 멈추는 것은 실시간 팬아웃 하나뿐이다.
+      enabled: false
     diskspace:
       # 기본 임계는 여유 10MB 이고 루트 볼륨이 8GB 다. 걸리면 두 인스턴스가 같은 속도로
       # 차서 동시에 DOWN 이 되고, ALB 는 healthy 대상이 0 이 되어 전부 503 을 낸다 —

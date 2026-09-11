@@ -21,11 +21,14 @@ public class CompanionPostQueryRepositoryImpl implements CompanionPostQueryRepos
    * 행사는 {@code LEFT JOIN} 이다. 행사를 고르지 않은 모집글이 있고 (PO-02), 내부 조인이면 그 글들이 목록에서 통째로 사라진다.
    *
    * <p>방장은 내부 조인이다. 모집글에 방장이 없는 경우가 없고, 탈퇴는 소프트 삭제라 행이 남는다 (도메인-모델링.md 「1. 유비쿼터스 언어」).
+   *
+   * <p><b>탈퇴한 방장의 글을 여기서 거르지 않는다.</b> 요구사항이 「작성 댓글은 자리표시자 유지」 이고 결정 D-3 이 모집글 삭제를 두지 않았으므로, 전체 목록에서
+   * 글이 사라지는 것은 반대 방향이다 (AU-11). 대신 {@code u.status} 를 함께 읽어 <b>작성자 표시만</b> 익명화한다.
    */
   private static final String SELECT_AUTHORED =
       """
       SELECT new com.duckmoim.companion.infra.AuthoredPost(
-                 p, u.nickname, u.profileImageUrl, u.lastSeenAt, e.externalId)
+                 p, u.nickname, u.profileImageUrl, u.lastSeenAt, e.externalId, u.status)
         FROM CompanionPost p
         JOIN User u ON u.id = p.hostId
         LEFT JOIN Event e ON e.id = p.eventId

@@ -1,6 +1,9 @@
 package com.duckmoim.companion.infra;
 
 import com.duckmoim.companion.domain.Comment;
+import com.duckmoim.identity.domain.AuthorDisplay;
+import com.duckmoim.identity.domain.SignupStatus;
+import java.time.Clock;
 import java.time.LocalDateTime;
 
 /**
@@ -11,6 +14,23 @@ import java.time.LocalDateTime;
  *
  * <p><b>{@code lastSeenAt} 은 저장된 값 그대로다.</b> 구간으로 줄이는 것은 현재 시각이 필요한 일이라 service 가 한다 — {@code
  * LastSeen} 이 {@code Clock} 을 받는다.
+ *
+ * @param authorStatus 익명화 판정의 입력이다 (AU-11). 조인해 온 값을 그대로 싣고, 자리표시자로 바꾸는 것은 {@code AuthorDisplay} 가
+ *     한다. <b>{@code nickname} 이 {@code null} 인지로 대신하지 않는 이유가 거기 적혀 있다</b>
  */
 public record AuthoredComment(
-    Comment comment, String nickname, String profileImageUrl, LocalDateTime lastSeenAt) {}
+    Comment comment,
+    String nickname,
+    String profileImageUrl,
+    LocalDateTime lastSeenAt,
+    SignupStatus authorStatus) {
+
+  /**
+   * 작성자 블록을 응답에 나갈 모양으로 조립한다.
+   *
+   * <p>네 개의 원시 값 대신 이 메서드 하나를 부르게 해서, 인자 순서를 틀릴 자리를 프로젝션 안에 한 번만 남긴다 (PR #106 리뷰).
+   */
+  public AuthorDisplay author(Clock clock) {
+    return AuthorDisplay.of(authorStatus, nickname, profileImageUrl, lastSeenAt, clock);
+  }
+}

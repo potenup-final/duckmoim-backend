@@ -1,13 +1,19 @@
 package com.duckmoim.architecture;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assumptions.abort;
 
+import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -38,12 +44,27 @@ import org.junit.jupiter.api.Test;
  * 살아남았다. {@code configureWikiIgnore} 태스크가 심는 로컬 config 는 이제 중복이고, 실제로 막는 것은 이 파일의 한 줄이다.
  *
  * <p><b>그 한 줄을 이 검사가 지킨다.</b> 지우기 쉽고, 지워도 다음에 누가 핀을 실을 때까지 아무 신호가 없다 — 그때는 이미 develop 에 들어가 있다.
+ *
+ * <h2>설정만으로는 모자란다 (STAR-130)</h2>
+ *
+ * <p><b>{@code ignore = all} 은 git 이 핀을 발견하는 것을 막을 뿐, 이미 인덱스에 들어간 핀은 막지 못한다.</b> {@code git add -f
+ * docs/wiki} 와 {@code git update-index} 직접 조작(IDE 의 소스컨트롤 패널이 쓰는 방식)이 그 경로이고, git 문서가 <i>staged 된
+ * 경우에는 status · commit 출력에 나타난다</i>고 예외를 명시해 두었다. STAR-76 이 들어온 뒤에도 PR #103 의 커밋 {@code 8c95eac} 에서
+ * 재발했다 — 자바 파일 하나만 고친 커밋에 핀이 함께 실렸다.
+ *
+ * <p>그래서 <b>선언 검사에 상태 검사를 더한다.</b> 커밋 순간을 막는 것은 {@code .githooks/pre-commit} 이고, 여기는 그 훅이 없는 클론과
+ * {@code --no-verify} 로 건너뛴 경우를 받는다.
  */
 class SubmodulePinTest {
 
   private static final Path GITMODULES = Path.of(".gitmodules");
 
-  private static final String WIKI_SECTION = "[submodule \"docs/wiki\"]";
+  private static final String WIKI_PATH = "docs/wiki";
+
+  private static final String WIKI_SECTION = "[submodule \"" + WIKI_PATH + "\"]";
+
+  /** git 이 gitlink 항목에 쓰는 모드. 이 값이어야 서브모듈 포인터다. */
+  private static final String GITLINK_MODE = "160000";
 
   @DisplayName("위키 서브모듈은 핀이 커밋에 실리지 않게 선언된다.")
   @Test
@@ -53,6 +74,90 @@ class SubmodulePinTest {
     assertThat(section)
         .as(".gitmodules 의 docs/wiki 절에 `ignore = all` 이 있어야 한다 (STAR-76)")
         .anyMatch(SubmodulePinTest::declaresIgnoreAll);
+  }
+
+  @DisplayName("위키 서브모듈 핀이 인덱스에 실려 있지 않다.")
+  @Test
+  void wikiSubmodulePinIsNotStaged() {
+    assertThat(stagedPinMismatch(Path.of(".")))
+        .as("인덱스의 위키 핀이 HEAD 와 달라졌다. `git restore --staged %s` 로 뺀다 (STAR-130)", WIKI_PATH)
+        .isEmpty();
+  }
+
+  /**
+   * 인덱스의 위키 핀이 HEAD 와 어긋났으면 그 사실을 적어 돌려준다.
+   *
+   * <p><b>{@code git diff --cached} 를 쓰지 않는다.</b> {@code ignore = all} 이 diff 까지 가려서, 핀이 스테이징된
+   * 상태에서도 출력이 <b>비어 있다</b> — 그렇게 짠 검사는 조용히 통과한다. {@code --ignore-submodules=none} 을 붙이면 보이지만, 붙이는
+   * 것을 잊으면 아무 신호가 없으므로 인덱스와 HEAD 의 gitlink 를 직접 비교한다. git 2.54.0 에서 실측했다.
+   *
+   * <p><b>{@link RulesAreAliveTest} 가 이 메서드를 임시 저장소에 겨눠 생존을 증명한다.</b> 그래서 검사할 저장소를 인자로 받는다 — 여기서
+   * 프로세스 작업 디렉터리를 고정하면 픽스처를 만들 수 없다.
+   *
+   * @return 어긋났으면 설명, 아니면 빈 값. 비교할 HEAD 항목이 없는 트리(최초 커밋 · 서브모듈이 들어오기 전에 갈라진 브랜치)도 빈 값이다
+   */
+  static Optional<String> stagedPinMismatch(Path repoRoot) {
+    Optional<String> headPin =
+        git(repoRoot, "rev-parse", "--verify", "--quiet", "HEAD:" + WIKI_PATH);
+    if (headPin.isEmpty()) {
+      return Optional.empty();
+    }
+
+    Optional<String> stagedPin = stagedPin(repoRoot);
+    if (stagedPin.isEmpty() || stagedPin.get().equals(headPin.get())) {
+      return Optional.empty();
+    }
+
+    return Optional.of("HEAD %s, 인덱스 %s".formatted(headPin.get(), stagedPin.get()));
+  }
+
+  /** 인덱스에 올라온 위키 gitlink. 없으면 빈 값이고, 그것이 평상시의 모습이다. */
+  private static Optional<String> stagedPin(Path repoRoot) {
+    return git(repoRoot, "ls-files", "--stage", "--", WIKI_PATH)
+        .map(line -> line.split("\\s+"))
+        .filter(fields -> fields.length >= 2 && fields[0].equals(GITLINK_MODE))
+        .map(fields -> fields[1]);
+  }
+
+  /**
+   * git 을 돌려 첫 줄을 받는다. 종료 코드가 0 이 아니면 빈 값이다 — 「그런 항목이 없다」와 같은 뜻으로 쓴다.
+   *
+   * <p>git 이 없거나 저장소가 아니면 <b>건너뛴다.</b> 실패로 만들면 소스 아카이브로 받은 트리에서 빌드가 깨진다.
+   */
+  private static Optional<String> git(Path repoRoot, String... args) {
+    List<String> command = new ArrayList<>(List.of("git"));
+    command.addAll(List.of(args));
+
+    try {
+      Process process =
+          new ProcessBuilder(command)
+              .directory(repoRoot.toFile())
+              .redirectErrorStream(false)
+              .start();
+
+      String firstLine;
+      try (BufferedReader reader =
+          new BufferedReader(new InputStreamReader(process.getInputStream(), UTF_8))) {
+        firstLine = reader.readLine();
+      }
+
+      if (!process.waitFor(30, TimeUnit.SECONDS)) {
+        process.destroyForcibly();
+        abort("git 이 응답하지 않아 핀 검사를 건너뛴다.");
+      }
+
+      if (process.exitValue() != 0 || firstLine == null || firstLine.isBlank()) {
+        return Optional.empty();
+      }
+
+      return Optional.of(firstLine.strip());
+
+    } catch (IOException e) {
+      return abort("git 을 실행할 수 없어 핀 검사를 건너뛴다: " + e.getMessage());
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      return abort("핀 검사가 중단됐다.");
+    }
   }
 
   /**

@@ -133,8 +133,24 @@ class EndpointGradeTest {
           // 요청에 본문이 없어 사실은 그 앞에서 끝나지만, 번호를 없는 것으로 두는 편이
           // 본문이 붙는 날에도 이 줄이 계속 등급만 보게 한다.
           new Endpoint(HttpMethod.POST, "/api/v1/posts/404404/chat-room/members", Grade.SIGNUP),
+          // 방 목록·상세 (CH-05 · CH-06). SIGNUP 인 것은 가입 미완료 계정이 애초에 방
+          // 멤버가 될 수 없어서다 — users/me/posts 와 같은 근거.
+          new Endpoint(HttpMethod.GET, "/api/v1/chat-rooms", Grade.SIGNUP),
+          new Endpoint(HttpMethod.GET, "/api/v1/chat-rooms/404404", Grade.SIGNUP),
+          // 메시지 전송 (CH-07 · CH-08). 같은 SIGNUP 이지만 위 둘과 다른 줄로 걸린다 —
+          // 저쪽은 GET 이라 SIGNUP_READ, 이쪽은 POST 라 SIGNUP_WRITE 다.
+          // 방 멤버인지는 관문이 아니라 service 가 본다.
+          new Endpoint(HttpMethod.POST, "/api/v1/chat-rooms/404404/messages", Grade.SIGNUP),
           // 2-6 신고
           new Endpoint(HttpMethod.POST, "/api/v1/reports", Grade.SIGNUP),
+
+          // 2-10. 알림 (Notification) · 2차
+          new Endpoint(HttpMethod.GET, "/api/v1/notifications", Grade.SIGNUP),
+          // 없는 알림 번호다. 있는 알림을 찌르면 service 가 먼저 답해서 이 줄이 등급이 아니라
+          // 본문을 보게 된다 — 채팅 초대 줄이 없는 글 번호를 쓰는 것과 같은 이유다.
+          new Endpoint(HttpMethod.POST, "/api/v1/notifications/404404/read", Grade.SIGNUP),
+          new Endpoint(HttpMethod.POST, "/api/v1/notifications/read", Grade.SIGNUP),
+          new Endpoint(HttpMethod.GET, "/api/v1/notifications/unread-count", Grade.SIGNUP),
           // 2-7 백오피스
           new Endpoint(HttpMethod.GET, "/api/v1/admin/reports", Grade.ADMIN),
           new Endpoint(HttpMethod.PATCH, "/api/v1/admin/reports/1", Grade.ADMIN),
