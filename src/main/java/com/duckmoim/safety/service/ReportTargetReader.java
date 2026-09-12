@@ -1,5 +1,8 @@
 package com.duckmoim.safety.service;
 
+import com.duckmoim.chat.exception.ChatErrorCode;
+import com.duckmoim.chat.infra.ChatMessageRepository;
+import com.duckmoim.chat.infra.ChatRoomRepository;
 import com.duckmoim.common.exception.BusinessException;
 import com.duckmoim.common.exception.ErrorCode;
 import com.duckmoim.companion.exception.CommentErrorCode;
@@ -43,6 +46,8 @@ public class ReportTargetReader {
   private final UserRepository userRepository;
   private final CompanionPostRepository companionPostRepository;
   private final CommentRepository commentRepository;
+  private final ChatRoomRepository chatRoomRepository;
+  private final ChatMessageRepository chatMessageRepository;
 
   public void requireExists(ReportTargetType targetType, Long targetId) {
     if (!exists(targetType, targetId)) {
@@ -55,6 +60,8 @@ public class ReportTargetReader {
       case USER -> activeUserExists(targetId);
       case POST -> companionPostRepository.existsById(targetId);
       case COMMENT -> commentRepository.existsById(targetId);
+      case ROOM -> chatRoomRepository.existsById(targetId);
+      case MESSAGE -> chatMessageRepository.existsById(targetId);
     };
   }
 
@@ -70,6 +77,8 @@ public class ReportTargetReader {
       case USER -> UserErrorCode.USER_NOT_FOUND;
       case POST -> PostErrorCode.POST_NOT_FOUND;
       case COMMENT -> CommentErrorCode.COMMENT_NOT_FOUND;
+      case ROOM -> ChatErrorCode.CHAT_ROOM_NOT_FOUND;
+      case MESSAGE -> ChatErrorCode.CHAT_MESSAGE_NOT_FOUND;
     };
   }
 }

@@ -13,5 +13,16 @@ package com.duckmoim.chat.domain;
  */
 public enum MessageStatus {
   ACTIVE,
-  DELETED
+  DELETED,
+
+  /**
+   * 신고 처리 결과로 관리자가 가렸다 (AD-09).
+   *
+   * <p><b>{@code DELETED} 와 같은 자리다.</b> 본문이 응답에서 빠지고 자리표시자만 남는다 ({@code
+   * AuthoredMessage#isVisible}). 상태가 갈린 이유는 <b>누가 지웠는지</b>가 다르기 때문이다 — 보낸 사람이 지운 것과 관리자가 가린 것은 화면
+   * 문구도 되돌릴 수 있는지도 다르다.
+   *
+   * <p>도메인-모델링.md 「6. 라이프사이클」에서 댓글의 {@code BLINDED} 와 같은 종착이다. 되돌아오는 전이가 없다.
+   */
+  BLINDED
 }

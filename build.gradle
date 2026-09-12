@@ -125,6 +125,7 @@ tasks.named('test') {
 	// 스케줄 등록 검사(NotificationDispatchBatchTest.isScheduled)는 등록 여부만 보므로
 	// 이렇게 꺼도 초록불이다. 배치를 실제로 돌리는 검사는 메서드를 직접 부른다.
 	systemProperty 'duckmoim.notification.worker.cron', '0 0 0 1 1 *'
+	systemProperty 'duckmoim.notification.expiry.cron', '0 0 0 1 1 *'
 
 	// 적체 관측도 같은 이유로 끈다 (NT-05). 이쪽은 행을 건드리지 않지만 매 분 로그를 밀어
 	// 넣어서, 로그를 단언하는 검사가 자기 것이 아닌 줄을 보게 된다.

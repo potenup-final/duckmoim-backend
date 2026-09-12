@@ -8,5 +8,21 @@ package com.duckmoim.safety.domain;
 public enum ReportTargetType {
   USER,
   POST,
-  COMMENT
+  COMMENT,
+
+  /**
+   * 채팅방 (CH-21).
+   *
+   * <p>방 화면 우측 상단에서 접수한다. <b>방 멤버인지 보지 않는다</b> — 나간 사람도 신고할 수 있다 (API-설계.md 「2-6. 신고 (Safety)」).
+   * 막으면 「괴롭히고 나가기」 길이 생기고, 괴롭힘을 당해 나간 사람이 정확히 그 모양이다.
+   */
+  ROOM,
+
+  /**
+   * 메시지 한 건 (CH-21 · SF-07).
+   *
+   * <p><b>지운 메시지도 신고할 수 있다.</b> 지운 댓글에 대해 {@code CM-14} 가 정한 것과 같다 — 소프트 삭제라 본문이 남아 관리자가 판단할 재료가
+   * 된다.
+   */
+  MESSAGE
 }
