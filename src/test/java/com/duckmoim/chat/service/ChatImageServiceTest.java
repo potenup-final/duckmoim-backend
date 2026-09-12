@@ -15,6 +15,7 @@ import com.duckmoim.chat.domain.ChatRoom;
 import com.duckmoim.chat.domain.UploadedChatImage;
 import com.duckmoim.chat.exception.ChatErrorCode;
 import com.duckmoim.chat.infra.ChatImageRepository;
+import com.duckmoim.chat.infra.ChatMessageRepository;
 import com.duckmoim.chat.infra.ChatRoomRepository;
 import com.duckmoim.common.exception.BusinessException;
 import java.time.LocalDateTime;
@@ -49,6 +50,8 @@ class ChatImageServiceTest {
 
   @Autowired private ChatImageService chatImageService;
   @Autowired private ChatImageRepository chatImageRepository;
+  @Autowired private ChatMessageSendService chatMessageSendService;
+  @Autowired private ChatMessageRepository chatMessageRepository;
   @Autowired private ChatRoomRepository chatRoomRepository;
   @Autowired private JdbcTemplate jdbcTemplate;
 
@@ -247,6 +250,121 @@ class ChatImageServiceTest {
         .isInstanceOf(BusinessException.class)
         .extracting("errorCode")
         .isEqualTo(ChatErrorCode.CHAT_IMAGE_NOT_UPLOADED);
+  }
+
+  // ── 전송에 싣기 (CH-14 의 둘째 검증 기준) ──────────────────────────────────────
+
+  /**
+   * <b>이 검사가 CH-14 의 둘째 검증 기준이다</b> — 업로드 확인 전 메시지 전송 시 <b>400</b>.
+   *
+   * <p>확정을 건너뛰면 서버는 그 객체가 S3 에 있는지조차 모른다. 그대로 실으면 <b>없는 사진을 가리키는 말풍선</b>이 남고, 그 상태는 되돌릴 길이 없다 — 메시지
+   * 삭제는 소프트 삭제라 자리표시자가 남는다.
+   */
+  @DisplayName("확정하지 않은 이미지를 실어 보내면 400 이다.")
+  @Test
+  void send_rejectsUnconfirmedImage() {
+    Long imageId = issued();
+
+    assertThatThrownBy(
+            () -> chatMessageSendService.send(roomId, memberId, newClientId(), "사진 보냄", imageId))
+        .isInstanceOf(BusinessException.class)
+        .extracting("errorCode")
+        .isEqualTo(ChatErrorCode.CHAT_IMAGE_NOT_CONFIRMED);
+  }
+
+  /** 확정까지 지난 사진은 실린다. 그 순간 상태가 {@code ATTACHED} 로 넘어가 배치가 건드리지 않는다. */
+  @DisplayName("확정한 이미지를 보내면 메시지에 실리고 ATTACHED 가 된다.")
+  @Test
+  void send_attachesConfirmedImage() {
+    Long imageId = confirmed();
+
+    Long messageId =
+        chatMessageSendService.send(roomId, memberId, newClientId(), "사진 보냄", imageId).messageId();
+
+    assertThat(chatMessageRepository.findById(messageId).orElseThrow().getImageId())
+        .isEqualTo(imageId);
+    assertThat(chatImageRepository.findById(imageId).orElseThrow().getStatus())
+        .isEqualTo(ChatImageStatus.ATTACHED);
+  }
+
+  /** 사진만 보내는 메시지가 이 티켓에서 생겼다. 본문의 {@code @NotBlank} 를 뺀 이유가 이 한 줄이다. */
+  @DisplayName("본문 없이 사진만 보낼 수 있다.")
+  @Test
+  void send_allowsImageOnlyMessage() {
+    Long imageId = confirmed();
+
+    assertThatCode(() -> chatMessageSendService.send(roomId, memberId, newClientId(), "", imageId))
+        .doesNotThrowAnyException();
+  }
+
+  /** 그렇다고 아무것도 없는 메시지를 허용하는 것은 아니다. 두 필드에 걸친 조건이라 애너테이션으로는 절반만 덮인다. */
+  @DisplayName("본문도 사진도 없으면 400 이다.")
+  @Test
+  void send_rejectsEmptyMessage() {
+    assertThatThrownBy(() -> chatMessageSendService.send(roomId, memberId, newClientId(), "", null))
+        .isInstanceOf(BusinessException.class)
+        .extracting("errorCode")
+        .isEqualTo(ChatErrorCode.CHAT_MESSAGE_EMPTY);
+  }
+
+  /** 한 사진이 두 말풍선에 실리면 하나를 지울 때 남은 쪽이 무엇을 가리키는지가 모호해진다. */
+  @DisplayName("이미 보낸 이미지는 다시 보낼 수 없다.")
+  @Test
+  void send_rejectsAlreadyAttachedImage() {
+    Long imageId = confirmed();
+    chatMessageSendService.send(roomId, memberId, newClientId(), "첫 번째", imageId);
+
+    assertThatThrownBy(
+            () -> chatMessageSendService.send(roomId, memberId, newClientId(), "두 번째", imageId))
+        .isInstanceOf(BusinessException.class)
+        .extracting("errorCode")
+        .isEqualTo(ChatErrorCode.CHAT_IMAGE_NOT_CONFIRMED);
+  }
+
+  /** 남의 사진을 번호만 알아내 싣는 것을 막는다. 없는 번호와 같은 답이라 존재를 알려주지도 않는다. */
+  @DisplayName("남이 올린 이미지는 실어 보낼 수 없다.")
+  @Test
+  void send_rejectsOtherUploaderImage() {
+    Long imageId = confirmed();
+
+    assertThatThrownBy(
+            () -> chatMessageSendService.send(roomId, hostId, newClientId(), "남의 사진", imageId))
+        .isInstanceOf(BusinessException.class)
+        .extracting("errorCode")
+        .isEqualTo(ChatErrorCode.CHAT_IMAGE_NOT_CONFIRMED);
+  }
+
+  /**
+   * <b>멱등 대조에 사진이 들어왔다</b> (PR #125 리뷰가 만든 {@code requireSameRequest}).
+   *
+   * <p>대조하지 않으면 이번 사진이 200 과 함께 사라지고, 그 사진은 {@code CONFIRMED} 로 남아 고아 정리 배치가 지운다.
+   */
+  @DisplayName("같은 식별자로 본문은 같고 사진만 다르게 보내면 409 다.")
+  @Test
+  void send_rejectsSameClientIdWithDifferentImage() {
+    String clientMessageId = newClientId();
+    chatMessageSendService.send(roomId, memberId, clientMessageId, "같은 말", null);
+
+    Long imageId = confirmed();
+
+    assertThatThrownBy(
+            () -> chatMessageSendService.send(roomId, memberId, clientMessageId, "같은 말", imageId))
+        .isInstanceOf(BusinessException.class)
+        .extracting("errorCode")
+        .isEqualTo(ChatErrorCode.CHAT_CLIENT_MESSAGE_ID_REUSED);
+  }
+
+  private Long confirmed() {
+    Long imageId = issued();
+    given(storage.findUploaded(anyString()))
+        .willReturn(Optional.of(new UploadedChatImage(JPEG, SMALL)));
+    chatImageService.confirm(roomId, memberId, imageId);
+
+    return imageId;
+  }
+
+  private String newClientId() {
+    return UUID.randomUUID().toString();
   }
 
   private Long issued() {

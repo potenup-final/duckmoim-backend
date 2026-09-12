@@ -30,6 +30,11 @@ public record MessageItemResponse(
     @JsonInclude(JsonInclude.Include.NON_NULL)
         @Schema(description = "본문. 지운 메시지면 이 키가 없다", example = "8시에 3번 출구에서 봬요")
         String content,
+    @Schema(
+            description = "함께 보낸 사진의 번호. 없으면 null. 볼 수 있는 주소는 CH-15 가 발급한다",
+            example = "7",
+            nullable = true)
+        Long imageId,
     @Schema(description = "ACTIVE 또는 DELETED", example = "ACTIVE") MessageStatus status,
     @Schema(description = "보낸 시각 (KST)", example = "2026-10-02T20:10:00+09:00")
         OffsetDateTime createdAt) {
@@ -41,6 +46,7 @@ public record MessageItemResponse(
         view.messageId(),
         MessageSenderResponse.from(view),
         view.content(),
+        view.imageId(),
         view.status(),
         toKst(view.createdAt()));
   }
@@ -60,6 +66,7 @@ public record MessageItemResponse(
         new MessageSenderResponse(
             event.senderId(), event.senderNickname(), event.senderProfileImageUrl()),
         event.status() == MessageStatus.ACTIVE ? event.content() : null,
+        event.imageId(),
         event.status(),
         toKst(event.createdAt()));
   }

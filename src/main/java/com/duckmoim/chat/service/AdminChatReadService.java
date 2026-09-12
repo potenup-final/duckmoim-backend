@@ -114,6 +114,7 @@ public class AdminChatReadService {
         message.senderId(),
         message.display(clock),
         message.content(),
+        message.imageId(),
         message.status(),
         message.createdAt());
   }

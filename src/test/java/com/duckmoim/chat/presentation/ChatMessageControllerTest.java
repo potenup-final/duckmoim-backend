@@ -2,6 +2,7 @@ package com.duckmoim.chat.presentation;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
 import static org.mockito.BDDMockito.willThrow;
@@ -73,7 +74,7 @@ class ChatMessageControllerTest {
   @DisplayName("전송에 성공하면 200 과 저장된 메시지가 돌아온다.")
   @Test
   void send() throws Exception {
-    given(chatMessageSendService.send(any(), any(), any(), any())).willReturn(sentMessage());
+    given(chatMessageSendService.send(any(), any(), any(), any(), any())).willReturn(sentMessage());
 
     mockMvc
         .perform(sendRequest(body("8시에 3번 출구에서 봬요")))
@@ -93,7 +94,7 @@ class ChatMessageControllerTest {
   @DisplayName("보낸 시각은 KST 오프셋으로 나간다.")
   @Test
   void sendReturnsKstTime() throws Exception {
-    given(chatMessageSendService.send(any(), any(), any(), any())).willReturn(sentMessage());
+    given(chatMessageSendService.send(any(), any(), any(), any(), any())).willReturn(sentMessage());
 
     mockMvc
         .perform(sendRequest(body("8시에 봬요")))
@@ -105,23 +106,48 @@ class ChatMessageControllerTest {
   @DisplayName("방 번호·식별자·본문·보낸 사람이 그대로 서비스에 넘어간다.")
   @Test
   void sendCarriesArguments() throws Exception {
-    given(chatMessageSendService.send(any(), any(), any(), any())).willReturn(sentMessage());
+    given(chatMessageSendService.send(any(), any(), any(), any(), any())).willReturn(sentMessage());
 
     mockMvc.perform(sendRequest(body("8시에 봬요"))).andExpect(status().isOk());
 
     then(chatMessageSendService)
         .should()
-        .send(eq(ROOM_ID), eq(SENDER_ID), eq(CLIENT_MESSAGE_ID), eq("8시에 봬요"));
+        .send(eq(ROOM_ID), eq(SENDER_ID), eq(CLIENT_MESSAGE_ID), eq("8시에 봬요"), isNull());
   }
 
-  @DisplayName("본문이 없으면 400 이고 서비스를 부르지 않는다.")
+  /**
+   * <b>이 검사의 판정 위치가 바뀌었다</b> (CH-14 · STAR-115).
+   *
+   * <p>전에는 본문의 {@code @NotBlank} 가 관문에서 끝냈지만, 사진만 보내는 메시지가 생겨 그 애너테이션을 뺐다. <b>400 은 그대로이고 내는 자리가
+   * {@code Message#send} 로 내려갔다</b> — 「본문과 사진 중 하나는 있어야 한다」는 두 필드에 걸친 조건이라 애너테이션 하나로 표현할 수 없다.
+   *
+   * <p>그래서 <b>「서비스를 부르지 않는다」가 더 이상 사실이 아니다.</b> 사실이 아닌 단언을 남기면 다음 사람이 그것을 계약으로 읽는다.
+   */
+  @DisplayName("본문도 사진도 없으면 400 이다.")
   @Test
   void sendWithoutContent() throws Exception {
+    willThrow(new BusinessException(ChatErrorCode.CHAT_MESSAGE_EMPTY))
+        .given(chatMessageSendService)
+        .send(any(), any(), any(), any(), any());
+
     mockMvc
         .perform(sendRequest("{\"clientMessageId\": \"" + CLIENT_MESSAGE_ID + "\"}"))
-        .andExpect(status().isBadRequest());
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.code").value(ChatErrorCode.CHAT_MESSAGE_EMPTY.getCode()));
+  }
 
-    then(chatMessageSendService).shouldHaveNoInteractions();
+  /** 사진만 보내는 메시지는 본문 없이도 관문을 지나야 한다 — 위 검사와 같은 변경의 반대쪽이다. */
+  @DisplayName("본문 없이 imageId 만 있으면 관문을 지난다.")
+  @Test
+  void sendWithImageOnly() throws Exception {
+    given(chatMessageSendService.send(any(), any(), any(), any(), any())).willReturn(sentMessage());
+
+    mockMvc
+        .perform(
+            sendRequest("{\"clientMessageId\": \"" + CLIENT_MESSAGE_ID + "\", \"imageId\": 7}"))
+        .andExpect(status().isOk());
+
+    then(chatMessageSendService).should().send(any(), any(), any(), eq(""), eq(7L));
   }
 
   /** 식별자가 없으면 재시도를 알아볼 수 없다 (I-20). 서버가 만들어 주지 않는다 — 그러면 매 요청이 새 메시지가 된다. */
@@ -151,7 +177,7 @@ class ChatMessageControllerTest {
   void sendRejected(ChatErrorCode errorCode) throws Exception {
     willThrow(new BusinessException(errorCode))
         .given(chatMessageSendService)
-        .send(any(), any(), any(), any());
+        .send(any(), any(), any(), any(), any());
 
     mockMvc
         .perform(sendRequest(body("8시에 봬요")))
@@ -297,6 +323,7 @@ class ChatMessageControllerTest {
         SENDER_ID,
         new AuthorDisplay("덕후1", null, null),
         "8시에 3번 출구에서 봬요",
+        null,
         MessageStatus.ACTIVE,
         LocalDateTime.of(2026, 10, 2, 11, 10));
   }
@@ -306,6 +333,7 @@ class ChatMessageControllerTest {
         MESSAGE_ID,
         SENDER_ID,
         new AuthorDisplay("덕후1", null, null),
+        null,
         null,
         MessageStatus.DELETED,
         LocalDateTime.of(2026, 10, 2, 11, 10));
@@ -320,7 +348,12 @@ class ChatMessageControllerTest {
 
   private SentMessage sentMessage() {
     return new SentMessage(
-        MESSAGE_ID, ROOM_ID, SENDER_ID, "8시에 3번 출구에서 봬요", LocalDateTime.of(2026, 10, 2, 11, 10));
+        MESSAGE_ID,
+        ROOM_ID,
+        SENDER_ID,
+        "8시에 3번 출구에서 봬요",
+        null,
+        LocalDateTime.of(2026, 10, 2, 11, 10));
   }
 
   private String body(String content) {

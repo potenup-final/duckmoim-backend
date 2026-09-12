@@ -98,7 +98,7 @@ class ChatStreamServiceTest {
     RecordingSession session = new RecordingSession();
     chatStreamService.open(roomId, memberId, session);
 
-    chatMessageSendService.send(roomId, hostId, newClientId(), "8시에 3번 출구에서 봬요");
+    chatMessageSendService.send(roomId, hostId, newClientId(), "8시에 3번 출구에서 봬요", null);
 
     session.awaitFirst();
     assertThat(session.received())
@@ -118,7 +118,7 @@ class ChatStreamServiceTest {
     RecordingSession session = new RecordingSession();
     chatStreamService.open(roomId, memberId, session);
 
-    chatMessageSendService.send(roomId, hostId, newClientId(), "안녕하세요");
+    chatMessageSendService.send(roomId, hostId, newClientId(), "안녕하세요", null);
 
     session.awaitFirst();
     assertThat(session.received().get(0).senderNickname()).startsWith("방장");
@@ -134,7 +134,7 @@ class ChatStreamServiceTest {
     long otherPostId = aCompanionPost().hostId(memberId).meetAt(MEET_AT_UTC).insert(jdbcTemplate);
     long otherRoomId =
         chatRoomRepository.saveAndFlush(ChatRoom.openFor(otherPostId, memberId)).getId();
-    chatMessageSendService.send(otherRoomId, memberId, newClientId(), "남의 방 말");
+    chatMessageSendService.send(otherRoomId, memberId, newClientId(), "남의 방 말", null);
 
     TimeUnit.MILLISECONDS.sleep(300);
     assertThat(session.received()).isEmpty();
@@ -175,7 +175,7 @@ class ChatStreamServiceTest {
     assertThat(leaving.closed()).isTrue();
     assertThat(chatStreamService.connectionCount(roomId)).isZero();
 
-    chatMessageSendService.send(roomId, hostId, newClientId(), "나간 뒤의 말");
+    chatMessageSendService.send(roomId, hostId, newClientId(), "나간 뒤의 말", null);
 
     TimeUnit.MILLISECONDS.sleep(300);
     assertThat(leaving.received()).isEmpty();
@@ -191,7 +191,7 @@ class ChatStreamServiceTest {
     chatStreamService.open(roomId, memberId, leaving);
 
     chatRoomLeaveService.leave(roomId, memberId);
-    chatMessageSendService.send(roomId, hostId, newClientId(), "남은 사람에게만");
+    chatMessageSendService.send(roomId, hostId, newClientId(), "남은 사람에게만", null);
 
     staying.awaitFirst();
     assertThat(staying.received()).hasSize(1);
@@ -207,7 +207,7 @@ class ChatStreamServiceTest {
     chatStreamService.open(roomId, hostId, first);
     chatStreamService.open(roomId, memberId, second);
 
-    chatMessageSendService.send(roomId, hostId, newClientId(), "둘 다 받는다");
+    chatMessageSendService.send(roomId, hostId, newClientId(), "둘 다 받는다", null);
 
     first.awaitFirst();
     second.awaitFirst();
@@ -287,7 +287,7 @@ class ChatStreamServiceTest {
     Awaitility.await().atMost(5, TimeUnit.SECONDS).until(leaving::closed);
     assertThat(chatStreamService.connectionCount(roomId)).isEqualTo(1);
 
-    chatMessageSendService.send(roomId, hostId, newClientId(), "나간 뒤의 말");
+    chatMessageSendService.send(roomId, hostId, newClientId(), "나간 뒤의 말", null);
 
     staying.awaitFirst();
     assertThat(leaving.received()).isEmpty();
@@ -320,7 +320,7 @@ class ChatStreamServiceTest {
     chatStreamService.open(roomId, hostId, staying);
 
     chatFanout.publish(roomId, chatFanoutCodec.encodeMemberLeft(memberId));
-    chatMessageSendService.send(roomId, hostId, newClientId(), "진짜 말풍선");
+    chatMessageSendService.send(roomId, hostId, newClientId(), "진짜 말풍선", null);
 
     staying.awaitFirst();
     assertThat(staying.received()).hasSize(1);

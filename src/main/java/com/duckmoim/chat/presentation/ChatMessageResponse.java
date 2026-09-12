@@ -20,6 +20,7 @@ public record ChatMessageResponse(
     @Schema(description = "방 번호", example = "3") Long roomId,
     @Schema(description = "보낸 사람의 회원번호", example = "7") Long senderId,
     @Schema(description = "본문", example = "8시에 3번 출구에서 봬요") String content,
+    @Schema(description = "함께 보낸 사진의 번호. 없으면 null", example = "7", nullable = true) Long imageId,
     @Schema(description = "보낸 시각 (KST)", example = "2026-09-11T20:10:00+09:00")
         OffsetDateTime createdAt) {
 
@@ -31,6 +32,7 @@ public record ChatMessageResponse(
         message.roomId(),
         message.senderId(),
         message.content(),
+        message.imageId(),
         toKst(message.createdAt()));
   }
 
