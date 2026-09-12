@@ -135,6 +135,25 @@ public class NotificationOutbox extends BaseEntity {
     this.nextAttemptAt = nextAttemptAt;
   }
 
+  /**
+   * 이 건을 내가 맡았다고 표시한다 (NT-04).
+   *
+   * <p><b>새 상태도 새 컬럼도 두지 않는다.</b> {@link #nextAttemptAt} 의 뜻이 이미 「이 시각 전에는 집지 마라」라서, 선점은 그 값을 리스
+   * 만료로 미는 일이 된다. {@code CLAIMED} 상태를 새로 만들면 <b>선점한 워커가 죽었을 때 그 상태에서 빠져나올 길을 따로 만들어야 한다</b> — 리스는
+   * 시각이라 저절로 풀린다.
+   *
+   * <p><b>{@link #attempts} 를 올리지 않는다.</b> 선점은 시도가 아니다. 올리면 성공한 발송도 재시도를 한 번 까먹어서 NT-03 의 「3회」가
+   * 실제로는 2회가 된다.
+   *
+   * @param leaseUntil 이 시각까지는 남이 집지 않는다. 지나면 저절로 다시 집힌다
+   */
+  public void claim(LocalDateTime leaseUntil) {
+    requirePending();
+    Objects.requireNonNull(leaseUntil, "리스 만료 시각이 필요하다.");
+
+    this.nextAttemptAt = leaseUntil;
+  }
+
   /** 시도를 다 썼는지 (NT-03). 다 쓴 건은 DLQ 로 옮긴다. */
   public boolean hasExhausted(int maxAttempts) {
     return attempts >= maxAttempts;
