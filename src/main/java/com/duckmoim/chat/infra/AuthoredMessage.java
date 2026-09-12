@@ -17,11 +17,13 @@ import java.time.LocalDateTime;
  *
  * <p><b>탈퇴한 사람도 걸러내지 않는다.</b> {@link #display} 가 {@code AuthorDisplay}(AU-11)로 자리표시자를 만든다.
  *
+ * @param roomId 팬아웃 채널을 고르는 값이다 (CH-10). 목록 조회는 이미 방을 알고 있어 쓰지 않는다
  * @param status 지운 메시지인지 (CH-12). 본문 키를 뺄지가 이 값으로 갈린다
  * @param senderStatus 익명화 판정의 입력이다. {@code nickname == null} 로 대신하지 않는다
  */
 public record AuthoredMessage(
     Long messageId,
+    Long roomId,
     Long senderId,
     String nickname,
     String profileImageUrl,

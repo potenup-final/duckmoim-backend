@@ -4,12 +4,14 @@ import com.duckmoim.auth.domain.AuthUser;
 import com.duckmoim.chat.service.ChatMessageDeleteService;
 import com.duckmoim.chat.service.ChatMessageQueryService;
 import com.duckmoim.chat.service.ChatMessageSendService;
+import com.duckmoim.chat.service.ChatStreamService;
 import com.duckmoim.chat.service.MessageSlice;
 import com.duckmoim.chat.service.SentMessage;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.MediaType;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -19,9 +21,10 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 /**
- * 채팅 메시지 (CH-07 · CH-08 · CH-09 · CH-12).
+ * 채팅 메시지 (CH-07 · CH-08 · CH-09 · CH-10 · CH-12).
  *
  * <p><b>이 컨트롤러가 정본에 전송 경로를 연다.</b> API-설계.md 2-11 이 <i>"전송을 막는 409 자체는 이 절에 없다 — {@code Message}
  * (CH-07)가 아직 없어 전송 엔드포인트가 없고, 그 티켓이 문을 연다"</i> 고 적어 두었다. 위키 반영은 별도 클론에서 따라온다.
@@ -42,9 +45,18 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 public class ChatMessageController {
 
+  /**
+   * 연결을 열어 두는 시간.
+   *
+   * <p>무한이 아닌 이유는 죽은 연결을 언젠가는 걷어내야 해서다. 끊긴 뒤를 잇는 것은 {@code CH-11}(STAR-114)이고, 브라우저의 {@code
+   * EventSource} 는 끊기면 스스로 다시 붙는다.
+   */
+  private static final long STREAM_TIMEOUT_MILLIS = 30 * 60 * 1000L;
+
   private final ChatMessageSendService chatMessageSendService;
   private final ChatMessageQueryService chatMessageQueryService;
   private final ChatMessageDeleteService chatMessageDeleteService;
+  private final ChatStreamService chatStreamService;
 
   /**
    * 메시지를 보낸다 (CH-07 · CH-08).
@@ -109,5 +121,40 @@ public class ChatMessageController {
       @AuthenticationPrincipal AuthUser authUser) {
 
     chatMessageDeleteService.delete(roomId, messageId, authUser.userId());
+  }
+
+  /**
+   * 그 방의 메시지를 실시간으로 받는다 (CH-10).
+   *
+   * <p><b>응답이 끝나지 않는 요청이다.</b> {@code text/event-stream} 으로 열어 두고 사건이 생길 때마다 한 덩어리씩 흘려보낸다 — {@code
+   * SseEmitter} 를 반환하면 스프링이 그 요청을 비동기로 돌려둔다.
+   *
+   * <p><b>타임아웃을 30분으로 둔다.</b> 무한으로 두면 죽은 연결이 영원히 남고, 너무 짧으면 재연결이 잦아진다. 끊긴 뒤 빠진 것을 메우는 일은 {@code
+   * CH-11}(STAR-114) 몫이라, 여기서는 <b>끊기는 것 자체를 정상으로 다룬다</b> — 브라우저의 {@code EventSource} 가 알아서 다시 붙는다.
+   *
+   * <p><b>ALB 의 유휴 타임아웃(기본 60초)보다 짧게 무언가를 보내야 한다.</b> 대화가 없는 방은 한 시간도 조용한데, 그러면 ALB 가 먼저 끊는다. 연결 직후
+   * 주석 한 줄을 보내 선로를 여는 것까지가 이 메서드이고, 이어지는 하트비트는 {@code ChatStreamHeartbeat} 가 진다.
+   *
+   * <p>멤버 판정을 여기서 하지 않는다. 관문은 {@code SIGNUP} 까지만 보고 방 멤버 여부는 service 가 본다.
+   */
+  @Operation(
+      summary = "메시지 실시간 수신",
+      description =
+          "방 멤버만 열 수 있다. text/event-stream 으로 메시지가 생길 때마다 밀어 준다. "
+              + "id 줄이 messageId 라 브라우저가 재연결할 때 Last-Event-ID 로 돌려준다.")
+  @GetMapping(path = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+  public SseEmitter stream(@PathVariable Long roomId, @AuthenticationPrincipal AuthUser authUser) {
+
+    SseEmitter emitter = new SseEmitter(STREAM_TIMEOUT_MILLIS);
+    Runnable release =
+        chatStreamService.open(roomId, authUser.userId(), new SseChatStreamSession(emitter));
+
+    // 셋 다 걸어야 한다. 정상 종료(complete)·타임아웃·오류는 서로 다른 콜백이고,
+    // 하나라도 빠지면 그 경로로 끝난 연결이 목록에 남아 방마다 쌓인다.
+    emitter.onCompletion(release);
+    emitter.onTimeout(release);
+    emitter.onError(error -> release.run());
+
+    return emitter;
   }
 }
