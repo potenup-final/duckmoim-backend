@@ -1,5 +1,7 @@
 package com.duckmoim.notification.service;
 
+import com.duckmoim.notification.domain.NotificationDelivery;
+import com.duckmoim.notification.infra.NotificationPushSender;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
@@ -41,6 +43,7 @@ public class NotificationDispatchBatch {
   private static final int MAX_CHUNKS = 100;
 
   private final NotificationDispatchService notificationDispatchService;
+  private final NotificationPushSender pushSender;
   private final Clock clock;
 
   /** 한 번 조회로 집을 최대 건수. 프로퍼티인 것은 이 반복이 몇 건짜리 테스트로 증명되어야 하기 때문이다. */
@@ -48,10 +51,12 @@ public class NotificationDispatchBatch {
 
   public NotificationDispatchBatch(
       NotificationDispatchService notificationDispatchService,
+      NotificationPushSender pushSender,
       Clock clock,
       @Value("${duckmoim.notification.worker.chunk}") int chunk) {
 
     this.notificationDispatchService = notificationDispatchService;
+    this.pushSender = pushSender;
     this.clock = clock;
     this.chunk = chunk;
   }
@@ -120,7 +125,7 @@ public class NotificationDispatchBatch {
     try {
       return notificationDispatchService
           .deliverInApp(outboxId)
-          .filter(delivery -> notificationDispatchService.markDelivered(delivery.outboxId()))
+          .filter(this::pushThenMark)
           .isPresent();
 
     } catch (Exception exception) {
@@ -167,5 +172,17 @@ public class NotificationDispatchBatch {
    */
   private LocalDateTime nowInUtc() {
     return LocalDateTime.ofInstant(clock.instant(), ZoneOffset.UTC);
+  }
+
+  /**
+   * T2 · T3 — 푸시를 보내고 결과를 적는다 (ADR 0010).
+   *
+   * <p><b>푸시가 트랜잭션 밖에서 돈다.</b> 여기서 예외가 나면 T1 이 만든 인앱 알림은 이미 커밋돼 남아 있고, 아웃박스 행만 {@code PENDING} 으로
+   * 남아 다음 주기에 <b>인앱을 건너뛰고 푸시만</b> 재시도한다.
+   */
+  private boolean pushThenMark(NotificationDelivery delivery) {
+    pushSender.send(delivery);
+
+    return notificationDispatchService.markDelivered(delivery.outboxId());
   }
 }

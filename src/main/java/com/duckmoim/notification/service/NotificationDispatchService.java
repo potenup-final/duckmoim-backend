@@ -3,6 +3,7 @@ package com.duckmoim.notification.service;
 import com.duckmoim.common.domain.NotificationOutbox;
 import com.duckmoim.common.infra.NotificationOutboxRepository;
 import com.duckmoim.notification.domain.Notification;
+import com.duckmoim.notification.domain.NotificationDelivery;
 import com.duckmoim.notification.domain.NotificationOutboxDlq;
 import com.duckmoim.notification.infra.NotificationOutboxDlqRepository;
 import com.duckmoim.notification.infra.NotificationRepository;
