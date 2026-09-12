@@ -23,6 +23,15 @@ import org.springframework.transaction.annotation.Transactional;
  * <p><b>제재 중에도 나갈 수 있다.</b> 관문 쪽 판단이고 {@code SanctionGateConfig} 가 이 경로를 뺀다 — 제재가 막는 것은 새로 쓰는 일이지
  * 관계를 끊는 일이 아니다 (도메인-모델링.md 「3.3 경계를 넘는 불변식」). 그래서 여기에 제재 판정이 없는 것이 맞다.
  *
+ * <p><b>나간 사람의 실시간 연결을 끊는다</b> (CH-10 · CH-18). 스트림은 붙는 순간 한 번만 멤버를 보고 그 뒤로 몇 시간 열려 있어서, 여기서 끊지 않으면
+ * <b>나간 사람에게 대화가 계속 흘러간다</b> — 목록 조회는 매 요청 판정하므로 같은 구멍이 없다.
+ *
+ * <p><b>미는 시점마다 멤버를 다시 보는 방법도 있었다.</b> 그쪽은 이 클래스가 스트림을 몰라도 되는 대신 <b>메시지마다 방을 조회</b>한다. 퇴장은 드물고 전송은
+ * 잦으니 드문 쪽에 비용을 두었다 (STAR-113 에서 결정).
+ *
+ * <p><b>끊는 것이 트랜잭션 안이다.</b> 밖으로 빼면 커밋과 끊기 사이에 창이 생기고, 그 사이에 온 메시지가 나간 사람에게 간다. 반대로 롤백되면 연결만 끊기는데
+ * 그쪽은 손해가 작다 — 클라이언트가 다시 붙으면 되고, 그때 멤버 판정이 다시 돈다.
+ *
  * <p><b>모집글을 고치지 않는다.</b> 한 트랜잭션에서 바뀌는 애그리게이트는 방 하나이고 모집글은 방장을 알기 위해 읽기만 한다 — 나간 사람이 그 글의 댓글 작성자라는
  * 사실도 그대로 둔다. 퇴장은 방에서 나가는 일이지 댓글을 지우는 일이 아니다.
  */
@@ -32,6 +41,7 @@ public class ChatRoomLeaveService {
 
   private final ChatRoomRepository chatRoomRepository;
   private final CompanionPostRepository companionPostRepository;
+  private final ChatStreamService chatStreamService;
 
   /**
    * 나간다. 돌아오는 시점에 이미 멤버가 아니다 (CH-04).
@@ -57,5 +67,6 @@ public class ChatRoomLeaveService {
             .orElseThrow(() -> new BusinessException(ChatErrorCode.CHAT_ROOM_NOT_FOUND));
 
     room.leave(requesterId, post.getHostId());
+    chatStreamService.disconnect(roomId, requesterId);
   }
 }
