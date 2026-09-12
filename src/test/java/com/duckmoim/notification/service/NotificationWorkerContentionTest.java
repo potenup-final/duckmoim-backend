@@ -235,7 +235,7 @@ class NotificationWorkerContentionTest {
   private void workRound() {
     for (Long id : claimStrategy.claim(NOW, CHUNK)) {
       try {
-        notificationDispatchService.dispatch(id);
+        dispatch(id);
       } catch (Exception collision) {
         notificationDispatchService.recordFailure(id, NOW);
       }
@@ -310,7 +310,7 @@ class NotificationWorkerContentionTest {
 
       for (Long id : ids) {
         try {
-          if (notificationDispatchService.dispatch(id)) {
+          if (dispatch(id)) {
             sent++;
           } else {
             skipped++;
@@ -373,4 +373,17 @@ class NotificationWorkerContentionTest {
    * @param collided 알림을 만들다 유니크 제약에 부딪혀 롤백된 횟수
    */
   private record Run(int sent, int skipped, int collided, long elapsedMillis) {}
+
+  /**
+   * 운영의 세 단계를 그대로 편다 (ADR 0010) — 인앱을 만들고(T1), 푸시를 보내고(T2), 결과를 적는다(T3).
+   *
+   * <p>지금 채널이 하나라 T2 가 비어 있다. 그래도 <b>배치와 같은 순서로 부르는 것</b>이 이 검사의 전제다 — 다르게 부르면 여기서 재는 것이 운영에서 도는 것과
+   * 달라진다.
+   */
+  private boolean dispatch(long outboxId) {
+    return notificationDispatchService
+        .deliverInApp(outboxId)
+        .filter(delivery -> notificationDispatchService.markDelivered(delivery.outboxId()))
+        .isPresent();
+  }
 }
