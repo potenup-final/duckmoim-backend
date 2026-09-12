@@ -141,9 +141,21 @@ class EndpointGradeTest {
           // 저쪽은 GET 이라 SIGNUP_READ, 이쪽은 POST 라 SIGNUP_WRITE 다.
           // 방 멤버인지는 관문이 아니라 service 가 본다.
           new Endpoint(HttpMethod.POST, "/api/v1/chat-rooms/404404/messages", Grade.SIGNUP),
+          // 목록·삭제 (CH-09 · CH-12). GET 은 SIGNUP_READ 가, DELETE 는 SIGNUP_WRITE 가 덮는다 —
+          // 같은 등급인데 다른 배열이라 둘 다 표에 올린다.
+          new Endpoint(HttpMethod.GET, "/api/v1/chat-rooms/404404/messages", Grade.SIGNUP),
+          new Endpoint(
+              HttpMethod.DELETE, "/api/v1/chat-rooms/404404/messages/404404", Grade.SIGNUP),
           // 퇴장 (CH-04). 전송과 같은 SIGNUP_WRITE 줄이다. 제재 중에도 열리는 것은
           // 등급이 아니라 관문 예외라 SanctionGateTest 가 본다.
           new Endpoint(HttpMethod.DELETE, "/api/v1/chat-rooms/404404/members/me", Grade.SIGNUP),
+          // 아직 없는 경로다. SIGNUP_READ 가 ** 라서 한 칸 더 깊어도 덮인다는 것을 못박는다
+          // (PR #131 리뷰). 이 표는 손으로 유지하는 것이라 새 경로를 자동으로 잡아 주지
+          // 않고, 그래서 규칙 쪽이 fail-closed 여야 한다 — CH-11 의 스트림, CH-13 의 읽은
+          // 지점, CH-15 의 이미지 서명이 전부 이 깊이다. 판정이 401·403 만 보므로 핸들러가
+          // 없어도 등급 검사에는 문제가 없다 (가입을 마친 계정은 404 이고 그것도 통과다).
+          new Endpoint(
+              HttpMethod.GET, "/api/v1/chat-rooms/404404/messages/404404/nothing", Grade.SIGNUP),
           // 2-6 신고
           new Endpoint(HttpMethod.POST, "/api/v1/reports", Grade.SIGNUP),
 

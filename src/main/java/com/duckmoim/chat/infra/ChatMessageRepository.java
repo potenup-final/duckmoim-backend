@@ -7,10 +7,11 @@ import org.springframework.data.jpa.repository.JpaRepository;
 /**
  * 메시지 저장소 (CH-07).
  *
- * <p><b>목록 조회 메서드를 미리 만들지 않는다.</b> 「한 방의 메시지를 최신부터 거슬러」(CH-09)는 커서의 정렬 키와 페이지 크기가 정해져야 모양이 서고, 그것은
- * STAR-112 의 결정이다. {@code ChatRoomRepository} 가 목록 쿼리를 CH-05 에 넘긴 것과 같은 자리다.
+ * <p><b>목록 조회는 {@link ChatMessageQueryRepository} 가 진다</b> (CH-09 · STAR-112). 커서 조건이 있을 때만 붙어서 메서드
+ * 이름으로 만들어지지 않는다 — {@code ChatRoomRepository} 가 {@code ChatRoomQueryRepository} 를 상속한 것과 같은 배치다.
  */
-public interface ChatMessageRepository extends JpaRepository<Message, Long> {
+public interface ChatMessageRepository
+    extends JpaRepository<Message, Long>, ChatMessageQueryRepository {
 
   /**
    * 같은 사람이 같은 식별자로 이미 보낸 것이 있는지 (I-20).

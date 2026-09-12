@@ -1,8 +1,12 @@
 package com.duckmoim.chat.domain;
 
+import com.duckmoim.chat.exception.ChatErrorCode;
 import com.duckmoim.common.domain.BaseEntity;
+import com.duckmoim.common.exception.BusinessException;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
@@ -29,8 +33,7 @@ import lombok.NoArgsConstructor;
  * ChatRoom#isWritable} 이 그 판정을 쥐고, 서비스가 모집글을 읽어 넘긴다 — {@code ChatRoomInviteService} 가 방장 여부를 그렇게
  * 다루는 것과 같은 배치다.
  *
- * <p><b>상태가 없다.</b> 도메인-모델링.md 6장의 {@code Message} 전이는 삭제(CH-12)와 블라인드(AD-09)인데 둘 다 다른 티켓이다. 지금 이
- * 애그리게이트가 지나는 상태는 「보냈다」 하나뿐이라 저장할 것이 없다.
+ * <p><b>상태가 생겼다</b> (CH-12 · STAR-112). 도메인-모델링.md 6장의 전이 둘 중 삭제가 들어왔고 블라인드(AD-09)는 아직이다.
  */
 @Entity
 @Table(name = "chat_message")
@@ -72,11 +75,22 @@ public class Message extends BaseEntity {
   @Column(name = "content", nullable = false, length = MAX_CONTENT_LENGTH)
   private String content;
 
+  /**
+   * 지웠는가 (CH-12).
+   *
+   * <p><b>본문을 비우지 않는다.</b> 조회에서 사라지는 것은 응답을 조립하는 쪽이 {@code status != ACTIVE} 를 보고 본문 키를 빼기 때문이고,
+   * 본문이 남아야 신고(CH-21)와 관리자 열람(AD-08)이 판단 재료를 갖는다 — {@code Comment#blind} 가 같은 이유로 같은 것을 한다.
+   */
+  @Enumerated(EnumType.STRING)
+  @Column(name = "status", nullable = false, length = 20)
+  private MessageStatus status;
+
   private Message(Long roomId, Long senderId, String clientMessageId, String content) {
     this.roomId = roomId;
     this.senderId = senderId;
     this.clientMessageId = clientMessageId;
     this.content = content;
+    this.status = MessageStatus.ACTIVE;
   }
 
   /**
@@ -87,5 +101,36 @@ public class Message extends BaseEntity {
   public static Message send(Long roomId, Long senderId, String clientMessageId, String content) {
 
     return new Message(roomId, senderId, clientMessageId, content);
+  }
+
+  /**
+   * 작성자가 지운다 (CH-12).
+   *
+   * <p><b>작성자 본인만이다. 방장도 못 지운다.</b> 댓글(CM-10)이 작성자와 방장 둘에게 준 것과 갈리는데, 명세의 상세가 「작성자 본인만」이고 방장에게 남의
+   * 말을 지울 권한을 주기로 한 결정이 어디에도 없다. <b>부적절한 메시지는 신고(CH-21)와 블라인드(AD-09)로 간다</b> — 방 안의 권력이 아니라 운영이
+   * 판단한다.
+   *
+   * <p><b>이미 지운 것을 다시 지우면 404 다.</b> API-컨벤션.md 「Validation 규칙」의 <i>"소프트 삭제된 리소스는 404 로 취급한다"</i> 를
+   * 그대로 따른다. {@code Comment#blind} 가 409 를 쓴 것은 부르는 쪽이 관리자라 그 본문까지 읽을 수 있어 「없다」가 사실과 달랐기 때문이고, 여기는
+   * 그 사정이 없다 — 지운 사람에게 그 메시지는 이미 없는 것이다.
+   *
+   * <p><b>방 멤버인지는 여기서 보지 않는다.</b> 방이 아는 사실이라 이 애그리게이트 밖이다 ({@code ChatRoom#isMember}). 서비스가 읽어 판정한다
+   * — {@code ChatRoomInviteService} 가 방장 여부를 그렇게 다루는 것과 같은 배치다.
+   */
+  public void deleteBy(Long requesterId) {
+    if (status != MessageStatus.ACTIVE) {
+      throw new BusinessException(ChatErrorCode.CHAT_MESSAGE_NOT_FOUND);
+    }
+
+    if (!senderId.equals(requesterId)) {
+      throw new BusinessException(ChatErrorCode.CHAT_MESSAGE_NOT_SENDER);
+    }
+
+    this.status = MessageStatus.DELETED;
+  }
+
+  /** 본문을 응답에 실어도 되는가 (CH-12). 지운 메시지는 자리표시자만 남는다. */
+  public boolean isVisible() {
+    return status == MessageStatus.ACTIVE;
   }
 }
