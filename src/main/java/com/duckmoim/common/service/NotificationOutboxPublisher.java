@@ -2,6 +2,7 @@ package com.duckmoim.common.service;
 
 import com.duckmoim.common.domain.NotificationKind;
 import com.duckmoim.common.domain.NotificationOutbox;
+import com.duckmoim.common.domain.NotificationTarget;
 import com.duckmoim.common.infra.NotificationOutboxRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -35,7 +36,11 @@ public class NotificationOutboxPublisher {
    */
   @Transactional(propagation = Propagation.MANDATORY)
   public void postCommented(Long hostId, Long authorId, Long postId, Long commentId) {
-    publish(NotificationKind.POST_COMMENTED, hostId, authorId, postId, commentId);
+    publish(
+        NotificationKind.POST_COMMENTED,
+        hostId,
+        authorId,
+        NotificationTarget.ofComment(postId, commentId));
   }
 
   /**
@@ -46,7 +51,11 @@ public class NotificationOutboxPublisher {
    */
   @Transactional(propagation = Propagation.MANDATORY)
   public void commentReplied(Long parentAuthorId, Long authorId, Long postId, Long commentId) {
-    publish(NotificationKind.COMMENT_REPLIED, parentAuthorId, authorId, postId, commentId);
+    publish(
+        NotificationKind.COMMENT_REPLIED,
+        parentAuthorId,
+        authorId,
+        NotificationTarget.ofComment(postId, commentId));
   }
 
   /**
@@ -56,13 +65,13 @@ public class NotificationOutboxPublisher {
    * <p>판정을 여기 두는 이유는 넣는 쪽이 둘이 되기 때문이다. 채팅 메시지가 붙을 때 같은 규칙을 다시 쓰게 하면 한쪽이 빠뜨린다.
    */
   private void publish(
-      NotificationKind kind, Long recipientId, Long actorId, Long postId, Long commentId) {
+      NotificationKind kind, Long recipientId, Long actorId, NotificationTarget target) {
 
     // 수신자가 없는 것과 자기 자신인 것을 섞지 않는다. null 은 아래 엔티티가 거른다.
     if (recipientId != null && recipientId.equals(actorId)) {
       return;
     }
 
-    notificationOutboxRepository.save(NotificationOutbox.of(kind, recipientId, postId, commentId));
+    notificationOutboxRepository.save(NotificationOutbox.of(kind, recipientId, target));
   }
 }

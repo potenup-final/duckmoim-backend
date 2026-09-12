@@ -49,11 +49,22 @@ public class NotificationOutboxDlq extends BaseEntity {
   @Column(name = "kind", nullable = false, updatable = false, length = 20)
   private NotificationKind kind;
 
-  @Column(name = "post_id", nullable = false, updatable = false)
+  /**
+   * 가리키던 대상. 원본 아웃박스 행은 지워지므로 여기 없으면 무엇을 못 보냈는지 복원할 수 없다.
+   *
+   * <p>채팅 알림은 <b>메시지마다 한 건</b>이라 {@code messageId} 가 없으면 같은 방에서 온 실패끼리 구분되지 않는다 (V806).
+   */
+  @Column(name = "post_id", updatable = false)
   private Long postId;
 
-  @Column(name = "comment_id", nullable = false, updatable = false)
+  @Column(name = "comment_id", updatable = false)
   private Long commentId;
+
+  @Column(name = "room_id", updatable = false)
+  private Long roomId;
+
+  @Column(name = "message_id", updatable = false)
+  private Long messageId;
 
   /** 몇 번 시도하고 포기했는지. 상한이 설정값이라 나중에 바뀌어도 그때의 값이 남는다. */
   @Column(name = "attempts", nullable = false, updatable = false)
@@ -67,8 +78,10 @@ public class NotificationOutboxDlq extends BaseEntity {
     this.outboxId = outbox.getId();
     this.recipientId = outbox.getRecipientId();
     this.kind = outbox.getKind();
-    this.postId = outbox.getPostId();
-    this.commentId = outbox.getCommentId();
+    this.postId = outbox.target().postId();
+    this.commentId = outbox.target().commentId();
+    this.roomId = outbox.target().roomId();
+    this.messageId = outbox.target().messageId();
     this.attempts = outbox.getAttempts();
     this.failedAt = failedAt;
   }
