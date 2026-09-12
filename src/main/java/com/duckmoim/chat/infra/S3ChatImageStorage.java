@@ -37,7 +37,7 @@ import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignReques
  */
 @Slf4j
 @Component
-@ConditionalOnExpression("'${duckmoim.s3.bucket:}' != ''")
+@ConditionalOnExpression("'${duckmoim.s3.chat-bucket:}' != ''")
 public class S3ChatImageStorage implements ChatImageStorage {
 
   private final S3Client s3Client;
@@ -48,7 +48,7 @@ public class S3ChatImageStorage implements ChatImageStorage {
   public S3ChatImageStorage(
       S3Client s3Client,
       S3Presigner presigner,
-      @Value("${duckmoim.s3.bucket}") String bucket,
+      @Value("${duckmoim.s3.chat-bucket}") String bucket,
       @Value("${duckmoim.s3.presign-ttl}") Duration presignTtl) {
     this.s3Client = s3Client;
     this.presigner = presigner;
