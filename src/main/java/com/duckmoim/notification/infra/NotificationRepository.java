@@ -2,6 +2,8 @@ package com.duckmoim.notification.infra;
 
 import com.duckmoim.notification.domain.Notification;
 import java.time.LocalDateTime;
+import java.util.List;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.Repository;
@@ -109,4 +111,32 @@ public interface NotificationRepository
           + " where n.recipientId = :recipientId"
           + " and n.readAt is null")
   int markAllRead(@Param("recipientId") Long recipientId, @Param("now") LocalDateTime now);
+
+  /**
+   * 만료된 알림의 번호를 오래된 것부터 {@code chunk} 건까지 집는다 (NT-11a).
+   *
+   * <p><b>기준이 읽음이 아니라 생성 시각이다.</b> 읽지 않은 채로 30일이 지나도 파기된다 (도메인-모델링.md 「6. 라이프사이클」).
+   *
+   * <p><b>{@code created_at} 으로 정렬하는 것은 성능이 아니라 안전이다.</b> {@code V805} 의 인덱스가 그 컬럼 하나이고, 두 인스턴스가
+   * <b>같은 순서로</b> 읽어야 락 획득 순서가 같아져 데드락이 나지 않는다 — 이 배치는 중복 실행을 잠금으로 막지 않는다 (ADR 0009). 정렬을 빼면 실행 계획이
+   * 바뀌는 날 그 근거가 조용히 사라진다.
+   *
+   * <p>번호만 읽는다. 지우는 데 필요한 것이 그것뿐이고, 엔티티를 띄우면 청크만큼 영속성 컨텍스트에 쌓인다.
+   */
+  @Query("select n.id from Notification n where n.createdAt < :cutoff order by n.createdAt")
+  List<Long> findExpiredIds(@Param("cutoff") LocalDateTime cutoff, Pageable pageable);
+
+  /**
+   * 집어 둔 번호를 지운다 (NT-11a).
+   *
+   * <p><b>조건을 {@code created_at} 으로 다시 걸지 않는다.</b> 번호는 방금 그 조건으로 뽑은 것이고, 다시 걸면 같은 인덱스를 두 번 타면서 얻는
+   * 것이 없다. 그 사이에 남이 먼저 지웠으면 그 행이 빠진 채로 돌아올 뿐이고, <b>그것도 맞는 결과다</b> — 지우는 일은 멱등이라 누가 지웠는지가 중요하지 않다.
+   *
+   * <p><b>부르는 쪽에 트랜잭션이 있어야 한다</b> — service 의 {@code @Transactional} 안에서만 부른다.
+   *
+   * @return 실제로 지워진 행 수. 집은 수보다 적을 수 있다
+   */
+  @Modifying(clearAutomatically = true)
+  @Query("delete from Notification n where n.id in :ids")
+  int deleteAllByIdIn(@Param("ids") List<Long> ids);
 }
