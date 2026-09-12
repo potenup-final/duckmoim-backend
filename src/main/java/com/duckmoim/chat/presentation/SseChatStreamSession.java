@@ -23,6 +23,28 @@ public class SseChatStreamSession implements ChatStreamSession {
 
   private final SseEmitter emitter;
 
+  /**
+   * <b>쓰기를 직렬화하지 않는다 — 스프링이 이미 한다</b> (PR #142 리뷰에서 바이트코드로 확인).
+   *
+   * <p>한 연결에 쓰는 스레드가 셋이다.
+   *
+   * <pre>
+   * 요청 스레드     재연결 재전송 (CH-11)
+   * 구독 스레드     실시간 팬아웃 (CH-10)
+   * 하트비트 풀     30초마다 주석 한 줄
+   * </pre>
+   *
+   * <p>SSE 는 줄 단위 형식이라 둘이 동시에 쓰면 한 사건의 {@code data:} 줄 사이에 다른 사건이 끼어든다. <b>그런데 그 직렬화가 이미 프레임워크 안에
+   * 있다</b> — {@code spring-webmvc 6.2.19} 의 바이트코드에 {@code ResponseBodyEmitter.writeLock}({@code
+   * ReentrantLock})이 있고 {@code SseEmitter.send(SseEventBuilder)} · {@code
+   * ResponseBodyEmitter.send(Set)} · {@code complete()} 가 모두 그것을 잡는다.
+   *
+   * <p><b>그래서 여기에 락을 하나 더 두었다가 뺐다.</b> 같은 구간을 두 번 잠그는 비용이 아까운 것이 아니라, <b>읽는 사람을 속이는 쪽</b>이 문제다 — 다음
+   * 사람이 「여기 직렬화가 필요하다」를 보고 비슷한 자리에 락을 복제한다.
+   *
+   * <p><b>{@link #close} 가 그 락을 기다린다는 사실은 남는다.</b> {@code complete()} 도 같은 {@code writeLock} 을 잡으므로
+   * 정체된 연결에 하트비트가 쓰고 있으면 닫기가 그만큼 기다린다 — 부르는 자리가 트랜잭션 안이라 {@code ChatRoomLeaveService} 에 적어 두었다.
+   */
   public SseChatStreamSession(SseEmitter emitter) {
     this.emitter = emitter;
   }
@@ -49,6 +71,22 @@ public class SseChatStreamSession implements ChatStreamSession {
           "[SseChatStreamSession.send] 끊긴 연결에 밀었다 messageId={} cause={}",
           event.messageId(),
           e.getClass().getSimpleName());
+    }
+  }
+
+  /**
+   * 따라잡으라는 신호를 보낸다 (CH-11).
+   *
+   * <p><b>{@code id:} 줄을 싣지 않는다.</b> 실으면 브라우저가 다음 재연결에 그 값을 {@code Last-Event-ID} 로 보내고, 그 순간 빠진
+   * 구간을 건너뛰고 시작한다 — 되돌려주지 못한 구간이 그대로 굳는다. {@code id} 가 없으면 브라우저는 <b>직전에 받은 말풍선의 번호</b>를 그대로 들고 다시
+   * 붙는다.
+   */
+  @Override
+  public void sendGap(Long fromMessageId) {
+    try {
+      emitter.send(SseEmitter.event().name("gap").data(new StreamGapResponse(fromMessageId)));
+    } catch (IOException | IllegalStateException e) {
+      log.debug("[SseChatStreamSession.sendGap] 끊긴 연결에 알렸다 cause={}", e.getClass().getSimpleName());
     }
   }
 
