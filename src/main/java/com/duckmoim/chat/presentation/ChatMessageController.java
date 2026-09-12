@@ -69,7 +69,8 @@ public class ChatMessageController {
   @Operation(
       summary = "메시지 전송",
       description =
-          "방 멤버만 보낼 수 있다. 만남시각 + 7일이 지나면 409 다. 같은 clientMessageId 로 다시 보내면 새로 저장하지 않고 먼저 보낸 것을 그대로 돌려준다.")
+          "방 멤버만 보낼 수 있다. 만남시각 + 7일이 지나면 409 다. 같은 clientMessageId 로 다시 보내면 새로 저장하지 않고 먼저 보낸 것을 그대로 돌려준다. "
+              + "imageId 를 실으면 사진 메시지가 되고, 업로드 확정을 마치지 않은 번호는 400 이다.")
   @PostMapping
   public ChatMessageResponse send(
       @PathVariable Long roomId,
@@ -78,7 +79,11 @@ public class ChatMessageController {
 
     SentMessage sent =
         chatMessageSendService.send(
-            roomId, authUser.userId(), request.clientMessageId(), request.content());
+            roomId,
+            authUser.userId(),
+            request.clientMessageId(),
+            request.contentOrEmpty(),
+            request.imageId());
 
     return ChatMessageResponse.from(sent);
   }

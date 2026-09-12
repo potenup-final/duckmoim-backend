@@ -17,6 +17,10 @@ import java.time.LocalDateTime;
  * <p><b>{@code roomId} 를 담는다.</b> 채널이 이미 방마다 갈려 있어 없어도 되지만, 클라이언트가 방 여러 개를 한 화면에서 볼 때 어느 방 것인지 알 길이
  * 있어야 한다. 값이 작고 없으면 되돌리기 어렵다.
  *
+ * <p><b>{@code imageId} 를 싣는다</b> (CH-14). 실시간으로 뜬 말풍선과 목록으로 받은 말풍선이 같은 모양이어야 클라이언트가 같은 배열에 넣는다 —
+ * 주소가 아니라 번호인 이유는 {@code MessageItemResponse} 의 같은 필드 각주에 있다.
+ *
+ * @param imageId 함께 보낸 사진. 없으면 {@code null} 이다
  * @param createdAt 저장된 값 그대로 UTC 다. KST 변환은 응답을 그리는 자리에서 한다
  */
 public record MessageEvent(
@@ -26,5 +30,6 @@ public record MessageEvent(
     String senderNickname,
     String senderProfileImageUrl,
     String content,
+    Long imageId,
     MessageStatus status,
     LocalDateTime createdAt) {}

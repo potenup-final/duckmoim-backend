@@ -77,6 +77,7 @@ public class ChatMessageQueryService {
         message.senderId(),
         message.display(clock),
         message.isVisible() ? message.content() : null,
+        message.imageId(),
         message.status(),
         message.createdAt());
   }

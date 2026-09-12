@@ -83,7 +83,8 @@ class ChatMessageSendServiceTest {
     standAt(MEET_AT_UTC.plusDays(1));
     long roomId = openRoomWithMember();
 
-    SentMessage sent = chatMessageSendService.send(roomId, MEMBER_ID, newClientId(), "8시에 봬요");
+    SentMessage sent =
+        chatMessageSendService.send(roomId, MEMBER_ID, newClientId(), "8시에 봬요", null);
 
     assertThat(sent.roomId()).isEqualTo(roomId);
     assertThat(sent.senderId()).isEqualTo(MEMBER_ID);
@@ -104,8 +105,10 @@ class ChatMessageSendServiceTest {
     long roomId = openRoomWithMember();
     String clientMessageId = newClientId();
 
-    SentMessage first = chatMessageSendService.send(roomId, MEMBER_ID, clientMessageId, "8시에 봬요");
-    SentMessage second = chatMessageSendService.send(roomId, MEMBER_ID, clientMessageId, "8시에 봬요");
+    SentMessage first =
+        chatMessageSendService.send(roomId, MEMBER_ID, clientMessageId, "8시에 봬요", null);
+    SentMessage second =
+        chatMessageSendService.send(roomId, MEMBER_ID, clientMessageId, "8시에 봬요", null);
 
     assertThat(second.messageId()).isEqualTo(first.messageId());
     assertThat(countMessagesOf(roomId)).isEqualTo(1);
@@ -119,8 +122,8 @@ class ChatMessageSendServiceTest {
     long roomId = openRoomWithMember();
     String clientMessageId = newClientId();
 
-    SentMessage mine = chatMessageSendService.send(roomId, MEMBER_ID, clientMessageId, "내 말");
-    SentMessage hosts = chatMessageSendService.send(roomId, HOST_ID, clientMessageId, "방장 말");
+    SentMessage mine = chatMessageSendService.send(roomId, MEMBER_ID, clientMessageId, "내 말", null);
+    SentMessage hosts = chatMessageSendService.send(roomId, HOST_ID, clientMessageId, "방장 말", null);
 
     assertThat(hosts.messageId()).isNotEqualTo(mine.messageId());
     assertThat(hosts.content()).isEqualTo("방장 말");
@@ -139,10 +142,10 @@ class ChatMessageSendServiceTest {
     long roomB = openRoomWithMember();
     String clientMessageId = newClientId();
 
-    chatMessageSendService.send(roomA, MEMBER_ID, clientMessageId, "8시에 봬요");
+    chatMessageSendService.send(roomA, MEMBER_ID, clientMessageId, "8시에 봬요", null);
 
     assertThatThrownBy(
-            () -> chatMessageSendService.send(roomB, MEMBER_ID, clientMessageId, "저 못 가요"))
+            () -> chatMessageSendService.send(roomB, MEMBER_ID, clientMessageId, "저 못 가요", null))
         .isInstanceOf(BusinessException.class)
         .extracting("errorCode")
         .isEqualTo(ChatErrorCode.CHAT_CLIENT_MESSAGE_ID_REUSED);
@@ -158,10 +161,10 @@ class ChatMessageSendServiceTest {
     long roomId = openRoomWithMember();
     String clientMessageId = newClientId();
 
-    chatMessageSendService.send(roomId, MEMBER_ID, clientMessageId, "8시에 봬요");
+    chatMessageSendService.send(roomId, MEMBER_ID, clientMessageId, "8시에 봬요", null);
 
     assertThatThrownBy(
-            () -> chatMessageSendService.send(roomId, MEMBER_ID, clientMessageId, "9시로 바꿔요"))
+            () -> chatMessageSendService.send(roomId, MEMBER_ID, clientMessageId, "9시로 바꿔요", null))
         .isInstanceOf(BusinessException.class)
         .extracting("errorCode")
         .isEqualTo(ChatErrorCode.CHAT_CLIENT_MESSAGE_ID_REUSED);
@@ -176,7 +179,7 @@ class ChatMessageSendServiceTest {
     long roomId = openRoomWithMember();
 
     assertThatThrownBy(
-            () -> chatMessageSendService.send(roomId, STRANGER_ID, newClientId(), "끼어들기"))
+            () -> chatMessageSendService.send(roomId, STRANGER_ID, newClientId(), "끼어들기", null))
         .isInstanceOf(BusinessException.class)
         .extracting("errorCode")
         .isEqualTo(ChatErrorCode.CHAT_ROOM_ACCESS_DENIED);
@@ -194,7 +197,7 @@ class ChatMessageSendServiceTest {
     standAt(MEET_AT_UTC.minusDays(1));
     long roomId = openRoomWithMember(PostStatus.CLOSED);
 
-    SentMessage sent = chatMessageSendService.send(roomId, MEMBER_ID, newClientId(), "마감됐네요");
+    SentMessage sent = chatMessageSendService.send(roomId, MEMBER_ID, newClientId(), "마감됐네요", null);
 
     assertThat(sent.messageId()).isNotNull();
   }
@@ -205,7 +208,8 @@ class ChatMessageSendServiceTest {
     standAt(MEET_AT_UTC.plusDays(7).plusSeconds(1));
     long roomId = openRoomWithMember();
 
-    assertThatThrownBy(() -> chatMessageSendService.send(roomId, MEMBER_ID, newClientId(), "늦은 말"))
+    assertThatThrownBy(
+            () -> chatMessageSendService.send(roomId, MEMBER_ID, newClientId(), "늦은 말", null))
         .isInstanceOf(BusinessException.class)
         .extracting("errorCode")
         .isEqualTo(ChatErrorCode.CHAT_ROOM_READ_ONLY);
@@ -219,7 +223,7 @@ class ChatMessageSendServiceTest {
     long roomId = openRoomWithMember();
 
     assertThatThrownBy(
-            () -> chatMessageSendService.send(roomId, STRANGER_ID, newClientId(), "늦은 끼어들기"))
+            () -> chatMessageSendService.send(roomId, STRANGER_ID, newClientId(), "늦은 끼어들기", null))
         .isInstanceOf(BusinessException.class)
         .extracting("errorCode")
         .isEqualTo(ChatErrorCode.CHAT_ROOM_ACCESS_DENIED);
@@ -230,7 +234,8 @@ class ChatMessageSendServiceTest {
   void sendToMissingRoom() {
     standAt(MEET_AT_UTC.plusDays(1));
 
-    assertThatThrownBy(() -> chatMessageSendService.send(404404L, MEMBER_ID, newClientId(), "허공"))
+    assertThatThrownBy(
+            () -> chatMessageSendService.send(404404L, MEMBER_ID, newClientId(), "허공", null))
         .isInstanceOf(BusinessException.class)
         .extracting("errorCode")
         .isEqualTo(ChatErrorCode.CHAT_ROOM_NOT_FOUND);

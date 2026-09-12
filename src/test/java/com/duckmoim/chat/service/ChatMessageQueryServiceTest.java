@@ -222,7 +222,7 @@ class ChatMessageQueryServiceTest {
     ChatRoom otherRoom = ChatRoom.openFor(otherPostId, memberId);
     long otherRoomId = chatRoomRepository.saveAndFlush(otherRoom).getId();
     chatMessageRepository.saveAndFlush(
-        Message.send(otherRoomId, memberId, UUID.randomUUID().toString(), "남의 방 말"));
+        Message.send(otherRoomId, memberId, UUID.randomUUID().toString(), "남의 방 말", null));
 
     List<MessageView> items = page(null, 10).items();
 
@@ -238,7 +238,7 @@ class ChatMessageQueryServiceTest {
   private long send(String content) {
     Message message =
         chatMessageRepository.saveAndFlush(
-            Message.send(roomId, memberId, UUID.randomUUID().toString(), content));
+            Message.send(roomId, memberId, UUID.randomUUID().toString(), content, null));
 
     return message.getId();
   }

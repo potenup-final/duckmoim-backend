@@ -1,8 +1,10 @@
 package com.duckmoim.chat.service;
 
+import com.duckmoim.chat.domain.ChatImage;
 import com.duckmoim.chat.domain.ChatRoom;
 import com.duckmoim.chat.domain.Message;
 import com.duckmoim.chat.exception.ChatErrorCode;
+import com.duckmoim.chat.infra.ChatImageRepository;
 import com.duckmoim.chat.infra.ChatMessageRepository;
 import com.duckmoim.chat.infra.ChatRoomRepository;
 import com.duckmoim.common.exception.BusinessException;
@@ -32,6 +34,7 @@ public class ChatMessageWriter {
 
   private final ChatRoomRepository chatRoomRepository;
   private final ChatMessageRepository chatMessageRepository;
+  private final ChatImageRepository chatImageRepository;
   private final CompanionPostRepository companionPostRepository;
   private final Clock clock;
 
@@ -42,11 +45,16 @@ public class ChatMessageWriter {
    * 메서드가 반환된 뒤 커밋에서 터지고, 부르는 쪽은 예외의 종류만 보고 「어느 제약이 걸렸는지」를 알 수 없다. {@code
    * ChatRoomInviteService#invite} 가 같은 이유로 같은 것을 한다.
    *
+   * <p><b>이미지가 있으면 같은 트랜잭션에서 {@code ATTACHED} 로 바꾼다</b> (CH-14). 이 클래스가 두 표를 쓰게 된 자리다 — 메시지가 커밋되고
+   * 이미지가 그대로 {@code CONFIRMED} 로 남으면 <b>고아 정리 배치가 실려 있는 사진을 지운다.</b> 같은 트랜잭션이어야 그 창이 없다.
+   *
    * @throws org.springframework.dao.DataIntegrityViolationException 같은 식별자가 동시에 들어와 두 번째가 거부된 경우.
    *     {@link ChatMessageSendService} 가 잡아 기존 건을 돌려준다
    */
   @Transactional
-  public SentMessage write(Long roomId, Long senderId, String clientMessageId, String content) {
+  public SentMessage write(
+      Long roomId, Long senderId, String clientMessageId, String content, Long imageId) {
+
     ChatRoom room =
         chatRoomRepository
             .findById(roomId)
@@ -57,12 +65,40 @@ public class ChatMessageWriter {
     }
 
     requireWritable(room);
+    attachImageIfPresent(roomId, senderId, imageId);
 
     Message message =
-        chatMessageRepository.save(Message.send(roomId, senderId, clientMessageId, content));
+        chatMessageRepository.save(
+            Message.send(roomId, senderId, clientMessageId, content, imageId));
     chatMessageRepository.flush();
 
     return SentMessage.from(message);
+  }
+
+  /**
+   * 사진을 이 메시지에 못박는다 (CH-14).
+   *
+   * <p><b>여기가 검증 기준 「업로드 확인 전 메시지 전송 시 400」이 나는 자리다.</b> 판정은 {@code ChatImage#attach} 가 쥐고, 여기서는 「그
+   * 방에 그 사람이 올린 것인가」까지만 본다.
+   *
+   * <p><b>넷이 같은 코드로 답한다</b> — 없는 번호 · 남의 번호 · 다른 방의 번호 · 확인 전. 갈라서 답하면 「그 번호의 사진이 존재하며 남이 이미 썼다」는
+   * 사실을 알려준다 ({@code ChatErrorCode} 의 이미지 네 줄 각주).
+   *
+   * <p><b>전송 순서가 「붙이고 저장」이다.</b> 반대로 하면 이미지가 틀렸을 때 이미 저장된 메시지를 되돌려야 하고, 같은 트랜잭션이라 롤백은 되지만 {@code
+   * AUTO_INCREMENT} 번호 하나가 비어 커서가 건너뛴다.
+   */
+  private void attachImageIfPresent(Long roomId, Long senderId, Long imageId) {
+    if (imageId == null) {
+      return;
+    }
+
+    ChatImage image =
+        chatImageRepository
+            .findById(imageId)
+            .filter(found -> found.isUploadedBy(roomId, senderId))
+            .orElseThrow(() -> new BusinessException(ChatErrorCode.CHAT_IMAGE_NOT_CONFIRMED));
+
+    image.attach();
   }
 
   /**

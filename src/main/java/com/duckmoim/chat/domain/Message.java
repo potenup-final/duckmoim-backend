@@ -85,11 +85,27 @@ public class Message extends BaseEntity {
   @Column(name = "status", nullable = false, length = 20)
   private MessageStatus status;
 
-  private Message(Long roomId, Long senderId, String clientMessageId, String content) {
+  /**
+   * 함께 보낸 사진 (CH-14).
+   *
+   * <p><b>{@code ChatImage} 를 객체로 참조하지 않는다.</b> 그쪽은 이 애그리게이트 밖이다 — 업로드가 전송보다 앞이라 메시지 없이 먼저 존재하고, 그
+   * 「메시지 없이 남은 것」이 {@code CH-17} 이 지우는 대상이다.
+   *
+   * <p><b>없는 것이 기본이다.</b> 이미지 없는 메시지가 대다수다.
+   *
+   * <p><b>주소가 아니라 번호다.</b> 받는 쪽이 볼 주소는 {@code CH-15} 가 방 멤버를 판정한 뒤 짧은 TTL 로 서명해 발급한다 — 여기에 주소를 박으면
+   * 그 티켓이 저장된 값 전부를 고쳐야 한다 (계획서 8.2).
+   */
+  @Column(name = "image_id")
+  private Long imageId;
+
+  private Message(
+      Long roomId, Long senderId, String clientMessageId, String content, Long imageId) {
     this.roomId = roomId;
     this.senderId = senderId;
     this.clientMessageId = clientMessageId;
     this.content = content;
+    this.imageId = imageId;
     this.status = MessageStatus.ACTIVE;
   }
 
@@ -98,9 +114,33 @@ public class Message extends BaseEntity {
    *
    * <p>멤버인지(I-18) · 보낼 수 있는 때인지(I-21)는 이 밖에서 판정한다. 둘 다 입력이 방과 모집글이라 이 애그리게이트가 답할 수 없다.
    */
-  public static Message send(Long roomId, Long senderId, String clientMessageId, String content) {
+  public static Message send(
+      Long roomId, Long senderId, String clientMessageId, String content, Long imageId) {
 
-    return new Message(roomId, senderId, clientMessageId, content);
+    requireSomethingToSay(content, imageId);
+
+    return new Message(roomId, senderId, clientMessageId, content, imageId);
+  }
+
+  /**
+   * 빈 말은 없다 (CH-07 · CH-14).
+   *
+   * <p><b>이 불변식만 애그리게이트에 있다.</b> 본문 길이는 Bean Validation 과 컬럼 길이가 보는데 (위 {@code MAX_CONTENT_LENGTH}
+   * 각주), 이것은 <b>두 필드에 걸쳐 있어</b> 애너테이션 하나로 표현할 수 없다. 요청 DTO 의 {@code @NotBlank} 를 본문에서 뺀 자리가 여기다 —
+   * 사진만 보내는 메시지가 생겼기 때문이다.
+   *
+   * <p><b>본문은 {@code null} 로 들어오지 않는다.</b> 사진만 보내면 빈 문자열이다 — 컬럼이 {@code NOT NULL} 이고, 「빈 문자열」과 「없음」
+   * 두 표현을 두면 조회 조립이 둘 다 다뤄야 한다 ({@code V704} 의 각주).
+   */
+  private static void requireSomethingToSay(String content, Long imageId) {
+    if ((content == null || content.isBlank()) && imageId == null) {
+      throw new BusinessException(ChatErrorCode.CHAT_MESSAGE_EMPTY);
+    }
+  }
+
+  /** 사진이 실려 있는가 (CH-14). 조회 조립이 주소를 물을지 정하는 입력이다. */
+  public boolean hasImage() {
+    return imageId != null;
   }
 
   /**

@@ -7,6 +7,7 @@ import com.duckmoim.chat.infra.ChatFanout;
 import com.duckmoim.chat.infra.ChatFanoutCodec;
 import com.duckmoim.chat.infra.ChatMessageRepository;
 import com.duckmoim.common.exception.BusinessException;
+import java.util.Objects;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -60,15 +61,18 @@ public class ChatMessageSendService {
    * <p><b>다만 찾아온 행이 이 요청의 재시도가 맞는지는 대조한다</b> — {@link #requireSameRequest}. 방이나 본문이 다르면 재시도가 아니라
    * 식별자 재사용이고, 그대로 돌려주면 이번에 보낸 말이 200 과 함께 사라진다.
    */
-  public SentMessage send(Long roomId, Long senderId, String clientMessageId, String content) {
-    Optional<SentMessage> retried = alreadySent(roomId, senderId, clientMessageId, content);
+  public SentMessage send(
+      Long roomId, Long senderId, String clientMessageId, String content, Long imageId) {
+
+    Optional<SentMessage> retried =
+        alreadySent(roomId, senderId, clientMessageId, content, imageId);
     if (retried.isPresent()) {
       // 재시도는 발행하지 않는다. 먼저 온 요청이 이미 발행했고, 다시 보내면 같은 말풍선이
       // 두 번 뜬다 — 클라이언트가 messageId 로 거르더라도 통로를 낭비할 이유가 없다.
       return retried.get();
     }
 
-    SentMessage sent = writeOrTakeExisting(roomId, senderId, clientMessageId, content);
+    SentMessage sent = writeOrTakeExisting(roomId, senderId, clientMessageId, content, imageId);
     fanOut(sent.messageId());
 
     return sent;
@@ -135,15 +139,16 @@ public class ChatMessageSendService {
         message.nickname(),
         message.profileImageUrl(),
         message.content(),
+        message.imageId(),
         message.status(),
         message.createdAt());
   }
 
   private SentMessage writeOrTakeExisting(
-      Long roomId, Long senderId, String clientMessageId, String content) {
+      Long roomId, Long senderId, String clientMessageId, String content, Long imageId) {
 
     try {
-      return chatMessageWriter.write(roomId, senderId, clientMessageId, content);
+      return chatMessageWriter.write(roomId, senderId, clientMessageId, content, imageId);
     } catch (DataIntegrityViolationException e) {
       // uq_chat_message_sender_client_id. 같은 클라이언트가 두 번 보내 둘 다 조회를 지난 경우다 —
       // 먼저 커밋된 쪽이 이미 저장했으므로 순차로 왔을 때와 같은 답을 준다.
@@ -151,17 +156,17 @@ public class ChatMessageSendService {
       // 못 찾으면 그 예외를 그대로 올린다. 이 표의 유니크 제약이 하나뿐이라 「위반했는데 그 행이
       // 없다」는 우리가 아는 원인이 없고, 새 에러 코드를 지어 덮으면 모르는 고장이 아는 고장으로
       // 둔갑한다. 500 으로 나가면서 로그에 스택이 남는 편이 낫다.
-      return alreadySent(roomId, senderId, clientMessageId, content).orElseThrow(() -> e);
+      return alreadySent(roomId, senderId, clientMessageId, content, imageId).orElseThrow(() -> e);
     }
   }
 
   private Optional<SentMessage> alreadySent(
-      Long roomId, Long senderId, String clientMessageId, String content) {
+      Long roomId, Long senderId, String clientMessageId, String content, Long imageId) {
 
     return chatMessageRepository
         .findBySenderIdAndClientMessageId(senderId, clientMessageId)
         .map(SentMessage::from)
-        .map(sent -> requireSameRequest(sent, roomId, content));
+        .map(sent -> requireSameRequest(sent, roomId, content, imageId));
   }
 
   /**
@@ -179,13 +184,22 @@ public class ChatMessageSendService {
    * client_message_id)} 라 B방 INSERT 가 제약에 걸리고, 방까지 따지는 재조회는 그 행을 못 찾아 {@code orElseThrow} 의 500 이
    * 된다. 유니크에 {@code room_id} 를 더하는 것은 반대로 「한 건만 저장된다」(I-20)를 깬다 — <b>찾은 뒤에 대조하는 것</b>만 남는다.
    *
-   * <p>멱등 키의 일반 규칙과 같다 — <b>같은 키 + 같은 파라미터면 원래 응답, 같은 키 + 다른 파라미터면 에러.</b> 파라미터가 둘이라 방과 본문을 함께 본다.
+   * <p>멱등 키의 일반 규칙과 같다 — <b>같은 키 + 같은 파라미터면 원래 응답, 같은 키 + 다른 파라미터면 에러.</b> 파라미터가 셋이라 방 · 본문 · 사진을
+   * 함께 본다.
+   *
+   * <p><b>사진이 셋째로 들어왔다</b> (CH-14 · STAR-115). 본문은 같고 사진만 다르게 보내는 경우가 있는데 — 같은 말에 사진을 바꿔 다시 보내는 것이
+   * 그 모양이다 — 대조하지 않으면 <b>이번 사진이 200 과 함께 사라진다.</b> 게다가 그 사진은 이미 {@code CONFIRMED} 로 남아 고아 정리 배치가
+   * 지운다.
    *
    * <p><b>사람이 만들 수 있는 상황이 아니다.</b> 앱이 전송마다 새 식별자를 만들면 절대 나지 않는다. 그래도 409 로 돌려주는 이유는, 앱이 그 약속을 어겼을 때
    * <b>화면에 「전송 실패」가 뜨는 것</b>이 말이 조용히 사라지는 것보다 낫기 때문이다.
    */
-  private SentMessage requireSameRequest(SentMessage sent, Long roomId, String content) {
-    if (!sent.roomId().equals(roomId) || !sent.content().equals(content)) {
+  private SentMessage requireSameRequest(
+      SentMessage sent, Long roomId, String content, Long imageId) {
+
+    if (!sent.roomId().equals(roomId)
+        || !sent.content().equals(content)
+        || !Objects.equals(sent.imageId(), imageId)) {
       throw new BusinessException(ChatErrorCode.CHAT_CLIENT_MESSAGE_ID_REUSED);
     }
 

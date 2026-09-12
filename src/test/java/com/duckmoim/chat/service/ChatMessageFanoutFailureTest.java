@@ -104,13 +104,18 @@ class ChatMessageFanoutFailureTest {
   private void givenFirstAttempt() {
     given(chatMessageRepository.findBySenderIdAndClientMessageId(anyLong(), anyString()))
         .willReturn(Optional.empty());
-    given(chatMessageWriter.write(anyLong(), anyLong(), anyString(), anyString()))
+    given(chatMessageWriter.write(anyLong(), anyLong(), anyString(), anyString(), any()))
         .willReturn(
             new SentMessage(
-                MESSAGE_ID, ROOM_ID, SENDER_ID, CONTENT, LocalDateTime.of(2026, 10, 2, 11, 10)));
+                MESSAGE_ID,
+                ROOM_ID,
+                SENDER_ID,
+                CONTENT,
+                null,
+                LocalDateTime.of(2026, 10, 2, 11, 10)));
   }
 
   private SentMessage send() {
-    return chatMessageSendService.send(ROOM_ID, SENDER_ID, CLIENT_MESSAGE_ID, CONTENT);
+    return chatMessageSendService.send(ROOM_ID, SENDER_ID, CLIENT_MESSAGE_ID, CONTENT, null);
   }
 }
