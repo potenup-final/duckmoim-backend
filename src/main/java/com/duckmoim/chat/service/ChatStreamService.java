@@ -83,6 +83,23 @@ public class ChatStreamService {
    *
    * <p>노출은 스트림 타임아웃 30분으로 상한이 있다 — 그 뒤 재연결할 때 관문이 다시 돌아 막힌다.
    *
+   * <p><b>등록한 뒤로는 던지지 않아야 한다</b> (PR #142 리뷰). 컨트롤러는 <b>이 메서드가 돌려준 손잡이</b>로 {@code onCompletion} ·
+   * {@code onTimeout} · {@code onError} 를 거는데, 등록 뒤에 예외가 나가면 그 셋 중 아무것도 안 걸린다 — 연결은 목록에 남고 그것을 뺄 길이
+   * 없어진다.
+   *
+   * <pre>
+   * connections.add(connection)   ① 넣는다
+   * subscribeIfFirst / replay     ② 여기서 던지면
+   * return () -> remove(...)      ③ 빼는 손잡이가 안 나온다
+   * </pre>
+   *
+   * <p><b>피해가 좀비 하나로 끝나지 않는다.</b> {@link #unsubscribeIfEmpty} 가 「연결이 없을 때만」 구독을 닫으므로, 남은 좀비 때문에 그
+   * 방의 Redis 구독이 <b>재기동까지 안 닫힌다.</b> 아무도 안 보는 방의 메시지를 계속 받아 죽은 세션에 밀어 넣고, 실패한 열기 하나당 하나씩 쌓인다 — 밀기
+   * 실패는 세션이 {@code debug} 로 삼켜 로그에도 안 보인다.
+   *
+   * <p>그래서 등록 뒤의 두 줄을 각자 다루었다 — 구독 실패는 정리하고 다시 던지고 ({@code subscribeIfFirst} 가 실패하면 실시간이 아예 안 되므로
+   * 열어 두는 것이 더 나쁘다), <b>재전송 실패는 {@link #replay} 가 삼킨다</b> (그쪽은 없어도 실시간이 돈다).
+   *
    * @param lastEventId 클라이언트가 마지막으로 받은 메시지 번호. 첫 연결이면 {@code null} 이다 (CH-11)
    * @return 연결이 끝났을 때 부를 정리 작업. 부르지 않으면 죽은 연결이 방마다 쌓인다
    */
@@ -91,12 +108,20 @@ public class ChatStreamService {
 
     RoomConnection connection = new RoomConnection(userId, session);
     connections.computeIfAbsent(roomId, room -> new CopyOnWriteArrayList<>()).add(connection);
-    subscribeIfFirst(roomId);
+    Runnable release = () -> remove(roomId, connection);
+
+    try {
+      subscribeIfFirst(roomId);
+    } catch (RuntimeException e) {
+      // 등록한 뒤에 던지면 컨트롤러가 이 손잡이를 못 받아 연결이 영영 목록에 남는다.
+      release.run();
+      throw e;
+    }
 
     // 구독을 건 뒤에 읽는다. 순서가 뒤집히면 그 사이 발행된 것이 사라진다 — replay() 자바독.
     replay(roomId, session, lastEventId);
 
-    return () -> remove(roomId, connection);
+    return release;
   }
 
   /**
@@ -124,19 +149,34 @@ public class ChatStreamService {
    * SseChatStreamSession} 이 쓰기를 직렬화한다.
    *
    * <p><b>첫 연결에는 아무것도 하지 않는다.</b> 그때는 목록 API(CH-09)가 화면을 채운다 — 여기서까지 과거를 밀면 같은 것이 두 경로로 온다.
+   *
+   * <p><b>실패하면 던지지 않고 따라잡기로 넘긴다</b> (PR #142 리뷰). 이 읽기는 트랜잭션과 DB 조회라 풀 고갈 · 타임아웃 · 락 대기가 전부 {@code
+   * RuntimeException} 으로 올라오는데, 여기서 나가면 {@link #open} 이 손잡이를 못 돌려줘 <b>연결과 구독이 통째로 남는다.</b>
+   *
+   * <p><b>대응이 상한 초과와 같다</b> — {@code sendGap} 이다. 클라이언트에 새 규칙이 생기지 않고, DB 가 한 번 삐끗한 것이 「재전송만 건너뜀,
+   * 실시간은 유지」로 끝난다. 조용히 넘기지 않는 것은 <b>못 받은 구간이 있다는 사실</b>은 알려야 하기 때문이다.
    */
   private void replay(Long roomId, ChatStreamSession session, Long lastEventId) {
     if (lastEventId == null) {
       return;
     }
 
-    MissedMessages missed = replayReader.readSince(roomId, lastEventId);
-    if (missed.truncated()) {
-      session.sendGap(lastEventId);
-      return;
-    }
+    try {
+      MissedMessages missed = replayReader.readSince(roomId, lastEventId);
+      if (missed.truncated()) {
+        session.sendGap(lastEventId);
+        return;
+      }
 
-    missed.events().forEach(session::send);
+      missed.events().forEach(session::send);
+    } catch (RuntimeException e) {
+      // 본문을 로그에 남기지 않는다. 어느 방이었는지와 무엇이 터졌는지만 남긴다.
+      log.warn(
+          "[ChatStreamService.replay] 재전송 실패 — 따라잡기로 넘긴다. roomId={} cause={}",
+          roomId,
+          e.getClass().getSimpleName());
+      session.sendGap(lastEventId);
+    }
   }
 
   /**
