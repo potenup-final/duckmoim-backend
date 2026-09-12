@@ -1,6 +1,7 @@
 package com.duckmoim.notification.domain;
 
 import com.duckmoim.common.domain.NotificationKind;
+import com.duckmoim.common.domain.NotificationTarget;
 
 /**
  * 한 건을 채널들에 보내는 데 필요한 값 (ADR 0010).
@@ -12,6 +13,9 @@ import com.duckmoim.common.domain.NotificationKind;
  * 규칙을 ArchUnit 이 잡는다. 값만 담은 불변 객체라 domain 이 제자리다.
  *
  * <p>담긴 것이 아웃박스 행이 실어 온 전부다 — 워커는 Companion 에 물어볼 수 없다 (도메인-모델링.md 「2. 바운디드 컨텍스트」).
+ *
+ * <p><b>대상 참조를 낱개가 아니라 {@link NotificationTarget} 으로 싣는다</b> (NT-07). 종류마다 채워지는 칸이 달라서, 낱개로 두면 종류가
+ * 하나 늘 때마다 이 레코드와 이것을 만드는 자리가 함께 늘어난다.
  */
 public record NotificationDelivery(
-    Long outboxId, Long recipientId, NotificationKind kind, Long postId, Long commentId) {}
+    Long outboxId, Long recipientId, NotificationKind kind, NotificationTarget target) {}

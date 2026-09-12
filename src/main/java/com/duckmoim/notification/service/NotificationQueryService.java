@@ -46,6 +46,8 @@ public class NotificationQueryService {
         notification.getKind(),
         notification.getPostId(),
         notification.getCommentId(),
+        notification.getRoomId(),
+        notification.getMessageId(),
         !notification.isUnread(),
         notification.getCreatedAt());
   }
