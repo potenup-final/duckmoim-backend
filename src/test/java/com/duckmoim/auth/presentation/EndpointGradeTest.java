@@ -180,6 +180,7 @@ class EndpointGradeTest {
               HttpMethod.GET,
               "/api/v1/admin/chat-rooms/404404/messages?reportId=404404",
               Grade.ADMIN),
+          new Endpoint(HttpMethod.POST, "/api/v1/admin/messages/404404/blind", Grade.ADMIN),
           // 2-8 적재
           new Endpoint(HttpMethod.POST, "/api/v1/ingest/events/bulk", Grade.MACHINE));
 

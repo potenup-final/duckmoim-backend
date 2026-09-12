@@ -129,6 +129,25 @@ public class Message extends BaseEntity {
     this.status = MessageStatus.DELETED;
   }
 
+  /**
+   * 신고 처리 결과로 관리자가 가린다 (AD-09).
+   *
+   * <p><b>409 인 이유는 {@code Comment#blind} 와 같다.</b> 부르는 쪽이 관리자라 그 메시지의 본문까지 읽을 수 있어 (AD-08) 「없다」로
+   * 답하면 사실과 다르다. 지운 사람에게 404 를 주는 {@link #deleteBy} 와 갈리는 지점이 그것이다.
+   *
+   * <p><b>이미 지워진 메시지도 가릴 수 없다.</b> 도메인-모델링.md 「6. 라이프사이클」에서 {@code DELETED} 와 {@code BLINDED} 는 각각
+   * 종착이고 둘 사이 전이가 없다 — 본문은 어느 쪽이든 이미 응답에서 빠진다.
+   *
+   * <p><b>보낸 사람인지 보지 않는다.</b> 관리자가 남의 메시지를 가리는 일이라 {@link #deleteBy} 의 판정이 여기 있으면 아무도 못 가린다.
+   */
+  public void blind() {
+    if (status != MessageStatus.ACTIVE) {
+      throw new BusinessException(ChatErrorCode.CHAT_MESSAGE_NOT_ACTIVE);
+    }
+
+    this.status = MessageStatus.BLINDED;
+  }
+
   /** 본문을 응답에 실어도 되는가 (CH-12). 지운 메시지는 자리표시자만 남는다. */
   public boolean isVisible() {
     return status == MessageStatus.ACTIVE;
