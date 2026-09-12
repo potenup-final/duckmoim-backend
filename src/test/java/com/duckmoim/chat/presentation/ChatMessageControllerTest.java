@@ -2,7 +2,9 @@ package com.duckmoim.chat.presentation;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.BDDMockito.never;
 import static org.mockito.BDDMockito.then;
 import static org.mockito.BDDMockito.willThrow;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
@@ -28,6 +30,7 @@ import com.duckmoim.chat.service.MessageSlice;
 import com.duckmoim.chat.service.MessageView;
 import com.duckmoim.chat.service.SentMessage;
 import com.duckmoim.common.exception.BusinessException;
+import com.duckmoim.common.exception.CommonErrorCode;
 import com.duckmoim.identity.domain.AuthorDisplay;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -268,14 +271,54 @@ class ChatMessageControllerTest {
   @DisplayName("스트림 요청은 응답을 끝내지 않고 연결을 연다.")
   @Test
   void stream() throws Exception {
-    given(chatStreamService.open(any(), any(), any())).willReturn(() -> {});
+    given(chatStreamService.open(any(), any(), any(), any())).willReturn(() -> {});
 
     mockMvc
         .perform(get("/api/v1/chat-rooms/{roomId}/messages/stream", ROOM_ID).headers(authHeaders()))
         .andExpect(status().isOk())
         .andExpect(request().asyncStarted());
 
-    then(chatStreamService).should().open(eq(ROOM_ID), eq(SENDER_ID), any());
+    then(chatStreamService).should().open(eq(ROOM_ID), eq(SENDER_ID), any(), isNull());
+  }
+
+  /**
+   * <b>재연결 지점이 그대로 넘어간다</b> (CH-11).
+   *
+   * <p>브라우저의 {@code EventSource} 가 재연결할 때 넣는 헤더다. 여기서 안 읽으면 되돌려줄 지점을 모르게 되고, 그 증상이 「가끔 몇 줄이 안 보이는데
+   * 새로고침하면 보인다」라 재현이 사실상 안 된다.
+   */
+  @DisplayName("Last-Event-ID 헤더가 재연결 지점으로 넘어간다.")
+  @Test
+  void stream_passesLastEventId() throws Exception {
+    given(chatStreamService.open(any(), any(), any(), any())).willReturn(() -> {});
+
+    mockMvc
+        .perform(
+            get("/api/v1/chat-rooms/{roomId}/messages/stream", ROOM_ID)
+                .headers(authHeaders())
+                .header("Last-Event-ID", "101"))
+        .andExpect(request().asyncStarted());
+
+    then(chatStreamService).should().open(eq(ROOM_ID), eq(SENDER_ID), any(), eq(101L));
+  }
+
+  /**
+   * 판독할 수 없는 재연결 지점은 400 이다 — 목록 커서와 같은 답이다 ({@code MessageListRequest}).
+   *
+   * <p><b>조용히 첫 연결로 다루지 않는다.</b> 그러면 못 받은 구간이 말없이 사라지는데, 그것이 이 기능이 없애려는 증상 그 자체다.
+   */
+  @DisplayName("판독할 수 없는 Last-Event-ID 는 400 이다.")
+  @Test
+  void stream_rejectsMalformedLastEventId() throws Exception {
+    mockMvc
+        .perform(
+            get("/api/v1/chat-rooms/{roomId}/messages/stream", ROOM_ID)
+                .headers(authHeaders())
+                .header("Last-Event-ID", "어제쯤"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.code").value(CommonErrorCode.INVALID_INPUT.getCode()));
+
+    then(chatStreamService).should(never()).open(any(), any(), any(), any());
   }
 
   /** 멤버가 아니면 선로가 아예 안 열린다. 열고 나서 끊으면 클라이언트가 재연결을 반복한다. */
@@ -283,7 +326,9 @@ class ChatMessageControllerTest {
   @ParameterizedTest(name = "{0}")
   @EnumSource(ChatErrorCode.class)
   void streamRejected(ChatErrorCode errorCode) throws Exception {
-    willThrow(new BusinessException(errorCode)).given(chatStreamService).open(any(), any(), any());
+    willThrow(new BusinessException(errorCode))
+        .given(chatStreamService)
+        .open(any(), any(), any(), any());
 
     mockMvc
         .perform(get("/api/v1/chat-rooms/{roomId}/messages/stream", ROOM_ID).headers(authHeaders()))

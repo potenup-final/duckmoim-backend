@@ -92,7 +92,7 @@ class ChatStreamServiceTest {
   @Test
   void open_receivesPublishedMessage() {
     RecordingSession session = new RecordingSession();
-    chatStreamService.open(roomId, memberId, session);
+    chatStreamService.open(roomId, memberId, session, null);
 
     chatMessageSendService.send(roomId, hostId, newClientId(), "8시에 3번 출구에서 봬요");
 
@@ -112,7 +112,7 @@ class ChatStreamServiceTest {
   @Test
   void open_carriesSenderDisplay() {
     RecordingSession session = new RecordingSession();
-    chatStreamService.open(roomId, memberId, session);
+    chatStreamService.open(roomId, memberId, session, null);
 
     chatMessageSendService.send(roomId, hostId, newClientId(), "안녕하세요");
 
@@ -125,7 +125,7 @@ class ChatStreamServiceTest {
   @Test
   void open_isScopedToRoom() throws Exception {
     RecordingSession session = new RecordingSession();
-    chatStreamService.open(roomId, memberId, session);
+    chatStreamService.open(roomId, memberId, session, null);
 
     long otherPostId = aCompanionPost().hostId(memberId).meetAt(MEET_AT_UTC).insert(jdbcTemplate);
     long otherRoomId =
@@ -139,7 +139,8 @@ class ChatStreamServiceTest {
   @DisplayName("방 멤버가 아니면 스트림을 열 수 없다.")
   @Test
   void open_rejectsNonMember() {
-    assertThatThrownBy(() -> chatStreamService.open(roomId, strangerId, new RecordingSession()))
+    assertThatThrownBy(
+            () -> chatStreamService.open(roomId, strangerId, new RecordingSession(), null))
         .isInstanceOf(BusinessException.class)
         .extracting("errorCode")
         .isEqualTo(ChatErrorCode.CHAT_ROOM_ACCESS_DENIED);
@@ -148,7 +149,8 @@ class ChatStreamServiceTest {
   @DisplayName("없는 방의 스트림은 404 다.")
   @Test
   void open_rejectsMissingRoom() {
-    assertThatThrownBy(() -> chatStreamService.open(404404L, memberId, new RecordingSession()))
+    assertThatThrownBy(
+            () -> chatStreamService.open(404404L, memberId, new RecordingSession(), null))
         .isInstanceOf(BusinessException.class)
         .extracting("errorCode")
         .isEqualTo(ChatErrorCode.CHAT_ROOM_NOT_FOUND);
@@ -164,7 +166,7 @@ class ChatStreamServiceTest {
   @Test
   void leave_disconnectsStream() throws Exception {
     RecordingSession leaving = new RecordingSession();
-    chatStreamService.open(roomId, memberId, leaving);
+    chatStreamService.open(roomId, memberId, leaving, null);
 
     chatRoomLeaveService.leave(roomId, memberId);
 
@@ -183,8 +185,8 @@ class ChatStreamServiceTest {
   void leave_keepsOtherConnections() {
     RecordingSession staying = new RecordingSession();
     RecordingSession leaving = new RecordingSession();
-    chatStreamService.open(roomId, hostId, staying);
-    chatStreamService.open(roomId, memberId, leaving);
+    chatStreamService.open(roomId, hostId, staying, null);
+    chatStreamService.open(roomId, memberId, leaving, null);
 
     chatRoomLeaveService.leave(roomId, memberId);
     chatMessageSendService.send(roomId, hostId, newClientId(), "남은 사람에게만");
@@ -200,8 +202,8 @@ class ChatStreamServiceTest {
   void open_deliversOncePerConnection() {
     RecordingSession first = new RecordingSession();
     RecordingSession second = new RecordingSession();
-    chatStreamService.open(roomId, hostId, first);
-    chatStreamService.open(roomId, memberId, second);
+    chatStreamService.open(roomId, hostId, first, null);
+    chatStreamService.open(roomId, memberId, second, null);
 
     chatMessageSendService.send(roomId, hostId, newClientId(), "둘 다 받는다");
 
@@ -215,7 +217,7 @@ class ChatStreamServiceTest {
   @DisplayName("연결을 정리하면 목록에서 빠진다.")
   @Test
   void open_releaseRemovesConnection() {
-    Runnable release = chatStreamService.open(roomId, memberId, new RecordingSession());
+    Runnable release = chatStreamService.open(roomId, memberId, new RecordingSession(), null);
     assertThat(chatStreamService.connectionCount(roomId)).isEqualTo(1);
 
     release.run();
@@ -228,7 +230,7 @@ class ChatStreamServiceTest {
   @Test
   void heartbeat_beatsOpenConnections() {
     RecordingSession session = new RecordingSession();
-    chatStreamService.open(roomId, memberId, session);
+    chatStreamService.open(roomId, memberId, session, null);
 
     chatStreamService.heartbeat();
 
@@ -249,8 +251,8 @@ class ChatStreamServiceTest {
   void heartbeat_isNotBlockedByStalledConnection() {
     StallingSession stalled = new StallingSession();
     RecordingSession healthy = new RecordingSession();
-    chatStreamService.open(roomId, hostId, stalled);
-    chatStreamService.open(roomId, memberId, healthy);
+    chatStreamService.open(roomId, hostId, stalled, null);
+    chatStreamService.open(roomId, memberId, healthy, null);
 
     chatStreamService.heartbeat();
 

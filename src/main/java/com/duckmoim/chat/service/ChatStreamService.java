@@ -31,8 +31,8 @@ import org.springframework.stereotype.Service;
  * <p><b>{@code SseEmitter} 를 알지 않는다.</b> {@link ChatStreamSession} 이 그 타입을 가린다 — {@code ChatFanout}
  * 이 {@code RedisTemplate} 을 가린 것과 같은 배치이고, 덕분에 이 클래스가 톰캣 없이 검사된다.
  *
- * <p><b>연결 목록은 이 JVM 의 메모리다.</b> 재기동하면 사라지고 그것이 맞다 — 열려 있던 TCP 연결도 함께 죽기 때문이다. 끊긴 뒤를 잇는 것은 {@code
- * CH-11}(STAR-114)이다.
+ * <p><b>연결 목록은 이 JVM 의 메모리다.</b> 재기동하면 사라지고 그것이 맞다 — 열려 있던 TCP 연결도 함께 죽기 때문이다. <b>끊긴 뒤를 잇는 것은
+ * {@link #replay} 다</b> (CH-11) — 클라이언트가 마지막으로 받은 번호를 들고 다시 붙으면 그 뒤를 되돌려준다.
  */
 @Slf4j
 @Service
@@ -43,6 +43,7 @@ public class ChatStreamService {
   private final ChatFanout chatFanout;
   private final MessageEventCodec messageEventCodec;
   private final ChatStreamHeartbeatExecutor heartbeatExecutor;
+  private final ChatStreamReplayReader replayReader;
 
   /**
    * 방마다 열려 있는 연결들.
@@ -81,16 +82,60 @@ public class ChatStreamService {
    *
    * <p>노출은 스트림 타임아웃 30분으로 상한이 있다 — 그 뒤 재연결할 때 관문이 다시 돌아 막힌다.
    *
+   * @param lastEventId 클라이언트가 마지막으로 받은 메시지 번호. 첫 연결이면 {@code null} 이다 (CH-11)
    * @return 연결이 끝났을 때 부를 정리 작업. 부르지 않으면 죽은 연결이 방마다 쌓인다
    */
-  public Runnable open(Long roomId, Long userId, ChatStreamSession session) {
+  public Runnable open(Long roomId, Long userId, ChatStreamSession session, Long lastEventId) {
     requireMember(roomId, userId);
 
     RoomConnection connection = new RoomConnection(userId, session);
     connections.computeIfAbsent(roomId, room -> new CopyOnWriteArrayList<>()).add(connection);
     subscribeIfFirst(roomId);
 
+    // 구독을 건 뒤에 읽는다. 순서가 뒤집히면 그 사이 발행된 것이 사라진다 — replay() 자바독.
+    replay(roomId, session, lastEventId);
+
     return () -> remove(roomId, connection);
+  }
+
+  /**
+   * 끊겨 있던 동안 못 받은 것을 되돌려준다 (CH-11).
+   *
+   * <p>검증 기준이 <b>「끊고 그 사이 N건을 보낸 뒤 재연결 → 유실 0건」</b>이다.
+   *
+   * <p><b>구독을 건 뒤에 읽는 것이 이 기능의 본체다.</b> 순서를 뒤집으면 읽기와 구독 사이에 발행된 것이 어느 쪽으로도 오지 않는다.
+   *
+   * <pre>
+   * ❌ 읽고 나서 구독   DB 읽기 ──────▶ 구독 시작
+   *                          ▲  이 사이에 발행된 것이 사라진다
+   *
+   * ✅ 구독하고 나서 읽기 구독 시작 ──────▶ DB 읽기
+   *                          ▲  이 사이 것이 중복으로 온다
+   * </pre>
+   *
+   * <p><b>유실은 못 되돌리고 중복은 되돌린다.</b> 클라이언트가 이미 {@code clientMessageId} 로 멱등 처리를 하고 있어 {@code
+   * messageId} 중복 제거가 새 규칙이 아니다.
+   *
+   * <p><b>그 대가로 재전송과 실시간이 순서를 섞어 도착할 수 있다.</b> 재전송은 요청 스레드이고 실시간은 구독 스레드라, 읽는 동안 도착한 새 메시지가 먼저 실린다.
+   * 클라이언트가 {@code messageId} 로 정렬하면 풀린다 — 커서를 한 값으로 둔 결정(CH-09)이 여기서도 값을 한다.
+   *
+   * <p><b>선로가 섞이지 않는 것은 세션이 보장한다.</b> 여기서 미는 것과 구독 스레드가 미는 것이 같은 연결에 겹치므로 {@code
+   * SseChatStreamSession} 이 쓰기를 직렬화한다.
+   *
+   * <p><b>첫 연결에는 아무것도 하지 않는다.</b> 그때는 목록 API(CH-09)가 화면을 채운다 — 여기서까지 과거를 밀면 같은 것이 두 경로로 온다.
+   */
+  private void replay(Long roomId, ChatStreamSession session, Long lastEventId) {
+    if (lastEventId == null) {
+      return;
+    }
+
+    MissedMessages missed = replayReader.readSince(roomId, lastEventId);
+    if (missed.truncated()) {
+      session.sendGap(lastEventId);
+      return;
+    }
+
+    missed.events().forEach(session::send);
   }
 
   /**

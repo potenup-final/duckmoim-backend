@@ -7,7 +7,10 @@ import com.duckmoim.chat.service.ChatMessageSendService;
 import com.duckmoim.chat.service.ChatStreamService;
 import com.duckmoim.chat.service.MessageSlice;
 import com.duckmoim.chat.service.SentMessage;
+import com.duckmoim.common.exception.BusinessException;
+import com.duckmoim.common.exception.CommonErrorCode;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -19,6 +22,7 @@ import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -135,19 +139,36 @@ public class ChatMessageController {
    * <p><b>ALB 의 유휴 타임아웃(기본 60초)보다 짧게 무언가를 보내야 한다.</b> 대화가 없는 방은 한 시간도 조용한데, 그러면 ALB 가 먼저 끊는다. 연결 직후
    * 주석 한 줄을 보내 선로를 여는 것까지가 이 메서드이고, 이어지는 하트비트는 {@code ChatStreamHeartbeat} 가 진다.
    *
+   * <p><b>{@code Last-Event-ID} 를 받으면 그 뒤를 되돌려준다</b> (CH-11). 브라우저의 {@code EventSource} 가 재연결할 때
+   * <b>직전 사건의 {@code id:} 줄을 그대로</b> 이 헤더에 담아 보낸다 — 클라이언트가 따로 붙일 것이 없다. 네이티브 앱처럼 {@code
+   * EventSource} 가 없는 클라이언트는 같은 헤더를 직접 넣는다.
+   *
+   * <p><b>쿼리 파라미터로도 받지 않는다.</b> 재개 지점이 두 곳에서 오면 둘이 어긋났을 때 어느 쪽을 믿을지가 계약이 되고, 그 규칙이 「유실 0건」의 판정에
+   * 얹힌다.
+   *
    * <p>멤버 판정을 여기서 하지 않는다. 관문은 {@code SIGNUP} 까지만 보고 방 멤버 여부는 service 가 본다.
    */
   @Operation(
       summary = "메시지 실시간 수신",
       description =
           "방 멤버만 열 수 있다. text/event-stream 으로 메시지가 생길 때마다 밀어 준다. "
-              + "id 줄이 messageId 라 브라우저가 재연결할 때 Last-Event-ID 로 돌려준다.")
+              + "id 줄이 messageId 라 브라우저가 재연결할 때 Last-Event-ID 로 돌려주고, 서버는 그 뒤에 생긴 것을 먼저 되돌려준다. "
+              + "되돌려줄 것이 너무 많으면 event: gap 을 보내고, 그때는 메시지 목록 API 로 따라잡는다.")
   @GetMapping(path = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-  public SseEmitter stream(@PathVariable Long roomId, @AuthenticationPrincipal AuthUser authUser) {
+  public SseEmitter stream(
+      @PathVariable Long roomId,
+      @AuthenticationPrincipal AuthUser authUser,
+      @Parameter(description = "마지막으로 받은 messageId. EventSource 가 재연결할 때 자동으로 넣는다")
+          @RequestHeader(name = "Last-Event-ID", required = false)
+          String lastEventId) {
+
+    // 선로를 열기 전에 판독한다. 열고 나면 400 을 JSON 으로 돌려줄 자리가 없다.
+    Long resumeFrom = resumeFrom(lastEventId);
 
     SseEmitter emitter = new SseEmitter(STREAM_TIMEOUT_MILLIS);
     Runnable release =
-        chatStreamService.open(roomId, authUser.userId(), new SseChatStreamSession(emitter));
+        chatStreamService.open(
+            roomId, authUser.userId(), new SseChatStreamSession(emitter), resumeFrom);
 
     // 셋 다 걸어야 한다. 정상 종료(complete)·타임아웃·오류는 서로 다른 콜백이고,
     // 하나라도 빠지면 그 경로로 끝난 연결이 목록에 남아 방마다 쌓인다.
@@ -156,5 +177,26 @@ public class ChatMessageController {
     emitter.onError(error -> release.run());
 
     return emitter;
+  }
+
+  /**
+   * 재연결 지점을 판독한다 (CH-11).
+   *
+   * <p><b>Base64 커서가 아니라 숫자 그대로다.</b> 이 값은 우리가 {@code id:} 줄에 쓴 것을 브라우저가 그대로 돌려준 것이라, 형식을 정하는 쪽도 읽는
+   * 쪽도 서버다 — {@code MessageCursor} 를 불투명 문자열로 감싼 이유(클라이언트가 숫자에 의존하는 것을 막는다)가 여기에는 없다.
+   *
+   * <p><b>판독 실패는 {@code INVALID_INPUT} 400 이다.</b> 목록 커서와 같은 답이다 ({@code MessageListRequest}). 조용히
+   * 첫 연결로 다루면 <b>못 받은 구간이 말없이 사라지고</b>, 그것이 이 기능이 없애려는 증상 그 자체다.
+   */
+  private static Long resumeFrom(String lastEventId) {
+    if (lastEventId == null || lastEventId.isBlank()) {
+      return null;
+    }
+
+    try {
+      return Long.parseLong(lastEventId.trim());
+    } catch (NumberFormatException e) {
+      throw new BusinessException(CommonErrorCode.INVALID_INPUT);
+    }
   }
 }
