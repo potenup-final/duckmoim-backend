@@ -17,7 +17,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 /**
  * 대상×사유 전 조합 (API-설계.md 「2-6. 신고 (Safety)」의 조합표).
  *
- * <p>대상 3 × 사유 7 = <b>21 조합</b>이고 허용이 14 · 거부가 7 이다. 조합표가 값 집합이자 검증 규칙이라 <b>표를 손으로 옮겨 적고 계산하지
+ * <p>대상 5 × 사유 7 = <b>35 조합</b>이고 허용이 20 · 거부가 15 다. 조합표가 값 집합이자 검증 규칙이라 <b>표를 손으로 옮겨 적고 계산하지
  * 않는다</b> — 코드로 구하면 판정 로직을 테스트에 한 번 더 쓰는 것이고, 둘이 같이 틀리면 초록불이 난다.
  *
  * <p>서버가 이것을 검증하는 이유는 결정 D-6 이다. 사유 목록은 클라이언트가 갖고, <i>"화면에 무엇이 떴든 API 는 직접 호출될 수 있다."</i>
@@ -43,7 +43,14 @@ class ReportReasonTest {
           Arguments.of(ReportTargetType.COMMENT, ReportReason.ADVERTISEMENT),
           Arguments.of(ReportTargetType.COMMENT, ReportReason.INAPPROPRIATE),
           Arguments.of(ReportTargetType.COMMENT, ReportReason.ABUSE),
-          Arguments.of(ReportTargetType.COMMENT, ReportReason.FALSE_INFO));
+          Arguments.of(ReportTargetType.COMMENT, ReportReason.FALSE_INFO),
+          // ROOM · MESSAGE 는 공통 셋만 쓴다 (CH-21). 전용 사유를 만들지 않았다
+          Arguments.of(ReportTargetType.ROOM, ReportReason.ADVERTISEMENT),
+          Arguments.of(ReportTargetType.ROOM, ReportReason.INAPPROPRIATE),
+          Arguments.of(ReportTargetType.ROOM, ReportReason.ABUSE),
+          Arguments.of(ReportTargetType.MESSAGE, ReportReason.ADVERTISEMENT),
+          Arguments.of(ReportTargetType.MESSAGE, ReportReason.INAPPROPRIATE),
+          Arguments.of(ReportTargetType.MESSAGE, ReportReason.ABUSE));
 
   @DisplayName("조합표에 있는 사유로 접수된다.")
   @ParameterizedTest(name = "{0} · {1}")
@@ -66,15 +73,15 @@ class ReportReasonTest {
         .isEqualTo(ReportErrorCode.REPORT_REASON_INVALID);
   }
 
-  /** 21 조합이 허용과 거부로 정확히 갈렸는지 본다. 표를 옮겨 적다 한 줄을 빠뜨리면 여기서 드러난다. */
+  /** 35 조합이 허용과 거부로 정확히 갈렸는지 본다. 표를 옮겨 적다 한 줄을 빠뜨리면 여기서 드러난다. */
   @DisplayName("대상과 사유의 모든 조합이 허용 또는 거부로 갈린다.")
   @Test
   void everyCombinationIsCovered() {
     int total = ReportTargetType.values().length * ReportReason.values().length;
 
-    assertThat(ALLOWED).hasSize(14);
+    assertThat(ALLOWED).hasSize(20);
     assertThat(rejected().count()).isEqualTo(total - ALLOWED.size());
-    assertThat(total).isEqualTo(21);
+    assertThat(total).isEqualTo(35);
   }
 
   private static Stream<Arguments> allowed() {
