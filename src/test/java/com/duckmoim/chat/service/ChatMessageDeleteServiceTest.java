@@ -177,7 +177,8 @@ class ChatMessageDeleteServiceTest {
 
   private long send(long targetRoomId, long senderId, String content) {
     return chatMessageRepository
-        .saveAndFlush(Message.send(targetRoomId, senderId, UUID.randomUUID().toString(), content))
+        .saveAndFlush(
+            Message.send(targetRoomId, senderId, UUID.randomUUID().toString(), content, null))
         .getId();
   }
 

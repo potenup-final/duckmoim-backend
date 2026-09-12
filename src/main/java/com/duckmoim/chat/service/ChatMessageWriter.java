@@ -59,7 +59,7 @@ public class ChatMessageWriter {
     requireWritable(room);
 
     Message message =
-        chatMessageRepository.save(Message.send(roomId, senderId, clientMessageId, content));
+        chatMessageRepository.save(Message.send(roomId, senderId, clientMessageId, content, null));
     chatMessageRepository.flush();
 
     return SentMessage.from(message);

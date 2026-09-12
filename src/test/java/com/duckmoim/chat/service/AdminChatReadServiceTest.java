@@ -160,7 +160,7 @@ class AdminChatReadServiceTest {
 
   private long send(String content) {
     return chatMessageRepository
-        .saveAndFlush(Message.send(roomId, HOST_ID, UUID.randomUUID().toString(), content))
+        .saveAndFlush(Message.send(roomId, HOST_ID, UUID.randomUUID().toString(), content, null))
         .getId();
   }
 
