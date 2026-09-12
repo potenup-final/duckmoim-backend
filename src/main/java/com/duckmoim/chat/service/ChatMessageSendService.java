@@ -2,11 +2,11 @@ package com.duckmoim.chat.service;
 
 import com.duckmoim.chat.domain.MessageEvent;
 import com.duckmoim.chat.exception.ChatErrorCode;
-import com.duckmoim.chat.infra.AuthoredMessage;
 import com.duckmoim.chat.infra.ChatFanout;
 import com.duckmoim.chat.infra.ChatMessageRepository;
 import com.duckmoim.chat.infra.MessageEventCodec;
 import com.duckmoim.common.exception.BusinessException;
+import java.time.Clock;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -44,6 +44,7 @@ public class ChatMessageSendService {
   private final ChatMessageRepository chatMessageRepository;
   private final ChatFanout chatFanout;
   private final MessageEventCodec messageEventCodec;
+  private final Clock clock;
 
   /**
    * 보낸다. 이미 같은 식별자로 보낸 것이 있으면 그것을 그대로 돌려준다 (CH-07 · I-20).
@@ -82,13 +83,16 @@ public class ChatMessageSendService {
    * <p><b>보낸 사람 정보를 다시 읽는다.</b> {@link SentMessage} 에는 닉네임·아바타가 없는데 받는 쪽 말풍선에는 필요하다. 목록 조회와 같은 조인을
    * 쓰므로 실시간으로 뜬 것과 새로고침해서 뜬 것이 같은 값이다.
    *
+   * <p><b>사건으로 바꾸는 일은 {@code AuthoredMessage#toEvent} 가 한다</b> (CH-11). 재연결 재전송도 같은 메서드를 쓴다 — 두 경로가
+   * 각자 조립하면 실시간으로 뜬 말풍선과 재연결해서 온 말풍선이 갈린다.
+   *
    * <p><b>실패해도 던지지 않는다.</b> 조회가 비거나 직렬화가 실패하면 발행을 건너뛴다 — {@code ChatFanout} 의 계약이 「팬아웃 장애가 전송을 깨지
    * 않는다」이고, 사용자는 새로고침하면 자기 말을 본다. 정본은 MySQL 이다.
    */
   private void fanOut(Long messageId) {
     chatMessageRepository
         .findAuthoredById(messageId)
-        .map(ChatMessageSendService::toEvent)
+        .map(message -> message.toEvent(clock))
         .ifPresent(this::publish);
   }
 
@@ -99,18 +103,6 @@ public class ChatMessageSendService {
     }
 
     chatFanout.publish(event.roomId(), payload);
-  }
-
-  private static MessageEvent toEvent(AuthoredMessage message) {
-    return new MessageEvent(
-        message.messageId(),
-        message.roomId(),
-        message.senderId(),
-        message.nickname(),
-        message.profileImageUrl(),
-        message.content(),
-        message.status(),
-        message.createdAt());
   }
 
   private SentMessage writeOrTakeExisting(
