@@ -275,6 +275,11 @@ class ChatStreamServiceTest {
     }
 
     @Override
+    public void sendGap(Long fromMessageId) {
+      // 이 검사는 하트비트만 본다.
+    }
+
+    @Override
     public void beat() {
       try {
         TimeUnit.SECONDS.sleep(3);
@@ -297,6 +302,7 @@ class ChatStreamServiceTest {
   private static final class RecordingSession implements ChatStreamSession {
 
     private final List<MessageEvent> received = new CopyOnWriteArrayList<>();
+    private final List<Long> gaps = new CopyOnWriteArrayList<>();
     private final java.util.concurrent.atomic.AtomicInteger beatCount =
         new java.util.concurrent.atomic.AtomicInteger();
     private volatile boolean closed;
@@ -304,6 +310,11 @@ class ChatStreamServiceTest {
     @Override
     public void send(MessageEvent event) {
       received.add(event);
+    }
+
+    @Override
+    public void sendGap(Long fromMessageId) {
+      gaps.add(fromMessageId);
     }
 
     @Override
@@ -323,6 +334,10 @@ class ChatStreamServiceTest {
 
     List<MessageEvent> received() {
       return received;
+    }
+
+    List<Long> gaps() {
+      return gaps;
     }
 
     int beats() {

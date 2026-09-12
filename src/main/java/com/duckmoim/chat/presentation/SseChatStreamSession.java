@@ -3,6 +3,7 @@ package com.duckmoim.chat.presentation;
 import com.duckmoim.chat.domain.MessageEvent;
 import com.duckmoim.chat.service.ChatStreamSession;
 import java.io.IOException;
+import java.util.concurrent.locks.ReentrantLock;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -23,6 +24,26 @@ public class SseChatStreamSession implements ChatStreamSession {
 
   private final SseEmitter emitter;
 
+  /**
+   * 한 연결에 쓰는 스레드가 셋이다 — 직렬화하지 않으면 선로가 섞인다.
+   *
+   * <pre>
+   * 요청 스레드     재연결 재전송 (CH-11)
+   * 구독 스레드     실시간 팬아웃 (CH-10)
+   * 하트비트 풀     30초마다 주석 한 줄
+   * </pre>
+   *
+   * <p><b>SSE 는 줄 단위 형식이다.</b> 두 스레드가 동시에 쓰면 한 사건의 {@code data:} 줄 사이에 다른 사건의 줄이 끼어들어 <b>클라이언트가 둘 다
+   * 못 읽는다.</b> 예외가 아니라 조용한 손상이라 로그에도 안 남는다.
+   *
+   * <p><b>STAR-113 에도 이미 있던 자리다</b> — 팬아웃과 하트비트가 이미 다른 스레드였다. 다만 하트비트가 30초에 한 번이라 겹칠 확률이 낮았고, 재전송이
+   * <b>연결 직후에 수십 건을 몰아 쓰면서</b> 겹치기 쉬워졌다.
+   *
+   * <p><b>막히는 대가를 받아들인다.</b> 정체된 연결에 쓰는 동안 그 연결의 다른 쓰기가 기다리는데, <b>한 연결 안의 일이라 다른 사람에게 번지지 않는다</b> —
+   * 하트비트가 연결마다 별 스레드에서 도는 이유가 그것이다 ({@code ChatStreamHeartbeatExecutor}).
+   */
+  private final ReentrantLock writeLock = new ReentrantLock();
+
   public SseChatStreamSession(SseEmitter emitter) {
     this.emitter = emitter;
   }
@@ -37,6 +58,7 @@ public class SseChatStreamSession implements ChatStreamSession {
    */
   @Override
   public void send(MessageEvent event) {
+    writeLock.lock();
     try {
       emitter.send(
           SseEmitter.event()
@@ -49,6 +71,27 @@ public class SseChatStreamSession implements ChatStreamSession {
           "[SseChatStreamSession.send] 끊긴 연결에 밀었다 messageId={} cause={}",
           event.messageId(),
           e.getClass().getSimpleName());
+    } finally {
+      writeLock.unlock();
+    }
+  }
+
+  /**
+   * 따라잡으라는 신호를 보낸다 (CH-11).
+   *
+   * <p><b>{@code id:} 줄을 싣지 않는다.</b> 실으면 브라우저가 다음 재연결에 그 값을 {@code Last-Event-ID} 로 보내고, 그 순간 빠진
+   * 구간을 건너뛰고 시작한다 — 되돌려주지 못한 구간이 그대로 굳는다. {@code id} 가 없으면 브라우저는 <b>직전에 받은 말풍선의 번호</b>를 그대로 들고 다시
+   * 붙는다.
+   */
+  @Override
+  public void sendGap(Long fromMessageId) {
+    writeLock.lock();
+    try {
+      emitter.send(SseEmitter.event().name("gap").data(new StreamGapResponse(fromMessageId)));
+    } catch (IOException | IllegalStateException e) {
+      log.debug("[SseChatStreamSession.sendGap] 끊긴 연결에 알렸다 cause={}", e.getClass().getSimpleName());
+    } finally {
+      writeLock.unlock();
     }
   }
 
@@ -62,10 +105,13 @@ public class SseChatStreamSession implements ChatStreamSession {
    */
   @Override
   public void beat() {
+    writeLock.lock();
     try {
       emitter.send(SseEmitter.event().comment("keep-alive"));
     } catch (IOException | IllegalStateException e) {
       log.debug("[SseChatStreamSession.beat] 끊긴 연결이다 cause={}", e.getClass().getSimpleName());
+    } finally {
+      writeLock.unlock();
     }
   }
 
