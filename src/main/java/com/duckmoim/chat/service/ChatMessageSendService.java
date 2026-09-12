@@ -5,7 +5,7 @@ import com.duckmoim.chat.exception.ChatErrorCode;
 import com.duckmoim.chat.infra.AuthoredMessage;
 import com.duckmoim.chat.infra.ChatFanout;
 import com.duckmoim.chat.infra.ChatMessageRepository;
-import com.duckmoim.chat.infra.MessageEventCodec;
+import com.duckmoim.chat.infra.ChatFanoutCodec;
 import com.duckmoim.common.exception.BusinessException;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
@@ -43,7 +43,7 @@ public class ChatMessageSendService {
   private final ChatMessageWriter chatMessageWriter;
   private final ChatMessageRepository chatMessageRepository;
   private final ChatFanout chatFanout;
-  private final MessageEventCodec messageEventCodec;
+  private final ChatFanoutCodec chatFanoutCodec;
 
   /**
    * 보낸다. 이미 같은 식별자로 보낸 것이 있으면 그것을 그대로 돌려준다 (CH-07 · I-20).
@@ -93,7 +93,7 @@ public class ChatMessageSendService {
   }
 
   private void publish(MessageEvent event) {
-    String payload = messageEventCodec.encode(event);
+    String payload = chatFanoutCodec.encodeMessage(event);
     if (payload == null) {
       return;
     }

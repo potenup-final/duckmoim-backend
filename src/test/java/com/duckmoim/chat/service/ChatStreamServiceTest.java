@@ -8,6 +8,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.duckmoim.chat.domain.ChatRoom;
 import com.duckmoim.chat.domain.MessageEvent;
 import com.duckmoim.chat.exception.ChatErrorCode;
+import com.duckmoim.chat.infra.ChatFanout;
+import com.duckmoim.chat.infra.ChatFanoutCodec;
 import com.duckmoim.chat.infra.ChatRoomRepository;
 import com.duckmoim.common.exception.BusinessException;
 import java.time.LocalDateTime;
@@ -63,6 +65,8 @@ class ChatStreamServiceTest {
   @Autowired private ChatMessageSendService chatMessageSendService;
   @Autowired private ChatRoomLeaveService chatRoomLeaveService;
   @Autowired private ChatRoomRepository chatRoomRepository;
+  @Autowired private ChatFanout chatFanout;
+  @Autowired private ChatFanoutCodec chatFanoutCodec;
   @Autowired private JdbcTemplate jdbcTemplate;
 
   private long hostId;
@@ -256,6 +260,71 @@ class ChatStreamServiceTest {
 
     // 정체가 3초인데 1.5초 안에 와야 한다 — 직렬이면 못 온다.
     Awaitility.await().atMost(1500, TimeUnit.MILLISECONDS).until(() -> healthy.beats() == 1);
+  }
+
+  /**
+   * <b>다른 인스턴스에서 나간 사람의 연결을 여기서 끊는다</b> (PR #138 리뷰).
+   *
+   * <p><b>인스턴스 둘을 세우지 않고도 그 기준을 증명할 수 있다.</b> CH-10 의 팬아웃 검사와 같은 근거다 — Redis Pub/Sub 은 발행자와 구독자가 같은
+   * 프로세스인지 구분하지 않으므로, <b>퇴장 사건이 Redis 를 한 바퀴 돌아서 연결을 끊는 것</b>만 확인하면 인스턴스가 갈려도 같은 경로다.
+   *
+   * <p>여기서는 {@code ChatRoomLeaveService} 를 부르지 않고 <b>통로에 직접 발행한다.</b> 그것이 「다른 인스턴스가 퇴장을 처리했다」와 같은
+   * 상황이고, 이 인스턴스의 로컬 맵에는 아무 일도 일어나지 않은 상태다.
+   *
+   * <p><b>고치기 전에는 이 검사가 실패한다.</b> 예전 {@code dispatch} 는 판독한 것을 무조건 말풍선으로 다뤄서, 퇴장 사건이 오면 그냥 버려졌다.
+   */
+  @DisplayName("다른 인스턴스에서 나간 사람의 연결이 이 인스턴스에서 끊긴다.")
+  @Test
+  void dispatch_disconnectsMemberWhoLeftOnAnotherInstance() {
+    RecordingSession leaving = new RecordingSession();
+    RecordingSession staying = new RecordingSession();
+    chatStreamService.open(roomId, memberId, leaving);
+    chatStreamService.open(roomId, hostId, staying);
+
+    // 다른 인스턴스가 퇴장을 처리하고 통로에 알린 것과 같다.
+    chatFanout.publish(roomId, chatFanoutCodec.encodeMemberLeft(memberId));
+
+    Awaitility.await().atMost(5, TimeUnit.SECONDS).until(leaving::closed);
+    assertThat(chatStreamService.connectionCount(roomId)).isEqualTo(1);
+
+    chatMessageSendService.send(roomId, hostId, newClientId(), "나간 뒤의 말");
+
+    staying.awaitFirst();
+    assertThat(leaving.received()).isEmpty();
+  }
+
+  /** 남은 사람까지 끊으면 퇴장 한 번이 그 방의 실시간을 통째로 죽인다. */
+  @DisplayName("전파된 퇴장은 나간 사람의 연결만 끊는다.")
+  @Test
+  void dispatch_leavesOtherConnectionsAlone() {
+    RecordingSession leaving = new RecordingSession();
+    RecordingSession staying = new RecordingSession();
+    chatStreamService.open(roomId, memberId, leaving);
+    chatStreamService.open(roomId, hostId, staying);
+
+    chatFanout.publish(roomId, chatFanoutCodec.encodeMemberLeft(memberId));
+
+    Awaitility.await().atMost(5, TimeUnit.SECONDS).until(leaving::closed);
+    assertThat(staying.closed()).isFalse();
+  }
+
+  /**
+   * 퇴장 사건이 말풍선으로 새면 화면에 빈 말풍선이 뜬다.
+   *
+   * <p>봉투에 종류를 적고 판독한 쪽이 갈라야 하는 이유가 이것이다 ({@code ChatFanoutEvent}).
+   */
+  @DisplayName("퇴장 사건은 말풍선으로 밀리지 않는다.")
+  @Test
+  void dispatch_doesNotPushLeaveAsMessage() {
+    RecordingSession staying = new RecordingSession();
+    chatStreamService.open(roomId, hostId, staying);
+
+    chatFanout.publish(roomId, chatFanoutCodec.encodeMemberLeft(memberId));
+    chatMessageSendService.send(roomId, hostId, newClientId(), "진짜 말풍선");
+
+    staying.awaitFirst();
+    assertThat(staying.received()).hasSize(1);
+    assertThat(staying.received().get(0).content()).isEqualTo("진짜 말풍선");
   }
 
   private String newClientId() {
