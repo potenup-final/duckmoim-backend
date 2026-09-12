@@ -48,7 +48,7 @@ class NotificationDispatchServiceTest {
     long outboxId = givenPendingOutbox();
 
     // when
-    boolean sent = notificationDispatchService.dispatch(outboxId);
+    boolean sent = dispatch(outboxId);
 
     // then — 알림에 필요한 값이 아웃박스에서 그대로 옮겨진다
     assertThat(sent).isTrue();
@@ -72,7 +72,7 @@ class NotificationDispatchServiceTest {
     long outboxId = givenPendingOutbox();
 
     // when
-    notificationDispatchService.dispatch(outboxId);
+    dispatch(outboxId);
 
     // then
     assertThat(notificationDispatchService.claimSendableIds(NOW, 10)).isEmpty();
@@ -83,10 +83,10 @@ class NotificationDispatchServiceTest {
   void dispatch_alreadySentByAnotherWorker() {
     // given — 선점이 없어 (NT-04) 두 워커가 같은 건을 집는 상황이다
     long outboxId = givenPendingOutbox();
-    notificationDispatchService.dispatch(outboxId);
+    dispatch(outboxId);
 
     // when — 뒤에 집은 워커가 같은 건을 부른다
-    boolean sent = notificationDispatchService.dispatch(outboxId);
+    boolean sent = dispatch(outboxId);
 
     // then — 예외 없이 넘어가고 알림도 늘지 않는다
     assertThat(sent).isFalse();
@@ -98,7 +98,7 @@ class NotificationDispatchServiceTest {
   void recordFailure_alreadySentByAnotherWorker() {
     // given
     long outboxId = givenPendingOutbox();
-    notificationDispatchService.dispatch(outboxId);
+    dispatch(outboxId);
 
     // when — 유니크 제약에 걸려 롤백된 워커가 실패를 적으러 온 상황이다
     boolean movedToDlq = notificationDispatchService.recordFailure(outboxId, NOW);
@@ -109,7 +109,14 @@ class NotificationDispatchServiceTest {
     assertThat(outboxColumn(outboxId, "status")).isEqualTo("SENT");
   }
 
-  @DisplayName("이미 알림이 있는 건은 알림을 새로 만들지 않는다.")
+  /**
+   * <b>이 상태가 채널이 갈린 뒤 새 뜻을 얻었다</b> (ADR 0010). 「알림함에 행이 있는데 아웃박스는 아직 {@code PENDING}」은 워커가 {@code
+   * markSent} 전에 죽은 경우이자, <b>푸시만 실패해 재시도를 기다리는 경우</b>다. 어느 쪽이든 인앱을 다시 만들지 않고 지나가야 한다.
+   *
+   * <p><b>돌려주는 값의 뜻이 바뀌었다.</b> 예전 {@code dispatch} 는 「알림을 만들었나」였고 여기서 거짓이었다. 지금은 「이 행을 끝냈나」라서 참이다 —
+   * 인앱은 이미 있었고 이번 주기가 {@code markSent} 를 마쳤다.
+   */
+  @DisplayName("이미 알림이 있는 건은 알림을 새로 만들지 않고 보냈다고 적는다.")
   @Test
   void dispatch_notificationAlreadyExists() {
     // given — 알림만 있고 아웃박스는 아직 PENDING 인 상태를 직접 만든다
@@ -128,10 +135,10 @@ class NotificationDispatchServiceTest {
         NOW);
 
     // when
-    boolean sent = notificationDispatchService.dispatch(outboxId);
+    boolean sent = dispatch(outboxId);
 
     // then — 유니크 제약에 걸리는 대신 보냈다고만 적는다
-    assertThat(sent).isFalse();
+    assertThat(sent).isTrue();
     assertThat(notifications()).hasSize(1);
     assertThat(outboxColumn(outboxId, "status")).isEqualTo("SENT");
   }
@@ -264,5 +271,18 @@ class NotificationDispatchServiceTest {
         "SELECT next_attempt_at FROM notification_outbox WHERE id = ?",
         LocalDateTime.class,
         outboxId);
+  }
+
+  /**
+   * 운영의 세 단계를 그대로 편다 (ADR 0010) — 인앱을 만들고(T1), 푸시를 보내고(T2), 결과를 적는다(T3).
+   *
+   * <p>지금 채널이 하나라 T2 가 비어 있다. 그래도 <b>배치와 같은 순서로 부르는 것</b>이 이 검사의 전제다 — 다르게 부르면 여기서 재는 것이 운영에서 도는 것과
+   * 달라진다.
+   */
+  private boolean dispatch(long outboxId) {
+    return notificationDispatchService
+        .deliverInApp(outboxId)
+        .filter(delivery -> notificationDispatchService.markDelivered(delivery.outboxId()))
+        .isPresent();
   }
 }

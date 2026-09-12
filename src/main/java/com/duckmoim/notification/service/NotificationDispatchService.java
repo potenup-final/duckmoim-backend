@@ -11,6 +11,7 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Optional;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
@@ -130,45 +131,66 @@ public class NotificationDispatchService {
    *
    * @return 알림을 새로 만들었으면 {@code true}. 남이 처리했거나 행이 사라졌으면 {@code false}
    */
+  /**
+   * <b>T1 — 인앱 알림을 만든다</b> (ADR 0010).
+   *
+   * <p><b>여기서 {@code markSent} 를 하지 않는다.</b> 푸시가 T2 에서 돌고, 「보냈다」는 그 결과까지 본 T3 이 적는다. 한 트랜잭션에 담으면 푸시
+   * 실패가 이 INSERT 를 롤백시켜 <b>알림함이 통 빈다</b> — {@code I-25} 가 도메인 트랜잭션에서 끊어 낸 결합이 한 겹 안쪽에서 되살아나는 자리다.
+   *
+   * <p><b>이미 알림이 있으면 만들지 않고 그냥 지나간다.</b> 그 검사({@code existsByOutboxId})는 STAR-119 가 워커 재시작을 위해 넣은
+   * 것인데, 채널이 갈리면서 새 뜻이 붙었다 — <b>푸시만 실패해 행이 {@code PENDING} 으로 남은 건</b>이 다음 주기에 인앱을 건너뛰고 푸시만 재시도한다.
+   * <b>이 검사를 지우면 그 재시도가 유니크 제약에 부딪힌다.</b>
+   *
+   * @return 이 행을 계속 보낼 수 있으면 보낼 값, 이미 끝났거나 사라졌으면 빈 값
+   */
   @Transactional
-  public boolean dispatch(Long outboxId) {
+  public Optional<NotificationDelivery> deliverInApp(Long outboxId) {
+    NotificationOutbox outbox = outboxRepository.findById(outboxId).orElse(null);
+
+    if (outbox == null || !outbox.isPending()) {
+      return Optional.empty();
+    }
+
+    if (!notificationRepository.existsByOutboxId(outboxId)) {
+      notificationRepository.save(
+          Notification.of(
+              outboxId,
+              outbox.getRecipientId(),
+              outbox.getKind(),
+              outbox.getPostId(),
+              outbox.getCommentId()));
+    }
+
+    return Optional.of(
+        new NotificationDelivery(
+            outboxId,
+            outbox.getRecipientId(),
+            outbox.getKind(),
+            outbox.getPostId(),
+            outbox.getCommentId()));
+  }
+
+  /**
+   * <b>T3 — 채널이 모두 끝났음을 적는다</b> (ADR 0010).
+   *
+   * <p>T1 과 다른 트랜잭션이라 <b>워커가 죽는 창이 하나 늘었다</b> — 인앱은 만들어졌는데 여기 오기 전에 죽는 경우다. 그때 다음 시도가 T1 의 멱등 검사에
+   * 걸려 인앱을 건너뛰고 이것만 한다. 결과는 같다.
+   *
+   * @return 실제로 적었으면 참. 그 사이 남이 끝냈으면 거짓
+   */
+  @Transactional
+  public boolean markDelivered(Long outboxId) {
     NotificationOutbox outbox = outboxRepository.findById(outboxId).orElse(null);
 
     if (outbox == null || !outbox.isPending()) {
       return false;
     }
 
-    if (notificationRepository.existsByOutboxId(outboxId)) {
-      outbox.markSent();
-      return false;
-    }
-
-    notificationRepository.save(
-        Notification.of(
-            outboxId,
-            outbox.getRecipientId(),
-            outbox.getKind(),
-            outbox.getPostId(),
-            outbox.getCommentId()));
-
     outbox.markSent();
 
     return true;
   }
 
-  /**
-   * 실패를 적고 다음 시도를 미룬다. 시도를 다 썼으면 DLQ 로 옮긴다 (NT-03).
-   *
-   * <p><b>새 트랜잭션이다.</b> {@link #dispatch} 가 롤백된 뒤에 불리므로 그 트랜잭션과 이어지지 않는다.
-   *
-   * <p><b>옮기면서 원본을 지운다.</b> 명세 문면이 「별도 표로 옮기고」이고, 남겨 두면 워커가 10초마다 훑는 표에 죽은 건이 쌓인다.
-   *
-   * <p><b>남이 보낸 건에는 실패를 적지 않는다.</b> 유니크 제약에 걸려 {@link #dispatch} 가 롤백됐다는 것은 <b>다른 워커가 그 알림을
-   * 만들었다</b>는 뜻이라 우리 실패가 아니다. 그걸 세면 전달된 알림의 시도 횟수가 올라가고, 세 번 겹치면 <b>이미 보낸 알림이 DLQ 로 간다</b> — 그 표는
-   * 「못 보낸 것」이라는 뜻이므로 장부가 거짓이 된다.
-   *
-   * @return 시도를 다 써서 DLQ 로 옮겼으면 {@code true}
-   */
   @Transactional
   public boolean recordFailure(Long outboxId, LocalDateTime nowInUtc) {
     NotificationOutbox outbox = outboxRepository.findById(outboxId).orElse(null);

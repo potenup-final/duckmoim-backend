@@ -106,6 +106,11 @@ public class NotificationDispatchBatch {
   /**
    * 한 건을 보낸다. 실패는 여기서 멈추고 다음 건으로 넘어간다.
    *
+   * <p><b>단계가 셋이다</b> (ADR 0010). 인앱을 만들어 커밋하고(T1), 푸시를 트랜잭션 밖에서 보내고(T2), 결과를 적는다(T3). 한 트랜잭션에 담으면
+   * 푸시 실패가 인앱 알림을 롤백시킨다.
+   *
+   * <p>T1 이 빈 값을 주면 그 행은 이미 끝났거나 사라진 것이라 <b>T2 · T3 을 건너뛴다.</b>
+   *
    * <p><b>실패 기록이 발송과 다른 트랜잭션이다.</b> 발송이 롤백된 뒤에 불러야 시도 횟수가 남는다.
    *
    * <p>실패 로그에 예외를 함께 남기는 것은 무엇이 실패했는지가 DLQ 에 남지 않기 때문이다 — 다 쓴 건만 옮겨지고 (NT-03), 중간 실패의 원인은 로그가 유일한
@@ -113,7 +118,10 @@ public class NotificationDispatchBatch {
    */
   private boolean dispatchOne(Long outboxId, LocalDateTime nowInUtc) {
     try {
-      return notificationDispatchService.dispatch(outboxId);
+      return notificationDispatchService
+          .deliverInApp(outboxId)
+          .filter(delivery -> notificationDispatchService.markDelivered(delivery.outboxId()))
+          .isPresent();
 
     } catch (Exception exception) {
       recordFailure(outboxId, nowInUtc, exception);
