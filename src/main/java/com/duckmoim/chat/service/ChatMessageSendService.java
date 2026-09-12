@@ -4,11 +4,12 @@ import com.duckmoim.chat.domain.MessageEvent;
 import com.duckmoim.chat.exception.ChatErrorCode;
 import com.duckmoim.chat.infra.AuthoredMessage;
 import com.duckmoim.chat.infra.ChatFanout;
-import com.duckmoim.chat.infra.ChatMessageRepository;
 import com.duckmoim.chat.infra.ChatFanoutCodec;
+import com.duckmoim.chat.infra.ChatMessageRepository;
 import com.duckmoim.common.exception.BusinessException;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 
@@ -36,6 +37,7 @@ import org.springframework.stereotype.Service;
  * <p><b>재시도가 안전하다는 것이 이 기능의 계약이다.</b> 전송 응답을 못 받은 클라이언트가 다시 보내는 것이 정상 경로이므로, 두 번째 응답이 첫 번째와 구별되면 안
  * 된다. 그래서 기존 건도 새로 보낸 것과 같은 {@link SentMessage} 로 나간다.
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class ChatMessageSendService {
@@ -84,12 +86,36 @@ public class ChatMessageSendService {
    *
    * <p><b>실패해도 던지지 않는다.</b> 조회가 비거나 직렬화가 실패하면 발행을 건너뛴다 — {@code ChatFanout} 의 계약이 「팬아웃 장애가 전송을 깨지
    * 않는다」이고, 사용자는 새로고침하면 자기 말을 본다. 정본은 MySQL 이다.
+   *
+   * <p><b>그 계약을 조회 단계까지 넓힌다</b> (PR #138 리뷰). {@code Optional} 은 <b>값이 없는 경우</b>만 다루지 조회 자체가 터지는
+   * 경우를 막지 않는다 — 커넥션 고갈이나 타임아웃은 {@code RuntimeException} 으로 올라온다. {@code ChatFanout#publish} 와
+   * {@code ChatFanoutCodec} 은 이미 삼키는데 <b>그 둘 앞의 한 줄만 안 삼키고 있었다.</b>
+   *
+   * <p><b>새는 자리가 500 하나가 아니다.</b> 저장은 이미 커밋된 뒤라 그 예외는 <b>재시도로도 복구되지 않는다.</b>
+   *
+   * <pre>
+   * 1차  저장 COMMIT ✅ → fanOut 에서 터짐 → 사용자에게 500
+   * 2차  alreadySent 가 찾아내 즉시 200 으로 반환한다 (재시도는 발행하지 않는다)
+   *         ▲ 발행 경로를 아예 지나지 않는다
+   *           → 이 메시지는 영영 실시간으로 나가지 않는다. 새로고침해야 보인다
+   * </pre>
+   *
+   * <p><b>{@code RuntimeException} 으로 넓게 잡는다.</b> 좁히려면 어떤 예외가 올라오는지를 이 클래스가 알아야 하는데, 그것은 JPA 구현과
+   * 드라이버가 정하는 값이라 <b>여기서 아는 것이 오히려 결합이다.</b> 어차피 「무엇이 나든 전송은 안 깨진다」가 계약이다.
    */
   private void fanOut(Long messageId) {
-    chatMessageRepository
-        .findAuthoredById(messageId)
-        .map(ChatMessageSendService::toEvent)
-        .ifPresent(this::publish);
+    try {
+      chatMessageRepository
+          .findAuthoredById(messageId)
+          .map(ChatMessageSendService::toEvent)
+          .ifPresent(this::publish);
+    } catch (RuntimeException e) {
+      // 본문을 로그에 남기지 않는다. 어느 메시지였는지와 무엇이 터졌는지만 남긴다.
+      log.warn(
+          "[ChatMessageSendService.fanOut] 팬아웃 조회 실패 — 실시간 전달만 건너뛴다. messageId={} cause={}",
+          messageId,
+          e.getClass().getSimpleName());
+    }
   }
 
   private void publish(MessageEvent event) {
