@@ -18,8 +18,11 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.scheduling.Trigger;
 import org.springframework.scheduling.config.ScheduledTask;
 import org.springframework.scheduling.config.ScheduledTaskHolder;
+import org.springframework.scheduling.config.TriggerTask;
+import org.springframework.scheduling.support.SimpleTriggerContext;
 
 /**
  * 만료 배치의 반복과 시각 기준, 그리고 주기가 실제로 등록되는지 (NT-11a).
@@ -32,7 +35,13 @@ import org.springframework.scheduling.config.ScheduledTaskHolder;
  *
  * <p><b>{@code @Transactional} 이 없다.</b> 배치가 청크마다 트랜잭션을 열고 닫으므로 검사가 트랜잭션을 쥐고 있으면 그 경계가 사라진다.
  */
-@SpringBootTest(properties = "duckmoim.notification.expiry.chunk=2")
+@SpringBootTest(
+    properties = {
+      "duckmoim.notification.expiry.chunk=2",
+      // 운영 기본값을 그대로 건다. build.gradle 이 스케줄을 꺼 두지만 (0 0 0 1 1 *) 그 값으로는
+      // 「언제 도는가」를 볼 수 없다 — 인라인 프로퍼티가 시스템 프로퍼티를 이긴다
+      "duckmoim.notification.expiry.cron=0 0 4 * * *"
+    })
 class NotificationExpiryBatchTest {
 
   /** 고정된 현재 시각. UTC 로 2026-09-14 00:00, 같은 순간의 KST 는 09:00 이다. */
@@ -143,6 +152,34 @@ class NotificationExpiryBatchTest {
             .toList();
 
     assertThat(tasks).hasSize(1);
+  }
+
+  /**
+   * <b>등록만으로는 모자란다.</b> 위 검사는 주기 작업이 잡혔는지만 보고, {@code zone} 을 빼도 통과한다 — 그때 이 배치는 한국 시각 <b>오후
+   * 1시</b>에 돈다. JVM 기본 시간대를 쓰는데 {@code Dockerfile} 의 {@code eclipse-temurin} 에 {@code TZ} 가 없어
+   * 컨테이너에서 UTC 이기 때문이다.
+   *
+   * <p>그래서 트리거에게 <b>다음 실행이 언제냐</b>고 직접 묻는다. 9/14 09:00 KST 에서 다음 새벽 4시는 9/15 04:00 KST 이고, 그 순간은
+   * UTC 로 9/14 19:00 이다. {@code zone} 이 빠지면 9/15 04:00 UTC 가 나와 다섯 시간 어긋난다.
+   */
+  @DisplayName("만료 배치는 한국 시각 새벽 4시에 돈다.")
+  @Test
+  void deleteExpiredNotifications_runsAtFourInKst() {
+    Trigger trigger = triggerOf("deleteExpiredNotifications");
+    SimpleTriggerContext context = new SimpleTriggerContext(Clock.systemUTC());
+    context.update(null, null, Instant.parse("2026-09-14T00:00:00Z"));
+
+    assertThat(trigger.nextExecution(context)).isEqualTo(Instant.parse("2026-09-14T19:00:00Z"));
+  }
+
+  private Trigger triggerOf(String methodName) {
+    return scheduledTaskHolder.getScheduledTasks().stream()
+        .filter(task -> task.toString().contains(methodName))
+        .map(ScheduledTask::getTask)
+        .filter(TriggerTask.class::isInstance)
+        .map(task -> ((TriggerTask) task).getTrigger())
+        .findFirst()
+        .orElseThrow();
   }
 
   private long notified(LocalDateTime createdAt) {

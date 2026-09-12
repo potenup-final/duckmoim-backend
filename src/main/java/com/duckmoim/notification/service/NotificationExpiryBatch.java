@@ -32,6 +32,21 @@ public class NotificationExpiryBatch {
    */
   private static final int MAX_CHUNKS = 100;
 
+  /**
+   * 주기를 읽는 시간대.
+   *
+   * <p><b>안 주면 JVM 기본을 쓰고, 그 값이 컨테이너에서 UTC 다</b> — {@code Dockerfile} 의 {@code eclipse-temurin} 에
+   * {@code TZ} 설정이 없다. 그러면 {@code 0 0 4 * * *} 가 <b>한국 시각 오후 1시</b>에 돌아, 「알림 생성이 가장 적은 새벽 4시」라는
+   * {@code application.yml} 의 근거와 정반대가 된다.
+   *
+   * <p><b>이 저장소의 첫 벽시계 cron 이라 처음 걸리는 자리다.</b> 기존 셋은 전부 주기형이라 (10초 · 1분 · 5분) 시간대가 결과를 바꾸지 않았다 —
+   * 그래서 아무도 {@code zone} 을 쓴 적이 없다.
+   *
+   * <p>판정 시각({@code nowInUtc})은 이것과 무관하다. 그쪽은 {@code Clock} 이 주는 절대 시각이라 시간대를 타지 않는다 — <b>여기가 정하는
+   * 것은 언제 도느냐 하나다.</b>
+   */
+  private static final String KST = "Asia/Seoul";
+
   private final NotificationExpiryService notificationExpiryService;
   private final Clock clock;
 
@@ -63,7 +78,7 @@ public class NotificationExpiryBatch {
    * 것은 「무엇을 보냈나」인데 <b>여기서 알아야 하는 것은 「돌긴 했나」</b>이기 때문이다 — 이 배치가 조용히 멈추면 개인정보 처리방침 제3조가 고지한 보유 기간이
    * 깨지고, 지운 것이 없다는 로그가 없으면 멈춘 것과 구별되지 않는다. 주기가 하루에 한 번이라 값도 싸다.
    */
-  @Scheduled(cron = "${duckmoim.notification.expiry.cron}")
+  @Scheduled(cron = "${duckmoim.notification.expiry.cron}", zone = KST)
   public void deleteExpiredNotifications() {
     try {
       LocalDateTime cutoffInUtc = nowInUtc().minus(retention);
