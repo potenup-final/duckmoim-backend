@@ -146,6 +146,9 @@ class EndpointGradeTest {
           new Endpoint(HttpMethod.GET, "/api/v1/chat-rooms/404404/messages", Grade.SIGNUP),
           new Endpoint(
               HttpMethod.DELETE, "/api/v1/chat-rooms/404404/messages/404404", Grade.SIGNUP),
+          // 퇴장 (CH-04). 전송과 같은 SIGNUP_WRITE 줄이다. 제재 중에도 열리는 것은
+          // 등급이 아니라 관문 예외라 SanctionGateTest 가 본다.
+          new Endpoint(HttpMethod.DELETE, "/api/v1/chat-rooms/404404/members/me", Grade.SIGNUP),
           // 아직 없는 경로다. SIGNUP_READ 가 ** 라서 한 칸 더 깊어도 덮인다는 것을 못박는다
           // (PR #131 리뷰). 이 표는 손으로 유지하는 것이라 새 경로를 자동으로 잡아 주지
           // 않고, 그래서 규칙 쪽이 fail-closed 여야 한다 — CH-11 의 스트림, CH-13 의 읽은

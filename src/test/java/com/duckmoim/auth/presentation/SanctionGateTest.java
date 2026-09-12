@@ -3,6 +3,7 @@ package com.duckmoim.auth.presentation;
 import static com.duckmoim.safety.SanctionFixture.aSanction;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -168,6 +169,28 @@ class SanctionGateTest {
                 .content("{}")
                 .headers(bearer()))
         .andExpect(status().isBadRequest());
+  }
+
+  /**
+   * 퇴장만 접두어 아래에서 열려 있다 (CH-04).
+   *
+   * <p>도메인-모델링.md 「3.3 경계를 넘는 불변식」이 <i>"제재가 막는 것은 새로 쓰는 일이지 관계를 끊는 일이 아니다"</i> 로 이 예외를 미리 적어 뒀다.
+   * 신고와 탈퇴를 목록에서 뺀 것과 같은 판단이다.
+   *
+   * <p><b>{@code BANNED} 로 쏜다.</b> 셋 중 가장 센 제재라 여기서 열리면 나머지 둘도 열린다 — 반대로 가장 약한 것으로 보면 예외가 실제로 걸렸는지가
+   * 아니라 제재가 약한 것인지가 섞인다.
+   *
+   * <p><b>없는 방 번호라 404 로 끝난다.</b> 관문이 막으면 403 이므로 둘이 갈린다 — 실제로 제외 목록을 비워 이 검사가 403 으로 뒤집히는 것을 확인했다.
+   */
+  @DisplayName("제재 중에도 채팅방을 나갈 수 있다.")
+  @Test
+  void allowsLeavingWhileSanctioned() throws Exception {
+    sanction(SanctionKind.BANNED);
+
+    mockMvc
+        .perform(delete("/api/v1/chat-rooms/404404/members/me").headers(bearer()))
+        .andExpect(status().isNotFound())
+        .andExpect(jsonPath("$.code").value("CHAT_ROOM_NOT_FOUND"));
   }
 
   /** 등록 경로에 조회가 함께 걸린다. 메서드를 안 가리면 경고받은 사람이 남의 글도 못 본다. */

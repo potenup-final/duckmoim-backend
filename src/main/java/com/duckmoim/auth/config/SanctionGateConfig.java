@@ -44,22 +44,43 @@ public class SanctionGateConfig implements WebMvcConfigurer {
    * <p><b>그 「하나 늘었을 때」가 곧바로 왔다</b> — 메시지 삭제({@code DELETE .../messages/{id}}, CH-12 · STAR-112)가 이
    * 접두어 아래 두 번째 쓰기다. 그래서 지금은 <b>제재 중인 사람이 자기 메시지를 지울 수 없다.</b>
    *
-   * <p><b>그대로 둔다. 다만 옳은지는 열려 있다.</b> 아래 CH-04 각주가 적은 기준(<i>"제재가 막는 것은 새로 쓰는 일이지 관계를 끊는 일이
-   * 아니다"</i>)으로 재면 삭제는 막을 것이 아니다 — I-14 의 문장도 CH-20 의 문장도 「작성」·「쓸 수」다. 그럼에도 이 티켓에서 예외를 넣지 않은 이유는,
-   * <b>제재가 무엇을 막는지를 정하는 것이 CH-20 의 몫</b>이고 제재와 무관한 티켓이 그 범위를 조용히 좁히면 안 되기 때문이다. CH-04 예외와 함께 한자리에서
-   * 정한다.
+   * <p><b>그대로 둔다. 다만 옳은지는 열려 있다.</b> 아래 {@code SANCTIONED_EXCEPT} 가 적은 기준(<i>"제재가 막는 것은 새로 쓰는 일이지
+   * 관계를 끊는 일이 아니다"</i>)으로 재면 삭제도 막을 것이 아니다 — I-14 의 문장도 CH-20 의 문장도 「작성」·「쓸 수」이고, 소프트 삭제라 <b>열어도
+   * 증거가 사라지지 않는다</b> (본문이 표에 남고 AD-08 이 그대로 읽는다).
    *
-   * <p>덧붙여, 삭제를 열어도 증거가 사라지지는 않는다 — 소프트 삭제라 본문이 표에 남고 AD-08 이 그대로 읽는다.
+   * <p><b>그럼에도 이 티켓에서 예외 목록을 넓히지 않는다.</b> 제재가 무엇을 막는지를 정하는 것은 CH-20 의 몫이고, <b>제재 면제를 늘리는 일은 조용히
+   * 곁다리로 할 것이 아니다</b> — 넓히는 방향의 변경이라 한 줄이라도 그 자체로 판단이 필요하다. 아래 CH-04 예외가 STAR-102 에서 <b>자기 티켓의
+   * 결정으로</b> 들어온 것과 같은 모양이어야 한다.
+   *
+   * <p><b>넣는다면 {@code chat-rooms/&#42;/messages/&#42;} 한 줄이다.</b> 아래 「경로로 빼고 메서드로 빼지 않는다」를 지키는
+   * 형태이고, 그 깊이에 사는 것이 삭제 하나다 — CH-15 의 이미지 서명은 한 칸 더 깊어 걸리지 않는다.
+   *
+   * <p>(별표를 {@code &#42;} 로 적은 것은 자바독 안에서 별표와 빗금이 붙으면 주석이 거기서 닫히기 때문이다.)
    *
    * <p><b>전송 service 에는 제재 판정이 없다.</b> 있어야 하는 것이 아니라 없는 것이 맞다 — 판정 자리를 관문 하나로 모으는 것이 I-14 의 설계이고,
    * 서비스마다 적으면 하나를 빠뜨렸을 때 아무도 모른다.
    *
-   * <p><b>CH-04 퇴장이 붙는 날 예외를 넣어야 한다.</b> 퇴장은 {@code DELETE} 라 이 목록에 걸리는데, 정지당한 사람이 방을 나가지 못하는 것은
+   * <p><b>그래서 퇴장(CH-04)을 아래에서 도로 뺀다.</b> 퇴장은 {@code DELETE} 라 이 목록에 걸리는데, 정지당한 사람이 방을 나가지 못하는 것은
    * 신고와 탈퇴를 일부러 뺀 판단과 같은 줄에 있다 — 제재가 막는 것은 <b>새로 쓰는 일</b>이지 관계를 끊는 일이 아니다.
    */
   private static final String[] SANCTIONED_WRITE = {
     "/api/v1/posts/**", "/api/v1/comments/**", "/api/v1/chat-rooms/**"
   };
+
+  /**
+   * 위 접두어 아래이면서 막지 않는 경로 (CH-04).
+   *
+   * <p><b>제재가 막는 것은 새로 쓰는 일이지 관계를 끊는 일이 아니다</b> (도메인-모델링.md 「3.3 경계를 넘는 불변식」). 신고({@code
+   * /api/v1/reports})와 탈퇴를 목록에서 뺀 것과 같은 판단이고, 방을 나가는 것은 그 둘에 가깝다 — 정지당한 사람을 대화방에 가둬 두는 것이 제재의 목적일 수
+   * 없다.
+   *
+   * <p><b>경로로 빼고 메서드로 빼지 않는다.</b> 인터셉터의 제외 목록이 경로 단위라 그렇기도 하지만, 그 편이 안전한 방향이기도 하다 — 이 경로에 사는 것은 퇴장
+   * {@code DELETE} 하나이고, 여기에 쓰기를 새로 얹는 일은 없다. 반대로 메서드로 빼면 앞으로 생기는 모든 {@code DELETE} 가 함께 열린다.
+   *
+   * <p><b>{@code SecurityConfig} 에는 같은 예외가 없다.</b> 그쪽은 등급이라 나가기도 {@code SIGNUP} 이 맞다 — 가입을 마치지 않은
+   * 계정은 애초에 방 멤버가 아니라 나갈 방도 없다. 두 목록이 여기서만 갈리는 이유가 그것이다.
+   */
+  private static final String[] SANCTIONED_EXCEPT = {"/api/v1/chat-rooms/*/members/me"};
 
   private final ObjectProvider<SanctionQueryService> sanctionQueryService;
 
@@ -69,6 +90,7 @@ public class SanctionGateConfig implements WebMvcConfigurer {
         service ->
             registry
                 .addInterceptor(new SanctionGateInterceptor(service))
-                .addPathPatterns(SANCTIONED_WRITE));
+                .addPathPatterns(SANCTIONED_WRITE)
+                .excludePathPatterns(SANCTIONED_EXCEPT));
   }
 }
