@@ -65,6 +65,22 @@ public class ChatStreamService {
    * <p><b>연결한 뒤에 나가는 경우는 여기서 못 막는다.</b> 이 판정은 붙는 순간 한 번이고 연결은 몇 시간 열려 있다. 그래서 퇴장이 {@link
    * #disconnect} 로 직접 끊는다.
    *
+   * <p><b>같은 모양의 구멍이 제재에도 있다</b> (STAR-84). {@code SanctionGateConfig} 가 {@code
+   * /api/v1/chat-rooms/**} 를 <b>읽기까지</b> 막게 되면서 {@code BANNED} 는 스트림을 열 수 없는데, <b>이미 열어 둔 연결은 그대로
+   * 흐른다</b> — 관문은 요청이 올 때만 돌고 스트림은 요청이 한 번뿐이기 때문이다.
+   *
+   * <pre>
+   * 20:00  하늘이 스트림을 연다 (정상 회원)
+   * 20:30  운영이 하늘을 BANNED 로 제재한다
+   * 20:31  대화가 계속 흘러간다        ← 관문이 다시 돌 일이 없다
+   * </pre>
+   *
+   * <p><b>이 티켓에서 막지 않았다.</b> 퇴장은 채팅 안의 명령이라 {@code ChatRoomLeaveService} 가 부르면 됐지만, 제재 실행은 Safety 의
+   * 명령이다 — 채팅 티켓이 남의 도메인에 손을 넣어 연결을 끊는 것은 범위를 넘는다. <b>막으려면 제재 실행이 {@link #disconnect} 를 부르거나, 하트비트가
+   * 30초마다 멤버·제재를 다시 보면 된다</b> (후자는 연결 수만큼 조회가 는다).
+   *
+   * <p>노출은 스트림 타임아웃 30분으로 상한이 있다 — 그 뒤 재연결할 때 관문이 다시 돌아 막힌다.
+   *
    * @return 연결이 끝났을 때 부를 정리 작업. 부르지 않으면 죽은 연결이 방마다 쌓인다
    */
   public Runnable open(Long roomId, Long userId, ChatStreamSession session) {
