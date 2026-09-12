@@ -7,9 +7,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.duckmoim.chat.domain.ChatRoom;
 import com.duckmoim.chat.domain.MessageEvent;
+import com.duckmoim.chat.domain.MessageStatus;
 import com.duckmoim.chat.exception.ChatErrorCode;
 import com.duckmoim.chat.infra.ChatRoomRepository;
 import com.duckmoim.common.exception.BusinessException;
+import com.duckmoim.identity.domain.AuthorDisplay;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
@@ -62,6 +64,7 @@ class ChatStreamServiceTest {
   @Autowired private ChatStreamService chatStreamService;
   @Autowired private ChatMessageSendService chatMessageSendService;
   @Autowired private ChatRoomLeaveService chatRoomLeaveService;
+  @Autowired private ChatMessageDeleteService chatMessageDeleteService;
   @Autowired private ChatRoomRepository chatRoomRepository;
   @Autowired private JdbcTemplate jdbcTemplate;
 
@@ -258,6 +261,188 @@ class ChatStreamServiceTest {
 
     // 정체가 3초인데 1.5초 안에 와야 한다 — 직렬이면 못 온다.
     Awaitility.await().atMost(1500, TimeUnit.MILLISECONDS).until(() -> healthy.beats() == 1);
+  }
+
+  // ── CH-11 재연결 시 누락 복구 ────────────────────────────────────────────────
+
+  /**
+   * <b>이 검사가 CH-11 의 검증 기준이다</b> — 끊고 그 사이 N건을 보낸 뒤 재연결하면 <b>유실 0건</b>.
+   *
+   * <p>끊긴 연결과 다시 붙은 연결을 한 검사 안에 둔 것은 <b>둘이 서로의 대조군</b>이기 때문이다. 앞의 것은 끊긴 뒤의 세 건을 못 받고 (그것이 D 까지의
+   * 상태다) 뒤의 것은 다 받는다.
+   */
+  @DisplayName("끊긴 사이에 온 메시지를 재연결하면 하나도 빠짐없이 받는다.")
+  @Test
+  void reopen_replaysEveryMissedMessage() {
+    RecordingSession beforeBreak = new RecordingSession();
+    Runnable release = chatStreamService.open(roomId, memberId, beforeBreak, null);
+
+    long lastReceived = send("받은 것");
+    beforeBreak.awaitFirst();
+
+    release.run(); // ✂ 배포 · 타임아웃 · 지하철
+
+    List<Long> missed = List.of(send("그 사이 1"), send("그 사이 2"), send("그 사이 3"));
+
+    RecordingSession reconnected = new RecordingSession();
+    chatStreamService.open(roomId, memberId, reconnected, lastReceived);
+
+    assertThat(beforeBreak.received()).hasSize(1); // 끊긴 쪽은 세 건을 못 봤다
+    assertThat(reconnected.received())
+        .extracting(MessageEvent::messageId)
+        .containsSubsequence(missed.get(0), missed.get(1), missed.get(2));
+  }
+
+  /**
+   * <b>재전송은 오래된 것부터다.</b> 순서가 뒤집히면 중간에 끊겼을 때 남는 구간이 이어지지 않는다 — 다음 재연결이 <b>이미 받은 뒤쪽</b>을 기준으로 삼게 된다.
+   */
+  @DisplayName("되돌려받은 메시지는 오래된 것부터 도착한다.")
+  @Test
+  void reopen_replaysOldestFirst() {
+    long anchor = send("기준");
+    send("그 사이 1");
+    send("그 사이 2");
+
+    RecordingSession reconnected = new RecordingSession();
+    chatStreamService.open(roomId, memberId, reconnected, anchor);
+
+    assertThat(reconnected.received()).extracting(MessageEvent::messageId).isSorted();
+  }
+
+  /**
+   * <b>{@code id} 는 삽입 순서이지 커밋 순서가 아니다</b> ({@code MessageCursor} · PR #131 리뷰).
+   *
+   * <p>낮은 번호가 늦게 커밋되는 창이 있어 {@code id > lastId} 로 이어 읽으면 그 한 건이 영영 안 온다. 그래서 <b>재연결 지점보다 앞에서부터</b>
+   * 읽고 클라이언트가 중복을 거른다. 여기서는 그 「앞」이 실제로 다시 오는지를 본다 — {@code BACKTRACK} 을 0 으로 되돌리면 깨진다.
+   */
+  @DisplayName("재연결 지점보다 앞의 메시지도 다시 보내 커밋 순서 구멍을 덮는다.")
+  @Test
+  void reopen_backtracksBeforeTheResumePoint() {
+    long earlier = send("먼저 온 것");
+    long resumeFrom = send("마지막으로 받은 것");
+
+    RecordingSession reconnected = new RecordingSession();
+    chatStreamService.open(roomId, memberId, reconnected, resumeFrom);
+
+    assertThat(reconnected.received()).extracting(MessageEvent::messageId).contains(earlier);
+  }
+
+  /** 첫 연결에는 과거를 밀지 않는다. 화면은 목록 API(CH-09)가 채우고, 여기서도 밀면 같은 것이 두 경로로 온다. */
+  @DisplayName("재연결 지점이 없으면 과거를 되돌려주지 않는다.")
+  @Test
+  void open_withoutResumePointReplaysNothing() {
+    send("연결 전에 오간 말");
+
+    RecordingSession fresh = new RecordingSession();
+    chatStreamService.open(roomId, memberId, fresh, null);
+
+    assertThat(fresh.received()).isEmpty();
+  }
+
+  /**
+   * <b>너무 많이 밀리면 되돌려주지 않고 알린다.</b> 무한이면 며칠 끊겼던 클라이언트 하나가 수만 건을 끌어가 그 한 명의 재연결이 인스턴스의 메모리와 선로를 먹는다.
+   *
+   * <p>알림에 재개 지점을 그대로 실어 보내는지도 함께 본다 — 클라이언트가 목록을 어디까지 거슬러 올라가야 하는지가 그 값이다.
+   */
+  @DisplayName("되돌려줄 것이 상한을 넘으면 재전송 대신 따라잡으라고 알린다.")
+  @Test
+  void reopen_signalsGapWhenTooFarBehind() {
+    long resumeFrom = send("기준");
+    insertMessages(ChatStreamReplayReader.LIMIT + 1);
+
+    RecordingSession reconnected = new RecordingSession();
+    chatStreamService.open(roomId, memberId, reconnected, resumeFrom);
+
+    assertThat(reconnected.received()).isEmpty();
+    assertThat(reconnected.gaps()).containsExactly(resumeFrom);
+  }
+
+  /** 끊겨 있는 동안 지워진 메시지도 자리표시자로 와야 그 자리가 목록(CH-09 · CH-12)과 맞는다. */
+  @DisplayName("끊긴 사이에 지워진 메시지는 본문 없이 자리표시자로 온다.")
+  @Test
+  void reopen_replaysDeletedMessageAsPlaceholder() {
+    long resumeFrom = send("기준");
+    long deleted = send("지울 말");
+    chatMessageDeleteService.delete(roomId, deleted, hostId);
+
+    RecordingSession reconnected = new RecordingSession();
+    chatStreamService.open(roomId, memberId, reconnected, resumeFrom);
+
+    assertThat(reconnected.received())
+        .filteredOn(event -> event.messageId().equals(deleted))
+        .singleElement()
+        .satisfies(
+            event -> {
+              assertThat(event.content()).isNull();
+              assertThat(event.status()).isEqualTo(MessageStatus.DELETED);
+            });
+  }
+
+  /** <b>재전송이 끝나면 실시간이 이어져야 한다.</b> 구독을 먼저 걸고 읽는 순서라 이 검사가 그 순서를 지킨다 — 뒤집으면 읽는 동안 발행된 것이 사라진다. */
+  @DisplayName("되돌려준 뒤에도 새 메시지가 실시간으로 계속 온다.")
+  @Test
+  void reopen_keepsReceivingAfterReplay() {
+    long resumeFrom = send("기준");
+    send("그 사이");
+
+    RecordingSession reconnected = new RecordingSession();
+    chatStreamService.open(roomId, memberId, reconnected, resumeFrom);
+    int replayed = reconnected.received().size();
+
+    send("재연결한 뒤에 온 말");
+
+    Awaitility.await()
+        .atMost(5, TimeUnit.SECONDS)
+        .until(() -> reconnected.received().size() > replayed);
+  }
+
+  /**
+   * <b>재전송이 탈퇴자를 처음 만나는 경로다</b> (AU-11).
+   *
+   * <p>팬아웃은 방금 보낸 사람의 메시지라 탈퇴자를 만날 수 없지만, 재전송은 몇 시간 전 것을 읽어 그 사이 탈퇴한 사람을 만난다. 사건을 만드는 자리를 목록과 합치지
+   * 않으면 <b>실시간 경로로만 실명이 남는다.</b>
+   */
+  @DisplayName("탈퇴한 사람의 옛 메시지는 자리표시자 이름으로 되돌아온다.")
+  @Test
+  void reopen_anonymizesWithdrawnSender() {
+    long resumeFrom = send("기준");
+    long fromWithdrawn = send("탈퇴 전에 남긴 말");
+    jdbcTemplate.update("UPDATE user SET status = 'WITHDRAWN' WHERE id = ?", hostId);
+
+    RecordingSession reconnected = new RecordingSession();
+    chatStreamService.open(roomId, memberId, reconnected, resumeFrom);
+
+    assertThat(reconnected.received())
+        .filteredOn(event -> event.messageId().equals(fromWithdrawn))
+        .singleElement()
+        .satisfies(
+            event -> {
+              assertThat(event.senderNickname()).isEqualTo(AuthorDisplay.WITHDRAWN_NICKNAME);
+              assertThat(event.senderProfileImageUrl()).isNull();
+            });
+  }
+
+  /** 방장이 보낸다. 돌려주는 값은 메시지 번호다. */
+  private long send(String content) {
+    return chatMessageSendService.send(roomId, hostId, newClientId(), content).messageId();
+  }
+
+  /**
+   * 전송 경로를 거치지 않고 행만 밀어 넣는다.
+   *
+   * <p>상한 초과를 만들려면 백 건이 넘어야 하는데, 그 수를 전송 서비스로 만들면 검사 하나가 백 번의 트랜잭션이 된다. <b>여기서 보는 것은 개수이지 전송 규칙이
+   * 아니다.</b>
+   */
+  private void insertMessages(int count) {
+    jdbcTemplate.batchUpdate(
+        """
+        INSERT INTO chat_message (room_id, sender_id, client_message_id, content, status,
+                                  created_at, updated_at)
+        VALUES (?, ?, ?, ?, 'ACTIVE', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6))
+        """,
+        java.util.stream.IntStream.range(0, count)
+            .mapToObj(i -> new Object[] {roomId, hostId, newClientId(), "밀린 말 " + i})
+            .toList());
   }
 
   private String newClientId() {
