@@ -42,7 +42,8 @@ public enum ChatErrorCode implements ErrorCode {
   CHAT_ROOM_READ_ONLY(HttpStatus.CONFLICT, "만남 후 7일이 지나 더 이상 메시지를 보낼 수 없습니다."),
   CHAT_CLIENT_MESSAGE_ID_REUSED(HttpStatus.CONFLICT, "이미 다른 메시지에 쓴 식별자입니다."),
   CHAT_MESSAGE_NOT_FOUND(HttpStatus.NOT_FOUND, "메시지를 찾을 수 없습니다."),
-  CHAT_MESSAGE_NOT_SENDER(HttpStatus.FORBIDDEN, "보낸 사람만 지울 수 있습니다.");
+  CHAT_MESSAGE_NOT_SENDER(HttpStatus.FORBIDDEN, "보낸 사람만 지울 수 있습니다."),
+  CHAT_ROOM_NOT_REPORTED(HttpStatus.FORBIDDEN, "신고가 접수된 방만 열람할 수 있습니다.");
 
   private final HttpStatus status;
   private final String message;
