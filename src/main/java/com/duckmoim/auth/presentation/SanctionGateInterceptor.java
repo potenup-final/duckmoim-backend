@@ -15,7 +15,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.servlet.HandlerInterceptor;
 
 /**
- * 제재 중인 회원의 쓰기를 관문에서 막는다 (I-14).
+ * 제재 중인 회원의 쓰기를 관문에서 막는다 (I-14). <b>비공개 경로에서는 읽기도 막는다</b> (STAR-84).
  *
  * <p><b>개별 엔드포인트에 적지 않는다.</b> API-설계.md 「1. 권한 등급」가 <i>"제재 중인 유저는 {@code SIGNUP} 등급 전체에서 차단된다
  * (I-14). 개별 엔드포인트에 적지 않고 인터셉터 한 곳에서 판정한다"</i> 고 정했다. 서비스마다 적으면 하나를 빠뜨렸을 때 아무도 모른다.
@@ -30,6 +30,9 @@ import org.springframework.web.servlet.HandlerInterceptor;
  * <p><b>등록은 {@code SanctionGateConfig} 가 한다.</b> 어느 경로에 거는지가 이 클래스가 아니라 그쪽에 있다 — {@code
  * SecurityConfig} 의 {@code SIGNUP} 쓰기 목록과 나란히 두어야 둘이 어긋난 것이 보인다.
  *
+ * <p><b>그래서 「비공개 경로인가」도 여기 적지 않고 생성자로 받는다.</b> {@code /chat-rooms} 를 이 클래스에 적으면 경로 지식이 두 곳에 생기고,
+ * 다음에 비공개 경로가 늘 때 한쪽만 고치게 된다.
+ *
  * <p><b>빈이 아니다.</b> {@code @Component} 를 붙이면 {@code @WebMvcTest} 가 {@code HandlerInterceptor} 를
  * 슬라이스에 집어 가는데, 그러면 컨트롤러 슬라이스 테스트가 전부 Safety 빈을 요구하게 된다. 설정이 직접 만든다.
  */
@@ -39,11 +42,21 @@ public class SanctionGateInterceptor implements HandlerInterceptor {
   private final SanctionQueryService sanctionQueryService;
 
   /**
+   * 이 등록이 <b>읽기까지</b> 보는가.
+   *
+   * <p>참이면 비공개 경로다 — {@code BANNED} 의 읽기가 막힌다 (도메인-모델링.md 「6. 라이프사이클」의 제재 축 「비공개 읽기」 열). 거짓이면 공개
+   * 읽기가 섞인 경로라 쓰기만 본다.
+   */
+  private final boolean guardsReading;
+
+  /**
    * 제재 중이면 {@code USER_SANCTIONED} 403 이고, <b>{@code message} 에 사유가 실린다</b> (AD-04 · AU-12).
    *
-   * <p><b>읽기는 막지 않는다.</b> 등록 경로({@code /api/v1/posts/**} · {@code /api/v1/comments/**})에는 목록·상세 조회가
-   * 함께 걸리는데, 도메인 6장 제재 축 표에서 읽기가 막히는 것은 {@code BANNED} 뿐이고 그것은 로그인 자체를 막는 일이라 AU 쪽 소관이다. 여기서 메서드를
-   * 가리지 않으면 <b>경고받은 사람이 남의 모집글도 못 보게 된다.</b>
+   * <p><b>공개 읽기가 섞인 경로에서는 읽기를 막지 않는다.</b> {@code /api/v1/posts/**} · {@code /api/v1/comments/**} 에는
+   * 목록·상세 조회가 함께 걸리는데, 거기서 메서드를 가리지 않으면 <b>경고받은 사람이 남의 모집글도 못 보게 된다.</b> 그 경로들은 {@code
+   * guardsReading} 이 거짓으로 등록된다.
+   *
+   * <p><b>비공개 경로에서는 읽기도 본다</b> (STAR-84). 지금 그런 등록은 채팅방 하나이고, 막히는 것은 {@code BANNED} 뿐이다.
    *
    * <p>인증이 없으면 그냥 보낸다. 이 인터셉터가 걸리는 경로의 쓰기는 이미 {@code SIGNUP} 등급이라 관문이 401·403 으로 끝냈지만, 같은 경로의 읽기는
    * 비회원에게 열려 있어 (API-설계.md 「2-4. 모집글」·「2-5. 댓글」) 인증 없는 요청이 실제로 여기까지 온다.
@@ -52,7 +65,8 @@ public class SanctionGateInterceptor implements HandlerInterceptor {
   public boolean preHandle(
       HttpServletRequest request, HttpServletResponse response, Object handler) {
 
-    if (isReading(request)) {
+    boolean reading = isReading(request);
+    if (reading && !guardsReading) {
       return true;
     }
 
@@ -61,11 +75,22 @@ public class SanctionGateInterceptor implements HandlerInterceptor {
       return true;
     }
 
-    if (!sanctionQueryService.canWrite(userId)) {
+    if (!allows(userId, reading)) {
       throw new BusinessException(UserErrorCode.USER_SANCTIONED, reasonOf(userId));
     }
 
     return true;
+  }
+
+  /**
+   * 판정을 고르기만 한다.
+   *
+   * <p>여기서 {@code kind} 를 보지 않는 것이 이 클래스의 규칙이다 — 무엇이 무엇을 막는지는 {@code SanctionPolicy} 가 안다.
+   */
+  private boolean allows(Long userId, boolean reading) {
+    return reading
+        ? sanctionQueryService.canReadPrivate(userId)
+        : sanctionQueryService.canWrite(userId);
   }
 
   /**
