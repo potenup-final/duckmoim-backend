@@ -71,6 +71,15 @@ public class SecurityConfig {
   //
   // SanctionGateConfig 의 SANCTIONED_WRITE 와 같은 목록이어야 한다 (CH-20). 신고만 그쪽에
   // 없고, 왜 없는지가 그쪽 각주에 있다.
+  //
+  // PUT 을 더했다 (CH-14 · STAR-115). 이미지 업로드 확정이 PUT 이고, 그 전까지 이 목록에
+  // POST · PATCH · DELETE 만 걸려 있어서 **PUT 이 anyRequest().authenticated() 로
+  // 떨어졌다** — 아래 SIGNUP_READ 각주가 "안 적은 메서드가 열리는 fail-open" 이라고 경고한
+  // 바로 그 자리다. 가입을 마치지 않은 계정에게 쓰기가 열린다.
+  //
+  // 채팅 밖의 세 경로에는 지금 PUT 엔드포인트가 없어 조이는 변경이다. 프로필 이미지 확정도
+  // PUT 인데 그쪽은 MY_PAGE(/api/v1/users/me/**)가 메서드 구분 없이 덮어서 같은 구멍이
+  // 없었다.
   private static final String[] SIGNUP_WRITE = {
     "/api/v1/posts/**", "/api/v1/comments/**", "/api/v1/reports", "/api/v1/chat-rooms/**"
   };
@@ -166,6 +175,7 @@ public class SecurityConfig {
               registry.requestMatchers(HttpMethod.GET, SIGNUP_READ).hasAuthority(SIGNUP);
 
               registry.requestMatchers(HttpMethod.POST, SIGNUP_WRITE).hasAuthority(SIGNUP);
+              registry.requestMatchers(HttpMethod.PUT, SIGNUP_WRITE).hasAuthority(SIGNUP);
               registry.requestMatchers(HttpMethod.PATCH, SIGNUP_WRITE).hasAuthority(SIGNUP);
               registry.requestMatchers(HttpMethod.DELETE, SIGNUP_WRITE).hasAuthority(SIGNUP);
 
