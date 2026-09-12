@@ -11,14 +11,20 @@ import static org.mockito.BDDMockito.willThrow;
 import static org.mockito.Mockito.times;
 
 import com.duckmoim.chat.domain.MessageEvent;
+import com.duckmoim.chat.domain.MessageStatus;
 import com.duckmoim.chat.infra.ChatFanout;
 import com.duckmoim.chat.infra.ChatFanoutCodec;
+import com.duckmoim.chat.infra.ChatFanoutEvent;
 import com.duckmoim.chat.infra.ChatFanoutSubscription;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.Consumer;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Captor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -41,6 +47,7 @@ class ChatStreamOpenFailureTest {
   private static final long ROOM_ID = 3L;
   private static final long USER_ID = 11L;
   private static final long LAST_EVENT_ID = 101L;
+  private static final String LIVE_PAYLOAD = "{}";
 
   @Mock private ChatRoomMembershipReader chatRoomReader;
   @Mock private ChatFanout chatFanout;
@@ -48,6 +55,9 @@ class ChatStreamOpenFailureTest {
   @Mock private ChatStreamHeartbeatExecutor heartbeatExecutor;
   @Mock private ChatStreamReplayReader replayReader;
   @Mock private ChatFanoutSubscription subscription;
+
+  /** 구독 스레드가 받는 핸들러. 이것을 직접 부르면 실제 팬아웃 경로가 그대로 돈다. */
+  @Captor private ArgumentCaptor<Consumer<String>> handlerCaptor;
 
   @InjectMocks private ChatStreamService chatStreamService;
 
@@ -111,6 +121,86 @@ class ChatStreamOpenFailureTest {
     assertThat(chatStreamService.connectionCount(ROOM_ID)).isEqualTo(1);
   }
 
+  /**
+   * <b>재전송 중에 도착한 실시간이 먼저 실리면 안 된다</b> (PR #142 리뷰).
+   *
+   * <p>SSE 명세상 브라우저는 <b>마지막으로 받은</b> {@code id} 를 책갈피로 쓴다 — 가장 큰 값이 아니다. 재전송 도중 큰 번호가 끼어든 뒤 끊기면 다음
+   * 재연결이 그 큰 번호를 기준으로 삼아 <b>사이 구간이 영영 안 온다.</b>
+   *
+   * <pre>
+   * 선로   102, 103, [202], 104 …      ← 버퍼링 전
+   *                  ▲ 여기서 끊기면 책갈피가 202 가 된다
+   * 선로   102, 103, 104 … 201, 202    ← 버퍼링 후. 단조 증가
+   * </pre>
+   *
+   * <p><b>구독 핸들러를 직접 부른다.</b> {@code chatFanout.subscribe} 가 받은 그 람다라, 구독 스레드가 하는 일과 같은 경로를 탄다 —
+   * {@code ChatStreamService} 에 검사용 구멍을 내지 않는다.
+   */
+  @DisplayName("재전송 중에 온 실시간 메시지는 재전송이 끝난 뒤에 실린다.")
+  @Test
+  void open_buffersLiveEventsUntilReplayEnds() {
+    givenSubscribable();
+    given(chatFanoutCodec.decode(LIVE_PAYLOAD)).willReturn(ChatFanoutEvent.message(event(202L)));
+
+    // 재전송이 102 · 103 을 만드는 사이에 구독 스레드가 202 를 밀어 넣는다.
+    given(replayReader.readSince(anyLong(), anyLong()))
+        .willAnswer(
+            invocation -> {
+              fanoutHandler().accept(LIVE_PAYLOAD);
+              return MissedMessages.of(List.of(event(102L), event(103L)));
+            });
+
+    open(LAST_EVENT_ID);
+
+    assertThat(session.sentIds()).containsExactly(102L, 103L, 202L);
+  }
+
+  /** 첫 연결에도 방출은 시작돼야 한다. 안 그러면 그 연결이 영원히 조용하다. */
+  @DisplayName("재전송할 것이 없어도 실시간이 바로 흐른다.")
+  @Test
+  void open_startsDeliveringWithoutReplay() {
+    givenSubscribable();
+    given(chatFanoutCodec.decode(LIVE_PAYLOAD)).willReturn(ChatFanoutEvent.message(event(202L)));
+
+    open(null);
+    fanoutHandler().accept(LIVE_PAYLOAD);
+
+    assertThat(session.sentIds()).containsExactly(202L);
+  }
+
+  /** 재전송이 터져도 버퍼가 열려야 한다 — {@code finally} 를 걷어내면 이 연결이 영원히 조용해진다. */
+  @DisplayName("재전송이 터져도 그 뒤의 실시간은 흐른다.")
+  @Test
+  void open_startsDeliveringAfterReplayFailure() {
+    givenSubscribable();
+    given(chatFanoutCodec.decode(LIVE_PAYLOAD)).willReturn(ChatFanoutEvent.message(event(202L)));
+    willThrow(new QueryTimeoutException("커넥션 고갈"))
+        .given(replayReader)
+        .readSince(anyLong(), anyLong());
+
+    open(LAST_EVENT_ID);
+    fanoutHandler().accept(LIVE_PAYLOAD);
+
+    assertThat(session.sentIds()).containsExactly(202L);
+  }
+
+  private Consumer<String> fanoutHandler() {
+    then(chatFanout).should().subscribe(anyLong(), handlerCaptor.capture());
+    return handlerCaptor.getValue();
+  }
+
+  private static MessageEvent event(long messageId) {
+    return new MessageEvent(
+        messageId,
+        ROOM_ID,
+        USER_ID,
+        "덕후1",
+        null,
+        "말",
+        MessageStatus.ACTIVE,
+        LocalDateTime.of(2026, 10, 2, 11, 10));
+  }
+
   private void givenSubscribable() {
     given(chatFanout.subscribe(anyLong(), any())).willReturn(subscription);
   }
@@ -147,6 +237,11 @@ class ChatStreamOpenFailureTest {
 
     List<Long> gaps() {
       return gaps;
+    }
+
+    /** 선로에 실린 순서. 단조 증가여야 한다. */
+    List<Long> sentIds() {
+      return received.stream().map(MessageEvent::messageId).toList();
     }
   }
 }

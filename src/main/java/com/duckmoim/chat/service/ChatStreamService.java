@@ -5,10 +5,13 @@ import com.duckmoim.chat.infra.ChatFanout;
 import com.duckmoim.chat.infra.ChatFanoutCodec;
 import com.duckmoim.chat.infra.ChatFanoutEvent;
 import com.duckmoim.chat.infra.ChatFanoutSubscription;
+import java.util.ArrayDeque;
 import java.util.List;
 import java.util.Map;
+import java.util.Queue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.locks.ReentrantLock;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -118,8 +121,13 @@ public class ChatStreamService {
       throw e;
     }
 
-    // 구독을 건 뒤에 읽는다. 순서가 뒤집히면 그 사이 발행된 것이 사라진다 — replay() 자바독.
-    replay(roomId, session, lastEventId);
+    try {
+      // 구독을 건 뒤에 읽는다. 순서가 뒤집히면 그 사이 발행된 것이 사라진다 — replay() 자바독.
+      replay(roomId, session, lastEventId);
+    } finally {
+      // 재전송이 어떻게 끝나든 담아 둔 실시간을 흘려보낸다. 안 부르면 이 연결이 영원히 조용하다.
+      connection.startDelivering();
+    }
 
     return release;
   }
@@ -142,11 +150,16 @@ public class ChatStreamService {
    * <p><b>유실은 못 되돌리고 중복은 되돌린다.</b> 클라이언트가 이미 {@code clientMessageId} 로 멱등 처리를 하고 있어 {@code
    * messageId} 중복 제거가 새 규칙이 아니다.
    *
-   * <p><b>그 대가로 재전송과 실시간이 순서를 섞어 도착할 수 있다.</b> 재전송은 요청 스레드이고 실시간은 구독 스레드라, 읽는 동안 도착한 새 메시지가 먼저 실린다.
-   * 클라이언트가 {@code messageId} 로 정렬하면 풀린다 — 커서를 한 값으로 둔 결정(CH-09)이 여기서도 값을 한다.
+   * <p><b>그 대가로 재전송과 실시간이 순서를 섞을 뻔했다.</b> 재전송은 요청 스레드이고 실시간은 구독 스레드라 읽는 동안 도착한 새 메시지가 먼저 실린다. 처음에는
+   * 「클라이언트가 {@code messageId} 로 정렬하면 된다」로 적었는데 <b>그것이 틀렸다</b> (PR #142 리뷰) — 말풍선 순서는 그렇게 풀리지만
+   * <b>브라우저의 책갈피({@code Last-Event-ID})는 클라이언트가 정하는 값이 아니다.</b> 선로에서 읽은 마지막 {@code id} 가 그대로 책갈피가
+   * 된다.
    *
-   * <p><b>선로가 섞이지 않는 것은 세션이 보장한다.</b> 여기서 미는 것과 구독 스레드가 미는 것이 같은 연결에 겹치므로 {@code
-   * SseChatStreamSession} 이 쓰기를 직렬화한다.
+   * <p>그래서 <b>재전송이 끝날 때까지 실시간을 담아 둔다</b> — {@code RoomConnection#deliver} 와 {@code
+   * RoomConnection#startDelivering} 이다. 나가는 {@code id} 가 단조 증가한다.
+   *
+   * <p><b>선로가 섞이지 않는 것은 {@code SseEmitter} 자신의 락이 보장한다</b> (바이트코드 확인). 여기서 다루는 것은 섞임이 아니라
+   * <b>순서</b>다.
    *
    * <p><b>첫 연결에는 아무것도 하지 않는다.</b> 그때는 목록 API(CH-09)가 화면을 채운다 — 여기서까지 과거를 밀면 같은 것이 두 경로로 온다.
    *
@@ -315,10 +328,14 @@ public class ChatStreamService {
     }
   }
 
+  /**
+   * 이 인스턴스의 연결들에 민다.
+   *
+   * <p><b>연결마다 {@code deliver} 를 지난다</b> (PR #142 리뷰). 재전송 중인 연결은 그 안에서 담아 두었다가 재전송이 끝난 뒤에 받는다 —
+   * 나가는 {@code id} 가 단조 증가해야 브라우저의 책갈피가 뒤로 밀리지 않는다 ({@code RoomConnection} 자바독).
+   */
   private void push(Long roomId, MessageEvent message) {
-    connections
-        .getOrDefault(roomId, List.of())
-        .forEach(connection -> connection.session().send(message));
+    connections.getOrDefault(roomId, List.of()).forEach(connection -> connection.deliver(message));
   }
 
   /** 연결 하나를 목록에서 빼고, 그 방의 마지막이었으면 구독도 닫는다. */
@@ -371,6 +388,95 @@ public class ChatStreamService {
     chatRoomReader.requireMember(roomId, userId);
   }
 
-  /** 누가 붙어 있는지를 함께 들고 있어야 퇴장이 그 사람의 것만 끊을 수 있다. */
-  private record RoomConnection(Long userId, ChatStreamSession session) {}
+  /**
+   * 연결 하나. <b>재전송이 끝날 때까지 실시간을 붙들고 있는다</b> (PR #142 리뷰).
+   *
+   * <p>누가 붙어 있는지를 함께 드는 것은 퇴장이 그 사람의 것만 끊기 위해서다.
+   *
+   * <p><b>버퍼가 필요한 이유는 브라우저의 책갈피가 우리 것이 아니기 때문이다.</b> SSE 명세상 {@code EventSource} 는 <b>마지막으로 받은</b>
+   * 사건의 {@code id} 를 기억한다 — 가장 큰 값이 아니다. 재전송 도중에 실시간 사건이 끼어들면 책갈피가 그 값으로 덮이고, 하필 그때 끊기면 사이 구간이 영영 안
+   * 온다.
+   *
+   * <pre>
+   * resumeFrom = 101,  재전송 대상 = 102 … 201
+   *
+   * 선로   102, 103, [실시간 202], 104, 105 …
+   *                      ▲ 구독 스레드가 먼저 썼다
+   * 여기서 끊기면  브라우저 Last-Event-ID = 202
+   *    다음 재연결 → from = 202 - BACKTRACK
+   *    → 104 … 사이 구간이 영영 안 온다
+   * </pre>
+   *
+   * <p><b>「클라이언트가 messageId 로 정렬하면 된다」로 적어 두었던 것이 틀렸다.</b> 화면의 말풍선 순서는 그렇게 풀리지만 <b>책갈피는 클라이언트가 정하는
+   * 값이 아니다</b> — 브라우저가 선로에서 읽은 마지막 {@code id} 를 그대로 쓴다.
+   *
+   * <p><b>레코드가 아니라 클래스인 것도 의도다.</b> 목록에서 뺄 때 <b>바로 그 연결</b>을 지목해야 하는데, 값 동등성이면 같은 사람이 두 번 붙었을 때 엉뚱한
+   * 쪽을 지울 수 있다.
+   */
+  private static final class RoomConnection {
+
+    private final Long userId;
+    private final ChatStreamSession session;
+
+    /** 재전송이 끝나기 전에 도착한 실시간 사건. 순서를 지켜야 해서 FIFO 다. */
+    private final Queue<MessageEvent> buffered = new ArrayDeque<>();
+
+    /** 열자마자 참이다. {@link #startDelivering} 이 한 번 내린다. */
+    private boolean replaying = true;
+
+    private final ReentrantLock lock = new ReentrantLock();
+
+    private RoomConnection(Long userId, ChatStreamSession session) {
+      this.userId = userId;
+      this.session = session;
+    }
+
+    Long userId() {
+      return userId;
+    }
+
+    ChatStreamSession session() {
+      return session;
+    }
+
+    /**
+     * 실시간 사건 하나를 넘긴다. <b>구독 스레드에서 불린다.</b>
+     *
+     * <p>재전송 중이면 담아 두고, 아니면 바로 민다. <b>미는 것은 잠금 밖이다</b> — 정체된 연결에 쓰는 동안 잠금을 쥐고 있으면 그 방의 구독 스레드가 함께
+     * 묶인다. 선로가 섞이지 않는 것은 {@code SseEmitter} 자신의 락이 보장한다.
+     */
+    void deliver(MessageEvent event) {
+      lock.lock();
+      try {
+        if (replaying) {
+          buffered.add(event);
+          return;
+        }
+      } finally {
+        lock.unlock();
+      }
+
+      session.send(event);
+    }
+
+    /**
+     * 재전송이 끝났다. 담아 둔 것을 순서대로 흘려보낸다.
+     *
+     * <p><b>비우는 동안 잠금을 쥔다.</b> 그래야 이 사이에 도착한 사건이 {@link #deliver} 에서 기다렸다가 큐 뒤에 실린다 — 놓으면 그 사건이 큐보다
+     * 먼저 나가 다시 순서가 뒤집힌다.
+     *
+     * <p>두 번 불러도 안전하다. 두 번째는 큐가 비어 있어 아무 일도 하지 않는다.
+     */
+    void startDelivering() {
+      lock.lock();
+      try {
+        replaying = false;
+        for (MessageEvent event = buffered.poll(); event != null; event = buffered.poll()) {
+          session.send(event);
+        }
+      } finally {
+        lock.unlock();
+      }
+    }
+  }
 }
