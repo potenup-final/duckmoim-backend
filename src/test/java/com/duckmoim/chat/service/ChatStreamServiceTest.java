@@ -344,6 +344,28 @@ class ChatStreamServiceTest {
   }
 
   /**
+   * <b>되돌아간 구간이 재전송 예산을 먹지 않는다</b> (PR #142 리뷰).
+   *
+   * <p>읽기 상한 하나로 「되돌아갈 거리」와 「못 받은 건수」를 같이 재면 실효 한도가 적힌 값보다 작아진다. 여기서는 {@code BACKTRACK} 보다 많은 과거를
+   * 깔아 두고, <b>못 받은 것이 상한 안이면 그대로 재전송되는지</b>를 본다 — 예산을 다시 묶으면 이 검사가 {@code gap} 으로 떨어진다.
+   */
+  @DisplayName("되돌아간 구간이 많아도 못 받은 것이 상한 안이면 그대로 되돌려준다.")
+  @Test
+  void reopen_doesNotSpendTheLimitOnBacktrack() {
+    insertMessages(ChatStreamReplayReader.BACKTRACK * 2);
+    long resumeFrom = send("기준");
+    List<Long> missed = List.of(send("그 사이 1"), send("그 사이 2"));
+
+    RecordingSession reconnected = new RecordingSession();
+    chatStreamService.open(roomId, memberId, reconnected, resumeFrom);
+
+    assertThat(reconnected.gaps()).isEmpty();
+    assertThat(reconnected.received())
+        .extracting(MessageEvent::messageId)
+        .containsSubsequence(missed.get(0), missed.get(1));
+  }
+
+  /**
    * <b>너무 많이 밀리면 되돌려주지 않고 알린다.</b> 무한이면 며칠 끊겼던 클라이언트 하나가 수만 건을 끌어가 그 한 명의 재연결이 인스턴스의 메모리와 선로를 먹는다.
    *
    * <p>알림에 재개 지점을 그대로 실어 보내는지도 함께 본다 — 클라이언트가 목록을 어디까지 거슬러 올라가야 하는지가 그 값이다.
@@ -352,6 +374,7 @@ class ChatStreamServiceTest {
   @Test
   void reopen_signalsGapWhenTooFarBehind() {
     long resumeFrom = send("기준");
+    // 넘침 판정이 「재연결 지점 뒤의 건수」라 상한보다 한 건 많게 깐다.
     insertMessages(ChatStreamReplayReader.LIMIT + 1);
 
     RecordingSession reconnected = new RecordingSession();
