@@ -1,5 +1,6 @@
 package com.duckmoim.chat.presentation;
 
+import com.duckmoim.chat.domain.MessageEvent;
 import com.duckmoim.chat.domain.MessageStatus;
 import com.duckmoim.chat.service.MessageView;
 import com.fasterxml.jackson.annotation.JsonInclude;
@@ -42,6 +43,25 @@ public record MessageItemResponse(
         view.content(),
         view.status(),
         toKst(view.createdAt()));
+  }
+
+  /**
+   * 실시간으로 밀리는 한 건 (CH-10).
+   *
+   * <p><b>목록과 같은 모양으로 나가는 것이 이 팩터리의 전부다.</b> 입력만 {@code MessageView} 대신 {@link MessageEvent} 이고, 그
+   * 둘이 갈리면 실시간으로 뜬 말풍선과 새로고침해서 뜬 말풍선이 달라진다 — 클라이언트가 같은 배열에 넣지 못한다.
+   *
+   * <p>지운 메시지가 실시간으로 밀릴 일은 지금 없다 (삭제는 팬아웃하지 않는다). 그래도 {@code status} 로 본문을 끊는 것은 같게 두었다 — 나중에 삭제를
+   * 실시간으로 알리게 되면 이 자리가 이미 맞다.
+   */
+  static MessageItemResponse from(MessageEvent event) {
+    return new MessageItemResponse(
+        event.messageId(),
+        new MessageSenderResponse(
+            event.senderId(), event.senderNickname(), event.senderProfileImageUrl()),
+        event.status() == MessageStatus.ACTIVE ? event.content() : null,
+        event.status(),
+        toKst(event.createdAt()));
   }
 
   /** 저장은 UTC, 응답은 KST 다 ({@code ChatMessageResponse#toKst} 와 같은 변환). */

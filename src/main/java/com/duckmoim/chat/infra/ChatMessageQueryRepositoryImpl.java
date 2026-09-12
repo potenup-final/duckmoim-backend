@@ -6,6 +6,7 @@ import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import jakarta.persistence.TypedQuery;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * JPQL 로 쓴 이유는 다른 목록 조회들과 같다 — 커서 조건이 있을 때만 붙어서 정적 문자열 하나로 담기지 않는다.
@@ -18,7 +19,7 @@ public class ChatMessageQueryRepositoryImpl implements ChatMessageQueryRepositor
   private static final String SELECT_IN_ROOM =
       """
       SELECT new com.duckmoim.chat.infra.AuthoredMessage(
-                 m.id, m.senderId, u.nickname, u.profileImageUrl, u.lastSeenAt, u.status,
+                 m.id, m.roomId, m.senderId, u.nickname, u.profileImageUrl, u.lastSeenAt, u.status,
                  m.content, m.status, m.createdAt)
         FROM Message m
         JOIN User u ON u.id = m.senderId
@@ -41,6 +42,10 @@ public class ChatMessageQueryRepositoryImpl implements ChatMessageQueryRepositor
    */
   private static final String ORDER_BY_NEWEST = " ORDER BY m.id DESC";
 
+  /** 단건 조회 (CH-10). 위 목록과 같은 조인이라 같은 값이 나온다. */
+  private static final String SELECT_ONE =
+      SELECT_IN_ROOM.replace("WHERE m.roomId = :roomId", "WHERE m.id = :messageId");
+
   @PersistenceContext private EntityManager entityManager;
 
   @Override
@@ -60,5 +65,15 @@ public class ChatMessageQueryRepositoryImpl implements ChatMessageQueryRepositor
 
     // OFFSET 을 쓰지 않는다 (CH-09 의 검증 기준). 한 건을 더 읽어 다음 페이지 유무를 판정한다.
     return typed.setMaxResults(query.size() + 1).getResultList();
+  }
+
+  @Override
+  public Optional<AuthoredMessage> findAuthoredById(Long messageId) {
+    return entityManager
+        .createQuery(SELECT_ONE, AuthoredMessage.class)
+        .setParameter("messageId", messageId)
+        .getResultList()
+        .stream()
+        .findFirst();
   }
 }

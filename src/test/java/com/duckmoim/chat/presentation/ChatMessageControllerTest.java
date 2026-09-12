@@ -10,6 +10,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.request;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.duckmoim.auth.domain.AuthUser;
@@ -22,6 +23,7 @@ import com.duckmoim.chat.exception.ChatErrorCode;
 import com.duckmoim.chat.service.ChatMessageDeleteService;
 import com.duckmoim.chat.service.ChatMessageQueryService;
 import com.duckmoim.chat.service.ChatMessageSendService;
+import com.duckmoim.chat.service.ChatStreamService;
 import com.duckmoim.chat.service.MessageSlice;
 import com.duckmoim.chat.service.MessageView;
 import com.duckmoim.chat.service.SentMessage;
@@ -65,6 +67,7 @@ class ChatMessageControllerTest {
   @MockitoBean private ChatMessageSendService chatMessageSendService;
   @MockitoBean private ChatMessageQueryService chatMessageQueryService;
   @MockitoBean private ChatMessageDeleteService chatMessageDeleteService;
+  @MockitoBean private ChatStreamService chatStreamService;
 
   /** 생성 성공도 200 이다 (API-설계.md 「성공 응답의 상태 코드」). 201 을 쓰지 않는다. */
   @DisplayName("전송에 성공하면 200 과 저장된 메시지가 돌아온다.")
@@ -248,6 +251,42 @@ class ChatMessageControllerTest {
         .perform(
             delete("/api/v1/chat-rooms/{roomId}/messages/{messageId}", ROOM_ID, MESSAGE_ID)
                 .headers(authHeaders()))
+        .andExpect(status().is(errorCode.getStatus().value()))
+        .andExpect(jsonPath("$.code").value(errorCode.getCode()));
+  }
+
+  /**
+   * 응답이 끝나지 않는 요청이라 상태·헤더까지만 본다 (CH-10).
+   *
+   * <p>무엇이 흘러가는지는 {@code ChatStreamServiceTest} 가 실물 Redis 로 본다. 여기서는 <b>선로가 열리는지</b>와 경로·요청자가 그대로
+   * 넘어가는지만 확인한다.
+   *
+   * <p><b>{@code Content-Type} 을 여기서 단언하지 않는다.</b> 비동기로 넘어간 시점의 응답에는 아직 헤더가 없고, {@code
+   * text/event-stream} 은 그 뒤 디스패치에서 붙는다 — 여기서 보면 {@code null} 이라 「아직 안 끝난 응답」이라는 사실만 확인하게 된다. 그것이
+   * {@code asyncStarted} 다.
+   */
+  @DisplayName("스트림 요청은 응답을 끝내지 않고 연결을 연다.")
+  @Test
+  void stream() throws Exception {
+    given(chatStreamService.open(any(), any(), any())).willReturn(() -> {});
+
+    mockMvc
+        .perform(get("/api/v1/chat-rooms/{roomId}/messages/stream", ROOM_ID).headers(authHeaders()))
+        .andExpect(status().isOk())
+        .andExpect(request().asyncStarted());
+
+    then(chatStreamService).should().open(eq(ROOM_ID), eq(SENDER_ID), any());
+  }
+
+  /** 멤버가 아니면 선로가 아예 안 열린다. 열고 나서 끊으면 클라이언트가 재연결을 반복한다. */
+  @DisplayName("스트림 서비스가 낸 채팅 에러 코드가 그 코드의 상태로 나간다.")
+  @ParameterizedTest(name = "{0}")
+  @EnumSource(ChatErrorCode.class)
+  void streamRejected(ChatErrorCode errorCode) throws Exception {
+    willThrow(new BusinessException(errorCode)).given(chatStreamService).open(any(), any(), any());
+
+    mockMvc
+        .perform(get("/api/v1/chat-rooms/{roomId}/messages/stream", ROOM_ID).headers(authHeaders()))
         .andExpect(status().is(errorCode.getStatus().value()))
         .andExpect(jsonPath("$.code").value(errorCode.getCode()));
   }
