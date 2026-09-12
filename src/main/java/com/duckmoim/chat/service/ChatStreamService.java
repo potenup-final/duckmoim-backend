@@ -5,10 +5,13 @@ import com.duckmoim.chat.infra.ChatFanout;
 import com.duckmoim.chat.infra.ChatFanoutCodec;
 import com.duckmoim.chat.infra.ChatFanoutEvent;
 import com.duckmoim.chat.infra.ChatFanoutSubscription;
+import com.duckmoim.chat.infra.ChatPresence;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -43,6 +46,7 @@ public class ChatStreamService {
   private final ChatRoomMembershipReader chatRoomReader;
   private final ChatFanout chatFanout;
   private final ChatFanoutCodec chatFanoutCodec;
+  private final ChatPresence chatPresence;
   private final ChatStreamHeartbeatExecutor heartbeatExecutor;
 
   /**
@@ -90,6 +94,10 @@ public class ChatStreamService {
     RoomConnection connection = new RoomConnection(userId, session);
     connections.computeIfAbsent(roomId, room -> new CopyOnWriteArrayList<>()).add(connection);
     subscribeIfFirst(roomId);
+
+    // 「보고 있다」를 인스턴스 밖에도 적는다 (NT-07). 이 줄이 없으면 다른 인스턴스에서
+    // 보낸 메시지가 이 사람에게 알림을 만든다 — 화면에는 이미 말풍선이 떠 있는데도.
+    chatPresence.enter(roomId, userId);
 
     return () -> remove(roomId, connection);
   }
@@ -181,9 +189,11 @@ public class ChatStreamService {
    * 것」이라 {@code catch} 로도 안 잡히고 로그에도 안 남는다.
    */
   public void heartbeat() {
-    connections
-        .values()
-        .forEach(room -> room.forEach(connection -> heartbeatExecutor.beat(connection.session())));
+    connections.forEach(
+        (roomId, room) -> {
+          room.forEach(connection -> heartbeatExecutor.beat(connection.session()));
+          chatPresence.refresh(roomId, viewerIdsOf(room));
+        });
   }
 
   /** 이 방에 열려 있는 연결 수. 구독 수명과 퇴장 끊기를 검사할 때 쓴다. */
@@ -248,7 +258,34 @@ public class ChatStreamService {
     // 비었을 때만 지운다. 지우는 사이에 새 연결이 붙으면 computeIfPresent 가 그 목록을 살려 둔다.
     connections.computeIfPresent(
         roomId, (key, remaining) -> remaining.isEmpty() ? null : remaining);
+    leaveIfLastHere(roomId, connection.userId());
     unsubscribeIfEmpty(roomId);
+  }
+
+  /**
+   * 이 인스턴스에 그 사람의 연결이 더 없으면 접속 집합에서도 뺀다 (NT-07).
+   *
+   * <p><b>탭을 둘 열면 연결이 둘이다.</b> 하나를 닫았다고 빼면 남은 탭이 보고 있는데도 알림이 생긴다.
+   *
+   * <p><b>인스턴스가 갈리면 이 판정이 반 걸음 어긋난다.</b> 같은 사람이 blue 와 green 에 하나씩 붙어 있다가 blue 쪽을 닫으면, blue 는 「내게 더
+   * 없다」로 보고 집합에서 빼 버린다. green 의 하트비트가 30초 안에 다시 넣지만 그 사이의 메시지는 알림을 만든다.
+   *
+   * <p>고치려면 연결 수를 사람이 아니라 <b>연결마다</b> 세야 하는데, 그러면 죽은 인스턴스가 남긴 연결을 누가 지울지가 다시 문제가 된다. 어긋나는 방향이
+   * <b>알림이 하나 더 가는 쪽</b>이라 그대로 둔다 — 이 포트가 못 읽었을 때와 같은 방향이다.
+   */
+  private void leaveIfLastHere(Long roomId, Long userId) {
+    boolean stillHere =
+        connections.getOrDefault(roomId, List.of()).stream()
+            .anyMatch(remaining -> remaining.userId().equals(userId));
+
+    if (!stillHere) {
+      chatPresence.leave(roomId, userId);
+    }
+  }
+
+  /** 이 인스턴스가 그 방에 쥐고 있는 사람들. 탭을 둘 열어도 한 사람이다. */
+  private static Set<Long> viewerIdsOf(List<RoomConnection> room) {
+    return room.stream().map(RoomConnection::userId).collect(Collectors.toSet());
   }
 
   private void unsubscribeIfEmpty(Long roomId) {

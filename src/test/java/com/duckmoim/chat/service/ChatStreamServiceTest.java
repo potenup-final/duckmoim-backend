@@ -10,6 +10,7 @@ import com.duckmoim.chat.domain.MessageEvent;
 import com.duckmoim.chat.exception.ChatErrorCode;
 import com.duckmoim.chat.infra.ChatFanout;
 import com.duckmoim.chat.infra.ChatFanoutCodec;
+import com.duckmoim.chat.infra.ChatPresence;
 import com.duckmoim.chat.infra.ChatRoomRepository;
 import com.duckmoim.common.exception.BusinessException;
 import java.time.LocalDateTime;
@@ -67,6 +68,7 @@ class ChatStreamServiceTest {
   @Autowired private ChatRoomRepository chatRoomRepository;
   @Autowired private ChatFanout chatFanout;
   @Autowired private ChatFanoutCodec chatFanoutCodec;
+  @Autowired private ChatPresence chatPresence;
   @Autowired private JdbcTemplate jdbcTemplate;
 
   private long hostId;
@@ -225,6 +227,53 @@ class ChatStreamServiceTest {
     release.run();
 
     assertThat(chatStreamService.connectionCount(roomId)).isZero();
+  }
+
+  /**
+   * <b>접속 집합이 이 인스턴스 밖에서도 읽혀야 NT-07 이 성립한다.</b>
+   *
+   * <p>연결 목록은 이 JVM 의 메모리라, 다른 인스턴스가 보낸 메시지는 그 목록을 볼 수 없다. 실물 Redis 로 보는 이유가 팬아웃과 같다 — 한 바퀴 돌아 나오는
+   * 것만 확인하면 인스턴스가 갈려도 같은 경로다.
+   */
+  @DisplayName("스트림을 열면 보고 있는 사람으로 적힌다.")
+  @Test
+  void open_marksViewer() {
+    chatStreamService.open(roomId, memberId, new RecordingSession());
+
+    assertThat(chatPresence.viewers(roomId)).containsExactly(memberId);
+  }
+
+  @DisplayName("연결을 정리하면 보고 있는 사람에서 빠진다.")
+  @Test
+  void open_releaseClearsViewer() {
+    Runnable release = chatStreamService.open(roomId, memberId, new RecordingSession());
+
+    release.run();
+
+    assertThat(chatPresence.viewers(roomId)).isEmpty();
+  }
+
+  /** 탭을 둘 열면 연결이 둘이다. 하나 닫았다고 빼면 남은 탭이 보고 있는데도 알림이 생긴다. */
+  @DisplayName("탭을 둘 열었다가 하나를 닫아도 보고 있는 사람으로 남는다.")
+  @Test
+  void open_keepsViewerWhileAnotherTabRemains() {
+    Runnable firstTab = chatStreamService.open(roomId, memberId, new RecordingSession());
+    chatStreamService.open(roomId, memberId, new RecordingSession());
+
+    firstTab.run();
+
+    assertThat(chatPresence.viewers(roomId)).containsExactly(memberId);
+  }
+
+  /** 퇴장은 연결을 끊는다 (CH-04). 접속 집합에 남아 있으면 나간 사람 때문에 남의 알림이 안 생긴다. */
+  @DisplayName("방을 나가면 보고 있는 사람에서 빠진다.")
+  @Test
+  void disconnect_clearsViewer() {
+    chatStreamService.open(roomId, memberId, new RecordingSession());
+
+    chatStreamService.disconnect(roomId, memberId);
+
+    assertThat(chatPresence.viewers(roomId)).isEmpty();
   }
 
   /** 하트비트가 없으면 대화 없는 방의 연결을 ALB 가 60초마다 끊는다. */
