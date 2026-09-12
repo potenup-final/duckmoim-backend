@@ -31,7 +31,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 제재 중 쓰기 차단이 관문에서 나는지 (I-14).
+ * 제재 중 차단이 관문에서 나는지 — 쓰기(I-14)와 <b>비공개 읽기</b>(STAR-84).
  *
  * <p>이 티켓의 완료 조건 한 줄이 그것이다 — <i>"제재 중 유저가 모집글·댓글을 쓰면 차단된다. <b>개별 엔드포인트가 아니라 인터셉터 한 곳에서</b> 판정"</i>.
  *
@@ -193,16 +193,15 @@ class SanctionGateTest {
         .andExpect(jsonPath("$.code").value("CHAT_ROOM_NOT_FOUND"));
   }
 
-  /** 등록 경로에 조회가 함께 걸린다. 메서드를 안 가리면 경고받은 사람이 남의 글도 못 본다. */
-  @DisplayName("제재 중에도 읽기는 막지 않는다.")
+  /**
+   * 등록 경로에 조회가 함께 걸린다. 메서드를 안 가리면 경고받은 사람이 남의 글도 못 본다.
+   *
+   * <p><b>채팅 경로가 여기서 빠졌다</b> (2026-09-11 · STAR-84). 그쪽은 전부 비공개라 {@code BANNED} 의 읽기를 막고, 아래에서 따로
+   * 본다. 모집글·댓글은 <b>가장 센 제재로도 열려 있어야 한다</b> — 비회원에게 열린 경로라 막아도 로그아웃하면 그대로 보인다.
+   */
+  @DisplayName("제재 중에도 공개 읽기는 막지 않는다.")
   @ParameterizedTest
-  @ValueSource(
-      strings = {
-        "/api/v1/posts",
-        "/api/v1/posts/1/comments",
-        "/api/v1/chat-rooms",
-        "/api/v1/chat-rooms/404404"
-      })
+  @ValueSource(strings = {"/api/v1/posts", "/api/v1/posts/1/comments"})
   void allowsReading(String path) throws Exception {
     sanction(SanctionKind.BANNED);
 
@@ -212,6 +211,84 @@ class SanctionGateTest {
             result ->
                 assertThat(result.getResponse().getStatus())
                     .isNotEqualTo(HttpStatus.FORBIDDEN.value()));
+  }
+
+  /**
+   * 이 티켓의 본문이다 (STAR-84). 도메인 6장 제재 축 표의 「비공개 읽기」 열에서 {@code BANNED} 만 불가다.
+   *
+   * <p>막는 이유는 <b>제재당한 사람이 피해자와 같은 방을 계속 읽는 자리</b>이기 때문이다. 방에서 내보내는 수단이 따로 없어 여기가 유일한 차단점이다.
+   *
+   * <p><b>방 목록은 여기 없다.</b> 그것만 열어 두는 이유가 아래 {@link #allowsRoomListWhileBanned} 에 있다 — 대화가 막히는 자리는
+   * 상세와 메시지이고, 목록은 나갈 방을 찾는 통로다.
+   */
+  @DisplayName("영구 정지 중에는 채팅방을 읽을 수 없다.")
+  @ParameterizedTest
+  @ValueSource(strings = {"/api/v1/chat-rooms/404404", "/api/v1/chat-rooms/404404/messages"})
+  void blocksPrivateReadingWhenBanned(String path) throws Exception {
+    sanction(SanctionKind.BANNED);
+
+    mockMvc
+        .perform(get(path).headers(bearer()))
+        .andExpect(status().isForbidden())
+        .andExpect(jsonPath("$.code").value("USER_SANCTIONED"));
+  }
+
+  /**
+   * <b>퇴장 예외가 닿을 수 있는 문인지 본다</b> (CH-04 · 리뷰 지적).
+   *
+   * <p>목록까지 막으면 {@code BANNED} 은 <b>나갈 방의 번호를 얻을 길이 없다</b> — {@code roomId} 를 담는 응답이 전부 이 접두어 아래이고,
+   * 알림도 모집글·댓글 번호만 싣는다. 그러면 위 {@link #allowsLeavingWhileSanctioned} 는 <b>없는 번호를 쏘아 초록불인 채</b> 실제로는
+   * 아무도 닿지 못하는 문을 지키게 된다.
+   *
+   * <p>열어도 되는 이유는 목록이 담는 것이 방 번호 · 모집글 번호 · 모집글 제목 · 만남시각 · 멤버 <b>수</b> 다섯뿐이라, 대화도 멤버 신원도 없기 때문이다.
+   */
+  @DisplayName("영구 정지 중에도 채팅방 목록은 볼 수 있다.")
+  @Test
+  void allowsRoomListWhileBanned() throws Exception {
+    sanction(SanctionKind.BANNED);
+
+    mockMvc
+        .perform(get("/api/v1/chat-rooms").headers(bearer()))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$").isArray());
+  }
+
+  /**
+   * <b>읽기 차단이 {@code BANNED} 에만 붙는지 본다.</b> 「제재 중이면 못 읽는다」로 짜면 이 셋이 함께 막히고, 그때 정지당한 사람이 자기 채팅방도 못
+   * 보게 된다 — 쓰기 축과 읽기 축이 대칭이 아니다.
+   *
+   * <p>없는 방 번호라 통과하면 404 다. 관문이 막으면 403 이므로 둘이 갈린다.
+   */
+  @DisplayName("영구 정지가 아닌 제재는 채팅방 읽기를 막지 않는다.")
+  @ParameterizedTest(name = "{0}")
+  @EnumSource(
+      value = SanctionKind.class,
+      names = {"WARNED", "AGE_HOLD", "SUSPENDED"})
+  void allowsPrivateReadingWhenNotBanned(SanctionKind kind) throws Exception {
+    sanction(kind);
+
+    mockMvc
+        .perform(get("/api/v1/chat-rooms/404404").headers(bearer()))
+        .andExpect(
+            result ->
+                assertThat(result.getResponse().getStatus())
+                    .isNotEqualTo(HttpStatus.FORBIDDEN.value()));
+  }
+
+  /**
+   * <b>이 경로가 막히면 이 티켓의 결정이 무너진다.</b> AU-12 의 검증 기준이 「정지 유저 로그인 시 안내와 사유 노출」이고, 그 안내가 이 응답으로 나간다
+   * (API-설계.md 「2-2. 회원 (Identity)」). 읽기를 막는 김에 여기까지 걸면 당사자가 왜 막혔는지 영영 못 본다.
+   */
+  @DisplayName("영구 정지 중에도 내 정보와 제재 사유는 볼 수 있다.")
+  @Test
+  void allowsMyProfileWhileBanned() throws Exception {
+    sanction(SanctionKind.BANNED);
+
+    mockMvc
+        .perform(get("/api/v1/users/me").headers(bearer()))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.sanction.kind").value("BANNED"))
+        .andExpect(jsonPath("$.sanction.reason").exists());
   }
 
   @DisplayName("제재가 없으면 쓰기가 관문에서 막히지 않는다.")

@@ -142,4 +142,14 @@ public class Sanction extends BaseEntity {
   public boolean blocksWritingAt(LocalDateTime now) {
     return isActiveAt(now) && kind.blocksWriting();
   }
+
+  /**
+   * 이 제재가 지금 <b>비공개 읽기</b>를 막는가 (STAR-84). 유효하지 않으면 막지 않는다.
+   *
+   * <p>{@link #blocksWritingAt} 과 같은 모양이다 — 종류가 무엇을 막는지는 {@code SanctionKind} 가 알고, 지금 유효한지는 여기가
+   * 곱한다. {@code BANNED} 는 해소가 없어 {@code isActiveAt} 이 늘 참이지만, 관리자가 푼 뒤에는 거짓이 되어야 한다.
+   */
+  public boolean blocksPrivateReadingAt(LocalDateTime now) {
+    return isActiveAt(now) && kind.blocksPrivateReading();
+  }
 }
