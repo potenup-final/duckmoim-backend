@@ -217,10 +217,13 @@ class SanctionGateTest {
    * 이 티켓의 본문이다 (STAR-84). 도메인 6장 제재 축 표의 「비공개 읽기」 열에서 {@code BANNED} 만 불가다.
    *
    * <p>막는 이유는 <b>제재당한 사람이 피해자와 같은 방을 계속 읽는 자리</b>이기 때문이다. 방에서 내보내는 수단이 따로 없어 여기가 유일한 차단점이다.
+   *
+   * <p><b>방 목록은 여기 없다.</b> 그것만 열어 두는 이유가 아래 {@link #allowsRoomListWhileBanned} 에 있다 — 대화가 막히는 자리는
+   * 상세와 메시지이고, 목록은 나갈 방을 찾는 통로다.
    */
   @DisplayName("영구 정지 중에는 채팅방을 읽을 수 없다.")
   @ParameterizedTest
-  @ValueSource(strings = {"/api/v1/chat-rooms", "/api/v1/chat-rooms/404404"})
+  @ValueSource(strings = {"/api/v1/chat-rooms/404404", "/api/v1/chat-rooms/404404/messages"})
   void blocksPrivateReadingWhenBanned(String path) throws Exception {
     sanction(SanctionKind.BANNED);
 
@@ -228,6 +231,26 @@ class SanctionGateTest {
         .perform(get(path).headers(bearer()))
         .andExpect(status().isForbidden())
         .andExpect(jsonPath("$.code").value("USER_SANCTIONED"));
+  }
+
+  /**
+   * <b>퇴장 예외가 닿을 수 있는 문인지 본다</b> (CH-04 · 리뷰 지적).
+   *
+   * <p>목록까지 막으면 {@code BANNED} 은 <b>나갈 방의 번호를 얻을 길이 없다</b> — {@code roomId} 를 담는 응답이 전부 이 접두어 아래이고,
+   * 알림도 모집글·댓글 번호만 싣는다. 그러면 위 {@link #allowsLeavingWhileSanctioned} 는 <b>없는 번호를 쏘아 초록불인 채</b> 실제로는
+   * 아무도 닿지 못하는 문을 지키게 된다.
+   *
+   * <p>열어도 되는 이유는 목록이 담는 것이 방 번호 · 모집글 번호 · 모집글 제목 · 만남시각 · 멤버 <b>수</b> 다섯뿐이라, 대화도 멤버 신원도 없기 때문이다.
+   */
+  @DisplayName("영구 정지 중에도 채팅방 목록은 볼 수 있다.")
+  @Test
+  void allowsRoomListWhileBanned() throws Exception {
+    sanction(SanctionKind.BANNED);
+
+    mockMvc
+        .perform(get("/api/v1/chat-rooms").headers(bearer()))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$").isArray());
   }
 
   /**

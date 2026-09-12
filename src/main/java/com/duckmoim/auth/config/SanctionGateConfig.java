@@ -97,6 +97,22 @@ public class SanctionGateConfig implements WebMvcConfigurer {
    */
   private static final String[] SANCTIONED_EXCEPT = {"/api/v1/chat-rooms/*/members/me"};
 
+  /**
+   * 방 목록 — 비공개 등록에서 빼고 <b>쓰기 등록으로 옮긴다</b> (CH-04 · STAR-84).
+   *
+   * <p><b>위 퇴장 예외가 닿을 수 있는 문이 되게 하는 것이 이 상수다.</b> 목록까지 막으면 {@code BANNED} 은 <b>나갈 방의 번호를 얻을 길이
+   * 없다</b> — {@code roomId} 를 담는 응답이 전부 이 접두어 아래이고, 알림({@code postId} · {@code commentId})에도 모집글
+   * 번호로 방을 찾는 경로에도 없다. 관문은 열려 있는데 아무도 그 문에 닿지 못하는 상태였고, <b>없는 번호를 쏘는 검사는 그것을 잡지 못했다.</b>
+   *
+   * <p><b>열어도 되는 이유는 목록이 담는 것이 좁기 때문이다.</b> 방 번호 · 모집글 번호 · 모집글 제목 · 만남시각 · 멤버 <b>수</b> 다섯이고, 대화도
+   * 멤버 신원도 없다. 이 티켓이 막으려던 것은 <i>"제재당한 사람이 피해자와 같은 방을 계속 읽는 자리"</i> 이고 그것은 상세와 메시지다.
+   *
+   * <p><b>제외가 아니라 이동이다.</b> 목록 경로를 그냥 빼면 쓰기도 함께 열린다 — 지금 이 경로에 쓰기가 없어도 fail-open 모양을 남기지 않는다.
+   *
+   * <p>정확 경로라 {@code /chat-rooms/&#123;id&#125;} 이하는 그대로 막힌다.
+   */
+  private static final String[] SANCTIONED_ROOM_LIST = {"/api/v1/chat-rooms"};
+
   private final ObjectProvider<SanctionQueryService> sanctionQueryService;
 
   @Override
@@ -105,12 +121,14 @@ public class SanctionGateConfig implements WebMvcConfigurer {
         service -> {
           registry
               .addInterceptor(new SanctionGateInterceptor(service, false))
-              .addPathPatterns(SANCTIONED_WRITE);
+              .addPathPatterns(SANCTIONED_WRITE)
+              .addPathPatterns(SANCTIONED_ROOM_LIST);
 
           registry
               .addInterceptor(new SanctionGateInterceptor(service, true))
               .addPathPatterns(SANCTIONED_PRIVATE)
-              .excludePathPatterns(SANCTIONED_EXCEPT);
+              .excludePathPatterns(SANCTIONED_EXCEPT)
+              .excludePathPatterns(SANCTIONED_ROOM_LIST);
         });
   }
 }
