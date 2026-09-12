@@ -1,7 +1,11 @@
 package com.duckmoim.chat.service;
 
+import com.duckmoim.chat.domain.MessageEvent;
 import com.duckmoim.chat.exception.ChatErrorCode;
+import com.duckmoim.chat.infra.AuthoredMessage;
+import com.duckmoim.chat.infra.ChatFanout;
 import com.duckmoim.chat.infra.ChatMessageRepository;
+import com.duckmoim.chat.infra.MessageEventCodec;
 import com.duckmoim.common.exception.BusinessException;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
@@ -38,6 +42,8 @@ public class ChatMessageSendService {
 
   private final ChatMessageWriter chatMessageWriter;
   private final ChatMessageRepository chatMessageRepository;
+  private final ChatFanout chatFanout;
+  private final MessageEventCodec messageEventCodec;
 
   /**
    * 보낸다. 이미 같은 식별자로 보낸 것이 있으면 그것을 그대로 돌려준다 (CH-07 · I-20).
@@ -53,8 +59,58 @@ public class ChatMessageSendService {
    * 식별자 재사용이고, 그대로 돌려주면 이번에 보낸 말이 200 과 함께 사라진다.
    */
   public SentMessage send(Long roomId, Long senderId, String clientMessageId, String content) {
-    return alreadySent(roomId, senderId, clientMessageId, content)
-        .orElseGet(() -> writeOrTakeExisting(roomId, senderId, clientMessageId, content));
+    Optional<SentMessage> retried = alreadySent(roomId, senderId, clientMessageId, content);
+    if (retried.isPresent()) {
+      // 재시도는 발행하지 않는다. 먼저 온 요청이 이미 발행했고, 다시 보내면 같은 말풍선이
+      // 두 번 뜬다 — 클라이언트가 messageId 로 거르더라도 통로를 낭비할 이유가 없다.
+      return retried.get();
+    }
+
+    SentMessage sent = writeOrTakeExisting(roomId, senderId, clientMessageId, content);
+    fanOut(sent.messageId());
+
+    return sent;
+  }
+
+  /**
+   * 저장된 메시지를 같은 방의 다른 인스턴스에 알린다 (CH-10).
+   *
+   * <p><b>커밋된 뒤에 부른다.</b> 이 클래스에 {@code @Transactional} 이 없고 {@link ChatMessageWriter} 가 반환된 시점이 곧
+   * 커밋된 시점이다 — 트랜잭션 안에서 발행하면 받는 쪽이 아직 보이지 않는 메시지를 받고, 롤백되면 <b>없는 메시지를 받은 셈</b>이 된다. STAR-111 이 중복
+   * 처리를 위해 빈을 둘로 나눠 둔 것이 여기서 한 번 더 값을 한다.
+   *
+   * <p><b>보낸 사람 정보를 다시 읽는다.</b> {@link SentMessage} 에는 닉네임·아바타가 없는데 받는 쪽 말풍선에는 필요하다. 목록 조회와 같은 조인을
+   * 쓰므로 실시간으로 뜬 것과 새로고침해서 뜬 것이 같은 값이다.
+   *
+   * <p><b>실패해도 던지지 않는다.</b> 조회가 비거나 직렬화가 실패하면 발행을 건너뛴다 — {@code ChatFanout} 의 계약이 「팬아웃 장애가 전송을 깨지
+   * 않는다」이고, 사용자는 새로고침하면 자기 말을 본다. 정본은 MySQL 이다.
+   */
+  private void fanOut(Long messageId) {
+    chatMessageRepository
+        .findAuthoredById(messageId)
+        .map(ChatMessageSendService::toEvent)
+        .ifPresent(this::publish);
+  }
+
+  private void publish(MessageEvent event) {
+    String payload = messageEventCodec.encode(event);
+    if (payload == null) {
+      return;
+    }
+
+    chatFanout.publish(event.roomId(), payload);
+  }
+
+  private static MessageEvent toEvent(AuthoredMessage message) {
+    return new MessageEvent(
+        message.messageId(),
+        message.roomId(),
+        message.senderId(),
+        message.nickname(),
+        message.profileImageUrl(),
+        message.content(),
+        message.status(),
+        message.createdAt());
   }
 
   private SentMessage writeOrTakeExisting(
