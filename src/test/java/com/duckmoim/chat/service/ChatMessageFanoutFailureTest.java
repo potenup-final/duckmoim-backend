@@ -13,6 +13,7 @@ import static org.mockito.Mockito.never;
 import com.duckmoim.chat.infra.ChatFanout;
 import com.duckmoim.chat.infra.ChatFanoutCodec;
 import com.duckmoim.chat.infra.ChatMessageRepository;
+import com.duckmoim.chat.infra.ChatPresence;
 import java.time.LocalDateTime;
 import java.util.Optional;
 import org.junit.jupiter.api.DisplayName;
@@ -49,6 +50,7 @@ class ChatMessageFanoutFailureTest {
   @Mock private ChatMessageRepository chatMessageRepository;
   @Mock private ChatFanout chatFanout;
   @Mock private ChatFanoutCodec chatFanoutCodec;
+  @Mock private ChatPresence chatPresence;
 
   @InjectMocks private ChatMessageSendService chatMessageSendService;
 
@@ -104,7 +106,7 @@ class ChatMessageFanoutFailureTest {
   private void givenFirstAttempt() {
     given(chatMessageRepository.findBySenderIdAndClientMessageId(anyLong(), anyString()))
         .willReturn(Optional.empty());
-    given(chatMessageWriter.write(anyLong(), anyLong(), anyString(), anyString()))
+    given(chatMessageWriter.write(anyLong(), anyLong(), anyString(), anyString(), any()))
         .willReturn(
             new SentMessage(
                 MESSAGE_ID, ROOM_ID, SENDER_ID, CONTENT, LocalDateTime.of(2026, 10, 2, 11, 10)));
