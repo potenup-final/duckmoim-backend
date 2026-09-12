@@ -206,10 +206,40 @@ public class NotificationDispatchService {
       return false;
     }
 
-    dlqRepository.save(NotificationOutboxDlq.of(outbox, nowInUtc));
-    outboxRepository.delete(outbox);
+    moveToDlq(outbox, nowInUtc);
 
     return true;
+  }
+
+  /**
+   * 되돌릴 수 없는 실패를 <b>백오프 없이 바로</b> DLQ 로 보낸다 (ADR 0010).
+   *
+   * <p><b>{@link #recordFailure} 와 메서드를 나눈 이유는 불리언 인자를 피하려는 것이다.</b> {@code recordFailure(id, now,
+   * false)} 는 호출부에서 그 {@code false} 가 무슨 뜻인지 안 보인다.
+   *
+   * <p>세 번을 다 쓰지 않는다. 잘못된 VAPID 설정이나 깨진 페이로드는 <b>다시 보내도 같은 실패</b>라, NT-03 의 3회를 소진하는 것은 주기 세 번을 버리는
+   * 일이다.
+   *
+   * <p><b>인앱 알림은 남는다.</b> DLQ 로 가는 것은 아웃박스 행이고, T1 이 만든 알림함 행은 그대로다 — 사용자는 알림을 받았고 푸시만 못 갔다.
+   *
+   * @return 옮겼으면 참. 그 사이 남이 끝냈으면 거짓
+   */
+  @Transactional
+  public boolean abandon(Long outboxId, LocalDateTime nowInUtc) {
+    NotificationOutbox outbox = outboxRepository.findById(outboxId).orElse(null);
+
+    if (outbox == null || !outbox.isPending()) {
+      return false;
+    }
+
+    moveToDlq(outbox, nowInUtc);
+
+    return true;
+  }
+
+  private void moveToDlq(NotificationOutbox outbox, LocalDateTime nowInUtc) {
+    dlqRepository.save(NotificationOutboxDlq.of(outbox, nowInUtc));
+    outboxRepository.delete(outbox);
   }
 
   /**

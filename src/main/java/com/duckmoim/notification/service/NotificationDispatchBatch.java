@@ -2,6 +2,7 @@ package com.duckmoim.notification.service;
 
 import com.duckmoim.notification.domain.NotificationDelivery;
 import com.duckmoim.notification.infra.NotificationPushSender;
+import com.duckmoim.notification.infra.PermanentPushException;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
@@ -128,6 +129,10 @@ public class NotificationDispatchBatch {
           .filter(this::pushThenMark)
           .isPresent();
 
+    } catch (PermanentPushException permanent) {
+      abandon(outboxId, nowInUtc, permanent);
+      return false;
+
     } catch (Exception exception) {
       recordFailure(outboxId, nowInUtc, exception);
 
@@ -184,5 +189,27 @@ public class NotificationDispatchBatch {
     pushSender.send(delivery);
 
     return notificationDispatchService.markDelivered(delivery.outboxId());
+  }
+
+  /**
+   * 되돌릴 수 없는 실패를 바로 DLQ 로 보낸다 (ADR 0010).
+   *
+   * <p><b>예외 타입으로 가른다.</b> 던지는 쪽이 자기 실패의 성격을 안다 — 여기서 예외를 뜯어 판정하게 하면 그 판정을 빠뜨릴 수 있고, 빠뜨리면 영영 실패할 건이
+   * NT-03 의 세 번을 소진한다.
+   *
+   * <p>로그를 {@code ERROR} 로 남긴다. 재시도가 없어 <b>이 한 줄이 유일한 신호</b>다.
+   */
+  private void abandon(Long outboxId, LocalDateTime nowInUtc, Exception cause) {
+    try {
+      if (notificationDispatchService.abandon(outboxId, nowInUtc)) {
+        log.error(
+            "[NotificationDispatchBatch.abandon] Moved to DLQ without retry. outboxId={}",
+            outboxId,
+            cause);
+      }
+    } catch (Exception failed) {
+      log.error(
+          "[NotificationDispatchBatch.abandon] Failed to abandon. outboxId={}", outboxId, failed);
+    }
   }
 }

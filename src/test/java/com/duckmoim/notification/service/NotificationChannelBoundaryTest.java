@@ -6,6 +6,7 @@ import com.duckmoim.common.domain.NotificationKind;
 import com.duckmoim.common.domain.NotificationOutbox;
 import com.duckmoim.common.infra.NotificationOutboxRepository;
 import com.duckmoim.notification.infra.NotificationPushSender;
+import com.duckmoim.notification.infra.PermanentPushException;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
@@ -122,6 +123,48 @@ class NotificationChannelBoundaryTest {
 
     assertThat(notificationCount(outboxId)).isEqualTo(1);
     assertThat(statusOf(outboxId)).isEqualTo("SENT");
+  }
+
+  /**
+   * 되돌릴 수 없는 실패는 <b>세 번을 쓰지 않는다</b> (ADR 0010 · NT-03).
+   *
+   * <p>잘못된 VAPID 설정이나 깨진 페이로드는 다시 보내도 같은 실패라, 3회를 소진하는 것은 주기 세 번을 버리는 일이다.
+   */
+  @DisplayName("되돌릴 수 없는 푸시 실패는 한 번에 DLQ 로 간다.")
+  @Test
+  void permanentPushFailureSkipsRetry() {
+    long outboxId = pendingOutbox();
+    PUSH.set(
+        () -> {
+          throw new PermanentPushException("VAPID 설정이 틀렸다");
+        });
+
+    notificationDispatchBatch.dispatchPendingNotifications();
+
+    assertThat(statusOf(outboxId)).isEqualTo("없음");
+    assertThat(dlqCount()).isEqualTo(1);
+  }
+
+  /** DLQ 로 간 것은 아웃박스 행이다. 사용자는 알림을 받았고 푸시만 못 갔다. */
+  @DisplayName("DLQ 로 보내도 인앱 알림은 남는다.")
+  @Test
+  void inAppSurvivesPermanentPushFailure() {
+    long outboxId = pendingOutbox();
+    PUSH.set(
+        () -> {
+          throw new PermanentPushException("VAPID 설정이 틀렸다");
+        });
+
+    notificationDispatchBatch.dispatchPendingNotifications();
+
+    assertThat(notificationCount(outboxId)).isEqualTo(1);
+  }
+
+  private int dlqCount() {
+    return jdbc.queryForObject(
+        "SELECT COUNT(*) FROM notification_outbox_dlq WHERE recipient_id = ?",
+        Integer.class,
+        RECIPIENT_ID);
   }
 
   private long pendingOutbox() {
