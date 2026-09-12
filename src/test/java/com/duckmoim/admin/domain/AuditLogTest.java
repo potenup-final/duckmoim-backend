@@ -24,16 +24,19 @@ class AuditLogTest {
   private static final long TARGET_ID = 31L;
   private static final LocalDateTime AT = LocalDateTime.of(2026, 9, 4, 1, 0);
 
-  /** 화면-계약.md 「감사 로그」의 다섯이다. 표를 손으로 옮겨 적고 코드로 구하지 않는다. */
+  /** 화면-계약.md 「감사 로그」의 일곱이다. 표를 손으로 옮겨 적고 코드로 구하지 않는다. */
   private static final List<AuditKind> KINDS =
       List.of(
           AuditKind.SANCTION,
           AuditKind.RELEASE,
           AuditKind.SECRET_READ,
           AuditKind.BLIND,
-          AuditKind.PURGE);
+          AuditKind.PURGE,
+          // 2026-09-12 에 둘이 늘었다 (AD-08 · AD-09)
+          AuditKind.CHAT_READ,
+          AuditKind.MESSAGE_BLIND);
 
-  @DisplayName("kind 다섯 가지가 모두 기록된다.")
+  @DisplayName("kind 일곱 가지가 모두 기록된다.")
   @ParameterizedTest(name = "{0}")
   @EnumSource(AuditKind.class)
   void of(AuditKind kind) {
@@ -45,7 +48,7 @@ class AuditLogTest {
     assertThat(log.getAt()).isEqualTo(AT);
   }
 
-  @DisplayName("남기는 행위는 다섯뿐이다.")
+  @DisplayName("남기는 행위는 일곱뿐이다.")
   @Test
   void kinds() {
     assertThat(AuditKind.values()).containsExactlyElementsOf(KINDS);

@@ -5,6 +5,11 @@ import static com.duckmoim.companion.CompanionPostFixture.aCompanionPost;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.duckmoim.chat.domain.ChatRoom;
+import com.duckmoim.chat.domain.Message;
+import com.duckmoim.chat.exception.ChatErrorCode;
+import com.duckmoim.chat.infra.ChatMessageRepository;
+import com.duckmoim.chat.infra.ChatRoomRepository;
 import com.duckmoim.common.exception.BusinessException;
 import com.duckmoim.common.exception.ErrorCode;
 import com.duckmoim.companion.domain.CommentReadContext;
@@ -22,6 +27,7 @@ import com.duckmoim.safety.domain.ReportTargetType;
 import com.duckmoim.safety.infra.ReportRepository;
 import java.util.Arrays;
 import java.util.List;
+import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -56,15 +62,25 @@ class ReportCommandServiceTest {
   @Autowired private ReportRepository reportRepository;
   @Autowired private CommentRepository commentRepository;
   @Autowired private CompanionPostRepository companionPostRepository;
+  @Autowired private ChatRoomRepository chatRoomRepository;
+  @Autowired private ChatMessageRepository chatMessageRepository;
   @Autowired private JdbcTemplate jdbc;
 
   private long postId;
   private long commentId;
+  private long roomId;
+  private long messageId;
 
   @BeforeEach
   void setUp() {
     postId = aCompanionPost().insert(jdbc);
     commentId = aComment().postId(postId).authorId(TARGET_USER_ID).insert(jdbc);
+    roomId = chatRoomRepository.saveAndFlush(ChatRoom.openFor(postId, TARGET_USER_ID)).getId();
+    messageId =
+        chatMessageRepository
+            .saveAndFlush(
+                Message.send(roomId, TARGET_USER_ID, UUID.randomUUID().toString(), "문제의 말"))
+            .getId();
   }
 
   @DisplayName("유저를 신고하면 PENDING 으로 접수된다.")
@@ -194,6 +210,62 @@ class ReportCommandServiceTest {
     assertNotFound(ReportTargetType.POST, ReportReason.OFF_TOPIC, PostErrorCode.POST_NOT_FOUND);
     assertNotFound(
         ReportTargetType.COMMENT, ReportReason.FALSE_INFO, CommentErrorCode.COMMENT_NOT_FOUND);
+    assertNotFound(ReportTargetType.ROOM, ReportReason.ABUSE, ChatErrorCode.CHAT_ROOM_NOT_FOUND);
+    assertNotFound(
+        ReportTargetType.MESSAGE, ReportReason.ABUSE, ChatErrorCode.CHAT_MESSAGE_NOT_FOUND);
+  }
+
+  @DisplayName("채팅방을 신고하면 접수된다.")
+  @Test
+  void reportRoom() {
+    Long reportId =
+        reportCommandService.report(command(ReportTargetType.ROOM, roomId, ReportReason.ABUSE));
+
+    assertThat(reportRepository.existsById(reportId)).isTrue();
+  }
+
+  @DisplayName("메시지를 신고하면 접수된다.")
+  @Test
+  void reportMessage() {
+    Long reportId =
+        reportCommandService.report(
+            command(ReportTargetType.MESSAGE, messageId, ReportReason.INAPPROPRIATE));
+
+    assertThat(reportRepository.existsById(reportId)).isTrue();
+  }
+
+  /**
+   * 명세서 3장 미결 1번이 여기서 닫힌다 (2026-09-12).
+   *
+   * <p><b>접수는 방 멤버인지 보지 않는다.</b> 막으면 「괴롭히고 나가기」 길이 생기고, 괴롭힘을 당해 나간 사람이 정확히 그 모양이다. 지운 댓글을 신고할 수 있게
+   * 둔 {@code CM-14} 와 같은 판단이다 (API-설계.md 「2-6. 신고 (Safety)」).
+   *
+   * <p>{@code REPORTER_ID} 는 이 방에 초대된 적이 없다 — 방장은 {@code TARGET_USER_ID} 다.
+   */
+  @DisplayName("방 멤버가 아닌 사람도 그 방과 메시지를 신고할 수 있다.")
+  @Test
+  void report_reporterIsNotMember() {
+    Long roomReport =
+        reportCommandService.report(command(ReportTargetType.ROOM, roomId, ReportReason.ABUSE));
+    Long messageReport =
+        reportCommandService.report(
+            command(ReportTargetType.MESSAGE, messageId, ReportReason.ABUSE));
+
+    assertThat(reportRepository.existsById(roomReport)).isTrue();
+    assertThat(reportRepository.existsById(messageReport)).isTrue();
+  }
+
+  /** 지운 댓글과 같다 — 소프트 삭제라 본문이 남아 관리자가 판단할 재료가 된다 (CM-14). */
+  @DisplayName("지운 메시지도 신고로 접수된다.")
+  @Test
+  void reportMessage_isDeleted() {
+    jdbc.update("UPDATE chat_message SET status = 'DELETED' WHERE id = ?", messageId);
+
+    Long reportId =
+        reportCommandService.report(
+            command(ReportTargetType.MESSAGE, messageId, ReportReason.ABUSE));
+
+    assertThat(reportRepository.existsById(reportId)).isTrue();
   }
 
   /** 정본이 USER_NOT_FOUND 의 근거를 「탈퇴 포함」 으로 적었다. */
