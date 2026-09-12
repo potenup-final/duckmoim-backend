@@ -2,8 +2,9 @@ package com.duckmoim.chat.service;
 
 import com.duckmoim.chat.domain.MessageEvent;
 import com.duckmoim.chat.infra.ChatFanout;
+import com.duckmoim.chat.infra.ChatFanoutCodec;
+import com.duckmoim.chat.infra.ChatFanoutEvent;
 import com.duckmoim.chat.infra.ChatFanoutSubscription;
-import com.duckmoim.chat.infra.MessageEventCodec;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -41,7 +42,7 @@ public class ChatStreamService {
 
   private final ChatRoomMembershipReader chatRoomReader;
   private final ChatFanout chatFanout;
-  private final MessageEventCodec messageEventCodec;
+  private final ChatFanoutCodec chatFanoutCodec;
   private final ChatStreamHeartbeatExecutor heartbeatExecutor;
   private final ChatStreamReplayReader replayReader;
 
@@ -150,6 +151,46 @@ public class ChatStreamService {
    * <p>연결이 없으면 아무 일도 하지 않는다 — 스트림을 안 열어 둔 채로 나가는 것이 정상이다.
    */
   public void disconnect(Long roomId, Long userId) {
+    disconnectHere(roomId, userId);
+    announceLeft(roomId, userId);
+  }
+
+  /**
+   * 퇴장을 다른 인스턴스에도 알린다 (PR #138 리뷰).
+   *
+   * <p><b>연결과 퇴장 요청이 다른 인스턴스에 닿을 수 있다.</b> 리스너를 바꾸는 것은 <b>새 요청</b>의 방향뿐이라, 이미 맺어진 SSE 연결은 전환된 뒤에도 옛
+   * 인스턴스에 그대로 살아 있다.
+   *
+   * <pre>
+   * 20:00  지민 SSE 연결        ALB ▶ blue    blue.connections{3: [지민]}
+   * 20:30  배포 (리스너 전환)     ALB ▶ green   blue 의 연결은 안 죽는다
+   * 20:31  지민 POST /leave  ──────▶ green   green.connections{} ← 끊을 것이 없다
+   * 20:32  하늘의 메시지 ─ Redis ─▶ blue    ⚠️ 나간 지민에게 계속 흘러간다
+   * </pre>
+   *
+   * <p>노출은 스트림 타임아웃 30분까지다. 목록 조회는 매 요청 멤버를 보므로 같은 구멍이 없고, <b>스트림만 붙는 순간 한 번 보기 때문에</b> 생긴다 —
+   * {@code I-18} 이 걸린 자리다.
+   *
+   * <p><b>이미 있는 통로에 얹는다.</b> 메시지가 다니는 그 채널로 「누가 나갔다」를 함께 보낸다. 채널을 따로 파면 방마다 구독이 둘이 되고 그 둘의 수명을 따로
+   * 관리해야 한다.
+   *
+   * <p><b>미는 시점마다 멤버를 다시 보는 방법은 여전히 안 쓴다.</b> 그쪽은 <b>메시지마다</b> 방을 조회하는데, 이 방식은 <b>퇴장마다</b> 한 번 발행한다
+   * — 「퇴장은 드물고 전송은 잦다」는 STAR-113 의 판단이 그대로 유지된다.
+   *
+   * <p><b>여기서도 끊고 발행도 한다.</b> 발행만 하면 Redis 가 죽었을 때 <b>자기 인스턴스의 연결조차</b> 안 끊긴다 — 지금 되는 것이 안 되게 만드는
+   * 거래는 하지 않는다. 자기 발행이 Redis 를 돌아 다시 와도 그때는 끊을 연결이 없어 아무 일도 하지 않는다.
+   */
+  private void announceLeft(Long roomId, Long userId) {
+    String payload = chatFanoutCodec.encodeMemberLeft(userId);
+    if (payload == null) {
+      return;
+    }
+
+    chatFanout.publish(roomId, payload);
+  }
+
+  /** 이 인스턴스에 열려 있는 그 사람의 연결만 끊는다. 없으면 아무 일도 하지 않는다. */
+  private void disconnectHere(Long roomId, Long userId) {
     List<RoomConnection> room = connections.get(roomId);
     if (room == null) {
       return;
@@ -209,20 +250,35 @@ public class ChatStreamService {
    * Redis 에서 받은 것을 이 인스턴스의 연결들에 민다.
    *
    * <p><b>Redis 의 구독 스레드에서 불린다.</b> 그래서 여기서 예외가 나가면 그 스레드가 다음 사건을 못 받는다 — 판독 실패는 {@code null} 로
-   * 돌아오고({@code MessageEventCodec}) 밀기 실패는 세션이 삼킨다({@link ChatStreamSession}).
+   * 돌아오고({@code ChatFanoutCodec}) 밀기 실패는 세션이 삼킨다({@link ChatStreamSession}).
+   *
+   * <p><b>종류를 갈라야 한다.</b> 이 통로에는 새 메시지와 퇴장 둘이 흐른다 ({@code ChatFanoutEvent}). 퇴장이 오면 이 인스턴스에 열려 있는 그
+   * 사람의 연결을 끊는다 — <b>다른 인스턴스에서 나간 사람을 여기서 끊는 유일한 길</b>이다 ({@link #announceLeft}).
    *
    * <p><b>보낸 사람에게도 간다.</b> 자기 화면에는 이미 전송 응답으로 말풍선이 붙어 있지만, 그 둘은 {@code messageId} 가 같아 클라이언트가 겹치는
    * 것을 걸러낸다 — 오히려 보내는 쪽만 다르게 다루면 규칙이 하나 더 생긴다.
    */
   private void dispatch(Long roomId, String payload) {
-    MessageEvent event = messageEventCodec.decode(payload);
+    ChatFanoutEvent event = chatFanoutCodec.decode(payload);
     if (event == null) {
       return;
     }
 
+    // 퇴장이 먼저다. 종류를 안 가르면 나간 사람에게 계속 흘러간다 (PR #138 리뷰).
+    if (event.isMemberLeft()) {
+      disconnectHere(roomId, event.leftUserId());
+      return;
+    }
+
+    if (event.isMessage()) {
+      push(roomId, event.message());
+    }
+  }
+
+  private void push(Long roomId, MessageEvent message) {
     connections
         .getOrDefault(roomId, List.of())
-        .forEach(connection -> connection.session().send(event));
+        .forEach(connection -> connection.session().send(message));
   }
 
   /** 연결 하나를 목록에서 빼고, 그 방의 마지막이었으면 구독도 닫는다. */
