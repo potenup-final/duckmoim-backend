@@ -212,6 +212,7 @@ jobs:
           KAKAO_CLIENT_SECRET: ${{ secrets.KAKAO_CLIENT_SECRET }}
           S3_BUCKET: ${{ secrets.S3_BUCKET }}
           S3_PUBLIC_BASE_URL: ${{ secrets.S3_PUBLIC_BASE_URL }}
+          S3_CHAT_BUCKET: ${{ secrets.S3_CHAT_BUCKET }}
           REDIS_HOST: ${{ secrets.REDIS_HOST }}
           REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
         run: |
@@ -228,6 +229,14 @@ jobs:
           # 비었다고 배포를 끊으면 「부가 기능의 부재가 본 기능을 막는」 구조가 된다.
           # 비면 application.yml 의 기본값(localhost)으로 붙으려다 조용히 실패하고,
           # ChatFanoutConfig 가 기동 로그에 대상 호스트를 남겨 그때 드러난다.
+          #
+          # S3_CHAT_BUCKET 도 필수가 아니다 (STAR-115). 비면 StubChatImageStorage 가
+          # 떠서 채팅 이미지 업로드만 꺼지고 메시지 전송·목록·삭제·스트림은 그대로 돈다 —
+          # 위 REDIS 와 같은 판단이다. 필수로 두면 시크릿을 등록하기 전에 머지되는 순간
+          # 배포 전체가 멈춘다.
+          #
+          # S3_BUCKET 은 필수로 남는다. 그쪽이 비면 프로필 이미지가 조용히 꺼지는데,
+          # 그 경로는 이미 운영에서 쓰이고 있어 「꺼져도 되는 부가 기능」이 아니다.
           for required in DB_URL DB_USERNAME DB_PASSWORD JWT_SECRET \
                           CORS_ALLOWED_ORIGINS INGEST_KEY KAKAO_CLIENT_ID \
                           S3_BUCKET S3_PUBLIC_BASE_URL; do
@@ -253,6 +262,7 @@ jobs:
             "KAKAO_CLIENT_SECRET=$KAKAO_CLIENT_SECRET" \
             "S3_BUCKET=$S3_BUCKET" \
             "S3_PUBLIC_BASE_URL=$S3_PUBLIC_BASE_URL" \
+            "S3_CHAT_BUCKET=$S3_CHAT_BUCKET" \
             "REDIS_HOST=$REDIS_HOST" \
             "REDIS_PASSWORD=$REDIS_PASSWORD" \
             | ssh -i ~/.ssh/deploy.pem "$EC2_USER@$DEPLOY_HOST" \
