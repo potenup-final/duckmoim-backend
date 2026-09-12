@@ -251,7 +251,7 @@ class NotificationControllerTest {
 
   private static NotificationView view(boolean read) {
     return new NotificationView(
-        42L, NotificationKind.POST_COMMENTED, 10L, 100L, read, CREATED_AT_UTC);
+        42L, NotificationKind.POST_COMMENTED, 10L, 100L, null, null, read, CREATED_AT_UTC);
   }
 
   private HttpHeaders bearer() {

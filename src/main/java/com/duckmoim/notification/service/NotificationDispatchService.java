@@ -144,12 +144,7 @@ public class NotificationDispatchService {
     }
 
     notificationRepository.save(
-        Notification.of(
-            outboxId,
-            outbox.getRecipientId(),
-            outbox.getKind(),
-            outbox.getPostId(),
-            outbox.getCommentId()));
+        Notification.of(outboxId, outbox.getRecipientId(), outbox.getKind(), outbox.target()));
 
     outbox.markSent();
 

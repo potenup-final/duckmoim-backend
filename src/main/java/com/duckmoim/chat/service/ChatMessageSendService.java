@@ -6,6 +6,7 @@ import com.duckmoim.chat.infra.AuthoredMessage;
 import com.duckmoim.chat.infra.ChatFanout;
 import com.duckmoim.chat.infra.ChatFanoutCodec;
 import com.duckmoim.chat.infra.ChatMessageRepository;
+import com.duckmoim.chat.infra.ChatPresence;
 import com.duckmoim.common.exception.BusinessException;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
@@ -46,6 +47,7 @@ public class ChatMessageSendService {
   private final ChatMessageRepository chatMessageRepository;
   private final ChatFanout chatFanout;
   private final ChatFanoutCodec chatFanoutCodec;
+  private final ChatPresence chatPresence;
 
   /**
    * 보낸다. 이미 같은 식별자로 보낸 것이 있으면 그것을 그대로 돌려준다 (CH-07 · I-20).
@@ -139,11 +141,31 @@ public class ChatMessageSendService {
         message.createdAt());
   }
 
+  /**
+   * <b>접속 집합을 트랜잭션 밖에서 읽는다</b> (NT-07).
+   *
+   * <p>{@link ChatMessageWriter#write} 안으로 옮기면 Redis 왕복이 DB 커넥션을 쥔 채로 일어난다. {@code
+   * ChatRoomMembershipReader} 가 적어 둔 것과 같은 함정이다 —
+   *
+   * <pre>
+   * Redis 지연
+   *    전송 10건 × DB 커넥션 점유
+   *       → HikariCP 풀 고갈
+   *          → 로그인·모집글·댓글까지 커넥션 대기
+   * </pre>
+   *
+   * <p><b>빈이 둘로 나뉜 것이 여기서 한 번 더 값을 한다.</b> 원래는 {@code I-20} 의 유니크 위반을 트랜잭션 밖에서 잡으려고 가른 경계인데, 그 밖이 곧
+   * Redis 를 읽어도 되는 자리다.
+   *
+   * <p><b>읽은 값이 잠깐 낡는다.</b> 읽은 뒤 저장 전에 누가 스트림을 닫으면 그 사람은 알림을 못 받는다. 반대 방향(닫은 사람이 알림을 하나 더 받는 것)보다
+   * 나쁜 쪽이지만, 창이 밀리초이고 그 사람은 <b>방금까지 그 화면을 보고 있었다.</b>
+   */
   private SentMessage writeOrTakeExisting(
       Long roomId, Long senderId, String clientMessageId, String content) {
 
     try {
-      return chatMessageWriter.write(roomId, senderId, clientMessageId, content);
+      return chatMessageWriter.write(
+          roomId, senderId, clientMessageId, content, chatPresence.viewers(roomId));
     } catch (DataIntegrityViolationException e) {
       // uq_chat_message_sender_client_id. 같은 클라이언트가 두 번 보내 둘 다 조회를 지난 경우다 —
       // 먼저 커밋된 쪽이 이미 저장했으므로 순차로 왔을 때와 같은 답을 준다.

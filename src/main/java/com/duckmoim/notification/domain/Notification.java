@@ -2,6 +2,7 @@ package com.duckmoim.notification.domain;
 
 import com.duckmoim.common.domain.BaseEntity;
 import com.duckmoim.common.domain.NotificationKind;
+import com.duckmoim.common.domain.NotificationTarget;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -48,11 +49,18 @@ public class Notification extends BaseEntity {
   @Column(name = "kind", nullable = false, updatable = false, length = 20)
   private NotificationKind kind;
 
-  @Column(name = "post_id", nullable = false, updatable = false)
+  /** 가리키는 대상. 종류마다 채워지는 짝이 다르다 (V806 · {@link NotificationTarget}). */
+  @Column(name = "post_id", updatable = false)
   private Long postId;
 
-  @Column(name = "comment_id", nullable = false, updatable = false)
+  @Column(name = "comment_id", updatable = false)
   private Long commentId;
+
+  @Column(name = "room_id", updatable = false)
+  private Long roomId;
+
+  @Column(name = "message_id", updatable = false)
+  private Long messageId;
 
   /**
    * 읽은 시각. NULL 이면 안 읽은 것이다.
@@ -64,13 +72,15 @@ public class Notification extends BaseEntity {
   private LocalDateTime readAt;
 
   private Notification(
-      Long outboxId, Long recipientId, NotificationKind kind, Long postId, Long commentId) {
+      Long outboxId, Long recipientId, NotificationKind kind, NotificationTarget target) {
 
     this.outboxId = outboxId;
     this.recipientId = recipientId;
     this.kind = kind;
-    this.postId = postId;
-    this.commentId = commentId;
+    this.postId = target.postId();
+    this.commentId = target.commentId();
+    this.roomId = target.roomId();
+    this.messageId = target.messageId();
   }
 
   /**
@@ -79,15 +89,14 @@ public class Notification extends BaseEntity {
    * <p><b>읽음 여부를 인자로 받지 않는다.</b> 만들어지는 알림은 늘 안 읽은 것이고, 읽음으로 바꾸는 문은 NT-09 가 낸다.
    */
   public static Notification of(
-      Long outboxId, Long recipientId, NotificationKind kind, Long postId, Long commentId) {
+      Long outboxId, Long recipientId, NotificationKind kind, NotificationTarget target) {
 
     Objects.requireNonNull(outboxId, "알림은 어느 발행에서 나왔는지를 가진다.");
     Objects.requireNonNull(recipientId, "알림은 수신자를 가진다.");
     Objects.requireNonNull(kind, "알림은 종류를 가진다.");
-    Objects.requireNonNull(postId, "알림은 모집글을 가진다.");
-    Objects.requireNonNull(commentId, "알림은 댓글을 가진다.");
+    Objects.requireNonNull(target, "알림은 가리킬 대상을 가진다.");
 
-    return new Notification(outboxId, recipientId, kind, postId, commentId);
+    return new Notification(outboxId, recipientId, kind, target);
   }
 
   /** 안 읽은 알림인지. 목록과 배지가 이것으로 갈린다 (NT-08 · NT-10). */

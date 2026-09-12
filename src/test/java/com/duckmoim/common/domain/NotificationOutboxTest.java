@@ -15,7 +15,8 @@ class NotificationOutboxTest {
   void of_isPending() {
     // when
     NotificationOutbox outbox =
-        NotificationOutbox.of(NotificationKind.POST_COMMENTED, 1L, 10L, 100L);
+        NotificationOutbox.of(
+            NotificationKind.POST_COMMENTED, 1L, NotificationTarget.ofComment(10L, 100L));
 
     // then — 발행은 INSERT 로 끝나고 상태를 바꾸는 것은 워커다 (NT-02)
     assertThat(outbox.getStatus()).isEqualTo(OutboxStatus.PENDING);
@@ -94,7 +95,8 @@ class NotificationOutboxTest {
   }
 
   private static NotificationOutbox anOutbox() {
-    return NotificationOutbox.of(NotificationKind.POST_COMMENTED, 1L, 10L, 100L);
+    return NotificationOutbox.of(
+        NotificationKind.POST_COMMENTED, 1L, NotificationTarget.ofComment(10L, 100L));
   }
 
   @DisplayName("수신자가 없으면 아웃박스 행을 만들 수 없다.")
@@ -102,7 +104,9 @@ class NotificationOutboxTest {
   void of_recipientIsMissing() {
     // when & then — 수신자는 워커가 나중에 채울 수 없는 값이다
     assertThatThrownBy(
-            () -> NotificationOutbox.of(NotificationKind.POST_COMMENTED, null, 10L, 100L))
+            () ->
+                NotificationOutbox.of(
+                    NotificationKind.POST_COMMENTED, null, NotificationTarget.ofComment(10L, 100L)))
         .isInstanceOf(NullPointerException.class)
         .hasMessage("아웃박스 행은 수신자를 가진다.");
   }

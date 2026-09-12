@@ -29,6 +29,8 @@ class NotificationDispatchServiceTest {
   private static final long RECIPIENT_ID = 7L;
   private static final long POST_ID = 10L;
   private static final long COMMENT_ID = 100L;
+  private static final long ROOM_ID = 3L;
+  private static final long MESSAGE_ID = 777L;
 
   @Autowired private NotificationDispatchService notificationDispatchService;
   @Autowired private JdbcTemplate jdbc;
@@ -136,6 +138,51 @@ class NotificationDispatchServiceTest {
     assertThat(outboxColumn(outboxId, "status")).isEqualTo("SENT");
   }
 
+  @DisplayName("워커가 채팅 아웃박스 건을 알림함으로 옮긴다.")
+  @Test
+  void dispatch_roomMessaged() {
+    // given
+    long outboxId = givenPendingRoomOutbox();
+
+    // when
+    boolean sent = notificationDispatchService.dispatch(outboxId);
+
+    // then — 모집글·댓글 칸은 비고 방·메시지 칸이 찬다 (V806)
+    assertThat(sent).isTrue();
+    assertThat(jdbc.queryForList("SELECT * FROM notification"))
+        .singleElement()
+        .satisfies(
+            row -> {
+              assertThat(row).containsEntry("kind", "ROOM_MESSAGED");
+              assertThat(row).containsEntry("room_id", ROOM_ID);
+              assertThat(row).containsEntry("message_id", MESSAGE_ID);
+              assertThat(row.get("post_id")).isNull();
+              assertThat(row.get("comment_id")).isNull();
+            });
+  }
+
+  @DisplayName("못 보낸 채팅 알림은 방과 메시지를 DLQ 에 남긴다.")
+  @Test
+  void recordFailure_movesRoomMessagedToDlq() {
+    // given — 원본 아웃박스 행은 지워지므로 여기 없으면 무엇을 못 보냈는지 복원할 수 없다
+    long outboxId = givenPendingRoomOutbox();
+    notificationDispatchService.recordFailure(outboxId, NOW);
+    notificationDispatchService.recordFailure(outboxId, NOW);
+
+    // when
+    notificationDispatchService.recordFailure(outboxId, NOW);
+
+    // then
+    assertThat(jdbc.queryForList("SELECT * FROM notification_outbox_dlq"))
+        .singleElement()
+        .satisfies(
+            row -> {
+              assertThat(row).containsEntry("kind", "ROOM_MESSAGED");
+              assertThat(row).containsEntry("room_id", ROOM_ID);
+              assertThat(row).containsEntry("message_id", MESSAGE_ID);
+            });
+  }
+
   @DisplayName("발송이 실패하면 다음 시도가 백오프만큼 밀린다.")
   @Test
   void recordFailure() {
@@ -235,6 +282,23 @@ class NotificationDispatchServiceTest {
         RECIPIENT_ID,
         POST_ID,
         COMMENT_ID,
+        NOW,
+        NOW);
+
+    return jdbc.queryForObject("SELECT MAX(id) FROM notification_outbox", Long.class);
+  }
+
+  /** 채팅 알림 한 건 (NT-07). 모집글·댓글 대신 방·메시지를 가리킨다. */
+  private long givenPendingRoomOutbox() {
+    jdbc.update(
+        """
+        INSERT INTO notification_outbox
+            (recipient_id, kind, room_id, message_id, status, attempts, created_at, updated_at)
+        VALUES (?, 'ROOM_MESSAGED', ?, ?, 'PENDING', 0, ?, ?)
+        """,
+        RECIPIENT_ID,
+        ROOM_ID,
+        MESSAGE_ID,
         NOW,
         NOW);
 
