@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.duckmoim.common.domain.NotificationKind;
 import com.duckmoim.common.domain.NotificationOutbox;
+import com.duckmoim.common.domain.NotificationTarget;
 import com.duckmoim.common.infra.NotificationOutboxRepository;
 import com.duckmoim.notification.infra.NotificationPushSender;
 import com.duckmoim.notification.infra.PermanentPushException;
@@ -169,7 +170,10 @@ class NotificationChannelBoundaryTest {
 
   private long pendingOutbox() {
     NotificationOutbox outbox =
-        NotificationOutbox.of(NotificationKind.POST_COMMENTED, RECIPIENT_ID, POST_ID, COMMENT_ID);
+        NotificationOutbox.of(
+            NotificationKind.POST_COMMENTED,
+            RECIPIENT_ID,
+            NotificationTarget.ofComment(POST_ID, COMMENT_ID));
 
     return outboxRepository.save(outbox).getId();
   }

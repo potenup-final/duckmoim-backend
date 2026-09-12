@@ -152,7 +152,7 @@ class NotificationDispatchServiceTest {
     long outboxId = givenPendingRoomOutbox();
 
     // when
-    boolean sent = notificationDispatchService.dispatch(outboxId);
+    boolean sent = dispatch(outboxId);
 
     // then — 모집글·댓글 칸은 비고 방·메시지 칸이 찬다 (V806)
     assertThat(sent).isTrue();
