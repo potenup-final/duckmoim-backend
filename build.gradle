@@ -135,6 +135,12 @@ tasks.named('test') {
 	// 「안 오는 시각」을 줄 수 없어, 테스트가 끝날 때까지 한 번도 안 돌 만큼 긴 값을 준다.
 	systemProperty 'duckmoim.chat.stream.heartbeat-interval-ms', '86400000'
 
+	// 채팅 이미지의 스케줄러 둘도 끈다 (CH-16 · CH-17). EXIF 워커는 10초 주기라 테스트가 도는
+	// 중에 반드시 발화해 남의 테스트가 만든 사진을 집고, 고아 정리는 하루 한 번이지만 새벽
+	// 4시 20분에 테스트를 돌리면 같은 일이 난다 — STAR-115 가 이 줄을 빠뜨렸다.
+	systemProperty 'duckmoim.chat.image.exif.cron', '0 0 0 1 1 *'
+	systemProperty 'duckmoim.chat.image.cleanup-cron', '0 0 0 1 1 *'
+
 	// 위반 픽스처는 아키텍처 규칙을 일부러 어기는 클래스라 테스트로 실행하지 않는다.
 	// 이름을 *Test 로 안 지으면 안 잡힐 거라 봤지만, Gradle 은 클래스 파일을 훑어
 	// 플랫폼에 넘기므로 이름 규칙이 걸리지 않는다. 컴파일은 그대로여서 ArchUnit 은

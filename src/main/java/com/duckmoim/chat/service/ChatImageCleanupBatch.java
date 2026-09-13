@@ -5,6 +5,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.concurrent.atomic.AtomicBoolean;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -41,19 +42,26 @@ public class ChatImageCleanupBatch {
 
   private final ChatImageCleanupService chatImageCleanupService;
   private final ChatImageStorage storage;
+  private final ChatImageJobExecutor jobExecutor;
   private final Clock clock;
+
+  /** 앞 회차가 아직 도는가. 전용 스레드로 넘기면 {@code @Scheduled} 의 「겹치지 않음」 보장이 사라져 직접 든다. */
+  private final AtomicBoolean running = new AtomicBoolean();
+
   private final Duration retention;
   private final int batchSize;
 
   public ChatImageCleanupBatch(
       ChatImageCleanupService chatImageCleanupService,
       ChatImageStorage storage,
+      ChatImageJobExecutor jobExecutor,
       Clock clock,
       @Value("${duckmoim.chat.image.orphan-retention}") Duration retention,
       @Value("${duckmoim.chat.image.orphan-batch-size}") int batchSize) {
 
     this.chatImageCleanupService = chatImageCleanupService;
     this.storage = storage;
+    this.jobExecutor = jobExecutor;
     this.clock = clock;
     this.retention = retention;
     this.batchSize = batchSize;
@@ -72,6 +80,16 @@ public class ChatImageCleanupBatch {
    * 없을 때의 증상이 정확히 그 모양이라, 한쪽만 찍으면 그 고장이 안 보인다.
    */
   @Scheduled(cron = "${duckmoim.chat.image.cleanup-cron}", zone = KST)
+  public void scheduleCleanup() {
+    jobExecutor.submitIfIdle(running, this::deleteOrphanImages);
+  }
+
+  /**
+   * 한 회차를 이 스레드에서 끝까지 돈다. 스케줄러는 {@link #scheduleCleanup} 으로 전용 스레드에 넘기고, 검사는 이것을 바로 부른다.
+   *
+   * <p><b>스케줄러 스레드에서 부르지 않는다</b> (CH-16 리뷰에서 같은 종류로 함께 옮겼다). 한 회차가 최대 50청크 × 200건의 S3 삭제라, 배치
+   * 스케줄러(스레드 2)의 한 자리를 몇 분씩 차지하면 SSE 하트비트가 발화하지 못한다 ({@code ChatImageJobExecutor}).
+   */
   public void deleteOrphanImages() {
     try {
       LocalDateTime thresholdInUtc = nowInUtc().minus(retention);

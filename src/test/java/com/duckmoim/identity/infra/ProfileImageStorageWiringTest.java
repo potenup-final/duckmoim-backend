@@ -65,7 +65,9 @@ class ProfileImageStorageWiringTest {
             "duckmoim.s3.bucket=duckmoim-profile-image",
             "duckmoim.s3.region=ap-northeast-2",
             "duckmoim.s3.public-base-url=https://example.invalid",
-            "duckmoim.s3.presign-ttl=5m")
+            "duckmoim.s3.presign-ttl=5m",
+            "duckmoim.s3.api-call-attempt-timeout=20s",
+            "duckmoim.s3.api-call-timeout=60s")
         .run(
             context -> {
               assertThat(context).hasSingleBean(ProfileImageStorage.class);

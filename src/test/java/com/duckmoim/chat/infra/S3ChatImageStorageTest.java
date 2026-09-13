@@ -1,6 +1,10 @@
 package com.duckmoim.chat.infra;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.BDDMockito.given;
+import static org.mockito.BDDMockito.then;
 import static org.mockito.Mockito.mock;
 
 import java.net.URI;
@@ -12,10 +16,16 @@ import java.util.List;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
+import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.GetObjectRequest;
+import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
+import software.amazon.awssdk.services.s3.model.PutObjectRequest;
+import software.amazon.awssdk.services.s3.model.S3Exception;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 
 /**
@@ -37,9 +47,10 @@ class S3ChatImageStorageTest {
               StaticCredentialsProvider.create(AwsBasicCredentials.create("AKIATEST", "secret")))
           .build();
 
+  private final S3Client s3Client = mock(S3Client.class);
+
   private final S3ChatImageStorage storage =
-      new S3ChatImageStorage(
-          mock(S3Client.class), presigner, "duckmoim-chat-image", Duration.ofMinutes(5));
+      new S3ChatImageStorage(s3Client, presigner, "duckmoim-chat-image", Duration.ofMinutes(5));
 
   @AfterEach
   void close() {
@@ -66,6 +77,105 @@ class S3ChatImageStorageTest {
     String url = storage.presignUpload("chat/3/abc.jpg", "image/jpeg", 204_800L);
 
     assertThat(signedHeaders(url)).contains("content-type");
+  }
+
+  /**
+   * <b>업로드 주소는 한 번만 쓸 수 있다</b> (CH-16 리뷰).
+   *
+   * <p>서명 PUT 주소는 만료 전까지 재사용된다. 이 조건이 빠지면 EXIF 워커가 벗긴 뒤 같은 주소로 원본을 다시 올려 <b>DB 는 STRIPPED 인데 S3 에는
+   * 좌표가 든 파일</b>이 남고, CH-15 가 그것을 믿고 서명한다.
+   */
+  @DisplayName("업로드 서명에 If-None-Match 가 묶여 한 번만 올릴 수 있다.")
+  @Test
+  void presignUpload_signsIfNoneMatch() {
+    String url = storage.presignUpload("chat/3/abc.jpg", "image/jpeg", 204_800L);
+
+    assertThat(signedHeaders(url)).contains("if-none-match");
+  }
+
+  // ── 조건부 덮어쓰기 (CH-16) ─────────────────────────────────────────────
+
+  /**
+   * <b>덮어쓰기에 내려받을 때의 ETag 가 조건으로 실린다.</b>
+   *
+   * <p>빠지면 EXIF 워커가 벗기는 사이에 고아 정리가 지운 객체를 <b>되살린다</b> — 행은 없고 객체만 남는 쓰레기다.
+   */
+  @DisplayName("덮어쓰기 요청에 If-Match 가 실린다.")
+  @Test
+  void overwrite_sendsIfMatch() {
+    ArgumentCaptor<PutObjectRequest> request = ArgumentCaptor.forClass(PutObjectRequest.class);
+
+    storage.overwriteIfUnchanged("chat/3/abc.jpg", new byte[] {1, 2}, "image/jpeg", "\"etag-1\"");
+
+    then(s3Client).should().putObject(request.capture(), any(RequestBody.class));
+    assertThat(request.getValue().ifMatch()).isEqualTo("\"etag-1\"");
+  }
+
+  /** 412 는 「그 사이 바뀌었다」, 404 는 「그 사이 지워졌다」. 둘 다 재시도해도 소용없다. */
+  @DisplayName("조건이 어긋나거나 객체가 사라졌으면 쓰지 않았다고 답한다.")
+  @Test
+  void overwrite_returnsFalseWhenChangedOrGone() {
+    given(s3Client.putObject(any(PutObjectRequest.class), any(RequestBody.class)))
+        .willThrow(S3Exception.builder().statusCode(412).build())
+        .willThrow(S3Exception.builder().statusCode(404).build());
+
+    assertThat(storage.overwriteIfUnchanged("k", new byte[] {1}, "image/jpeg", "e")).isFalse();
+    assertThat(storage.overwriteIfUnchanged("k", new byte[] {1}, "image/jpeg", "e")).isFalse();
+  }
+
+  /** 권한 · 네트워크 실패를 「사라짐」으로 접으면 일시 장애가 영구 실패로 굳는다. 던져서 재시도로 보낸다. */
+  @DisplayName("그 밖의 실패는 던진다.")
+  @Test
+  void overwrite_throwsOnOtherFailures() {
+    given(s3Client.putObject(any(PutObjectRequest.class), any(RequestBody.class)))
+        .willThrow(S3Exception.builder().statusCode(403).build());
+
+    assertThatThrownBy(() -> storage.overwriteIfUnchanged("k", new byte[] {1}, "image/jpeg", "e"))
+        .isInstanceOf(S3Exception.class);
+  }
+
+  @DisplayName("내려받을 객체가 없으면 빈 값이다.")
+  @Test
+  void download_returnsEmptyWhenGone() {
+    given(s3Client.getObjectAsBytes(any(GetObjectRequest.class)))
+        .willThrow(NoSuchKeyException.builder().build());
+
+    assertThat(storage.download("chat/3/gone.jpg")).isEmpty();
+  }
+
+  /**
+   * <b>수명이 부르는 쪽이 준 값이다</b> (CH-15). 업로드 서명의 {@code presignTtl}(5분) 과 갈리므로, 다른 값을 줬을 때 그대로 실리는지 본다.
+   *
+   * <p>이 값이 어긋나면 캐시가 세는 남은 수명과 실제 만료가 갈라진다 — 캐시는 아직 절반 남았다고 보는데 S3 는 이미 거절하는 상태가 된다.
+   */
+  @DisplayName("열람 서명의 수명은 부르는 쪽이 준 값이다.")
+  @Test
+  void presignView_usesGivenTtl() {
+    String url = storage.presignView("chat/3/abc.jpg", Duration.ofMinutes(2));
+
+    assertThat(queryValue(url, "X-Amz-Expires")).isEqualTo("120");
+  }
+
+  /**
+   * <b>헤더를 묶지 않는다.</b> 브라우저의 {@code <img src>} 는 헤더를 붙이지 않아서, 서명에 {@code content-type} 같은 것이 들어가면 그
+   * 태그로는 열리지 않는다 — 업로드 서명이 정확히 그 반대다.
+   */
+  @DisplayName("열람 서명은 host 말고 다른 헤더를 묶지 않는다.")
+  @Test
+  void presignView_signsNoExtraHeaders() {
+    String url = storage.presignView("chat/3/abc.jpg", Duration.ofMinutes(5));
+
+    assertThat(signedHeaders(url)).containsExactly("host");
+  }
+
+  private static String queryValue(String url, String name) {
+    return Arrays.stream(URI.create(url).getRawQuery().split("&"))
+        .filter(pair -> pair.startsWith(name + "="))
+        .map(
+            pair ->
+                URLDecoder.decode(pair.substring(pair.indexOf('=') + 1), StandardCharsets.UTF_8))
+        .findFirst()
+        .orElseThrow();
   }
 
   private static List<String> signedHeaders(String url) {
