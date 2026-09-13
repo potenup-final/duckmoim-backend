@@ -2,6 +2,7 @@ package com.duckmoim.chat.infra;
 
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
+import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -32,6 +33,27 @@ public class ChatRoomQueryRepositoryImpl implements ChatRoomQueryRepository {
       """;
 
   /**
+   * 보관 기간이 지난 방 (CH-19).
+   *
+   * <p><b>모집글에서 출발하는 질의다.</b> 조건 둘 중 범위를 좁히는 것은 {@code p.status} · {@code p.closedAt} 이고 그 둘에
+   * {@code ix_companion_post_purge} 가 걸려 있다 (V300). 방 쪽 조건({@code purgedAt IS NULL})은 PK 조인으로 이미 한
+   * 행이 된 뒤에 걸린다.
+   *
+   * <p><b>{@code CLOSED} 를 함께 본다.</b> {@code closedAt} 이 찬 글은 정의상 마감된 글이라 상태 조건이 결과를 바꾸지는 않지만, 인덱스의
+   * 선두 컬럼이라 빼면 범위 스캔이 안 된다.
+   */
+  private static final String SELECT_PURGEABLE_ROOM_ID =
+      """
+      SELECT r.id
+        FROM ChatRoom r
+        JOIN CompanionPost p ON p.id = r.postId
+       WHERE p.status = com.duckmoim.companion.domain.PostStatus.CLOSED
+         AND p.closedAt < :cutoffInUtc
+         AND r.purgedAt IS NULL
+       ORDER BY r.id ASC
+      """;
+
+  /**
    * 방장·초대 응답({@code ChatRoomInvitation})과 달리 여기는 {@code User} 를 조인한다 — 방 상세(CH-06)의 멤버 블록에 닉네임 ·
    * 아바타가 필요해서다 ({@code AuthoredPost} 와 같은 근거).
    */
@@ -53,6 +75,15 @@ public class ChatRoomQueryRepositoryImpl implements ChatRoomQueryRepository {
     return entityManager
         .createQuery(SELECT_SUMMARY, ChatRoomSummary.class)
         .setParameter("userId", userId)
+        .getResultList();
+  }
+
+  @Override
+  public List<Long> findPurgeableRoomIds(LocalDateTime cutoffInUtc, int limit) {
+    return entityManager
+        .createQuery(SELECT_PURGEABLE_ROOM_ID, Long.class)
+        .setParameter("cutoffInUtc", cutoffInUtc)
+        .setMaxResults(limit)
         .getResultList();
   }
 
