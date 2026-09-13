@@ -56,8 +56,10 @@ public record AuthoredMessage(
    * 것을 읽어 <b>그 사이 탈퇴한 사람을 만난다.</b> 목록 조회({@code ChatMessageQueryService})가 이미 {@link #display} 로 같은
    * 판정을 하고 있어, 여기서 빼면 실시간 경로로만 실명이 남는다.
    *
-   * <p><b>지운 메시지의 본문을 싣지 않는다</b> (CH-12). 응답을 그리는 자리가 한 번 더 끊지만 (<i>{@code
-   * MessageItemResponse#from}</i>) <b>본문이 Redis 를 지나가지 않는 편이 낫다</b> — 팬아웃 payload 는 이 프로세스 밖으로 나간다.
+   * <p><b>지운 메시지의 본문과 사진을 싣지 않는다</b> (CH-12 · PR #147 리뷰). 본문만 끊으면 {@code imageId} 가 새서 {@code
+   * CH-15} 가 붙는 순간 지운·가린 사진이 서명 URL 로 다시 열린다 — 목록 조회({@code ChatMessageQueryService#view})와 같은
+   * 판단이다. 응답을 그리는 자리가 한 번 더 끊지만 (<i>{@code MessageItemResponse#from}</i>) <b>본문이 Redis 를 지나가지 않는 편이
+   * 낫다</b> — 팬아웃 payload 는 이 프로세스 밖으로 나간다.
    */
   public MessageEvent toEvent(Clock clock) {
     AuthorDisplay sender = display(clock);
@@ -69,7 +71,7 @@ public record AuthoredMessage(
         sender.nickname(),
         sender.profileImageUrl(),
         isVisible() ? content : null,
-        imageId,
+        isVisible() ? imageId : null,
         status,
         createdAt);
   }

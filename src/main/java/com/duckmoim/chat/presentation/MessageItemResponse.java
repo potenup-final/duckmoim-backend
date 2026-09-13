@@ -66,7 +66,7 @@ public record MessageItemResponse(
         new MessageSenderResponse(
             event.senderId(), event.senderNickname(), event.senderProfileImageUrl()),
         event.status() == MessageStatus.ACTIVE ? event.content() : null,
-        event.imageId(),
+        event.status() == MessageStatus.ACTIVE ? event.imageId() : null,
         event.status(),
         toKst(event.createdAt()));
   }

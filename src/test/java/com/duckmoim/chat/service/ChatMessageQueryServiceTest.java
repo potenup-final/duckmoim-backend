@@ -229,6 +229,55 @@ class ChatMessageQueryServiceTest {
     assertThat(items).extracting(MessageView::content).containsExactly("이 방의 말");
   }
 
+  // ── 사진 번호도 본문과 함께 끊는다 (PR #147 리뷰) ────────────────────────────
+
+  /** 살아 있는 사진 메시지는 번호가 그대로 나간다. 아래 둘의 대조군이다. */
+  @DisplayName("살아 있는 사진 메시지는 imageId 가 나간다.")
+  @Test
+  void findMessages_exposesImageIdOfActiveMessage() {
+    sendWithImage(7L);
+
+    assertThat(page(null, 10).items()).extracting(MessageView::imageId).containsExactly(7L);
+  }
+
+  /**
+   * <b>지운 사진 메시지의 번호가 새지 않는다.</b>
+   *
+   * <p>지금은 번호만으로 아무것도 안 보여 조용하지만, CH-15 가 그 번호로 서명 URL 을 발급하는 순간 <b>지운 사진이 그대로 열린다.</b> 사용자가 「지웠다」고
+   * 믿는 것은 말풍선 전체다.
+   */
+  @DisplayName("지운 사진 메시지는 본문과 함께 imageId 도 끊긴다.")
+  @Test
+  void findMessages_hidesImageIdOfDeletedMessage() {
+    Message message = sendWithImage(7L);
+    message.deleteBy(memberId);
+    chatMessageRepository.saveAndFlush(message);
+
+    assertThat(page(null, 10).items())
+        .singleElement()
+        .satisfies(
+            view -> {
+              assertThat(view.content()).isNull();
+              assertThat(view.imageId()).isNull();
+            });
+  }
+
+  /** 운영이 가리는 이유가 대개 사진이다. 가려도 번호가 나가면 AD-09 가 아무 일도 안 한 셈이다. */
+  @DisplayName("가린 사진 메시지도 imageId 가 끊긴다.")
+  @Test
+  void findMessages_hidesImageIdOfBlindedMessage() {
+    Message message = sendWithImage(7L);
+    message.blind();
+    chatMessageRepository.saveAndFlush(message);
+
+    assertThat(page(null, 10).items()).extracting(MessageView::imageId).containsOnlyNulls();
+  }
+
+  private Message sendWithImage(long imageId) {
+    return chatMessageRepository.saveAndFlush(
+        Message.send(roomId, memberId, UUID.randomUUID().toString(), "", imageId));
+  }
+
   private MessageSlice page(MessageCursor cursor, int size) {
     return chatMessageQueryService.findMessages(
         new MessageListQuery(roomId, cursor, size), memberId);
