@@ -54,6 +54,21 @@ public class ChatRoomMember {
   @Column(name = "left_at")
   private LocalDateTime leftAt;
 
+  /**
+   * 마지막으로 읽은 메시지 번호 (CH-13).
+   *
+   * <p><b>{@code null} 은 「한 번도 읽지 않았다」다.</b> 0 을 기본값으로 두면 「0번 메시지까지 읽었다」와 구분되지 않는다 — 지금은 0 이 유효한
+   * 번호가 아니지만 그 사실에 기대는 값이다.
+   *
+   * <p><b>이 칸이 방이 아니라 여기 있는 것이 CH-13 의 검증 기준 둘째 줄이다</b> — 「갱신이 방 행을 잠그지 않는다」. 도메인-모델링.md 3.1 이 「읽은
+   * 지점은 멤버 행에만 쓴다」로 정했고, 근거는 <i>"여럿이 동시에 읽어도 서로 기다리지 않아야 한다"</i> 이다.
+   *
+   * <p><b>이 엔티티의 메서드로 바꾸지 않는다.</b> 갱신은 {@code ChatRoomMemberRepository} 의 조건부 UPDATE 한 문장이다 — 엔티티로
+   * 바꾸려면 방을 통해 멤버를 찾아야 하고, 그 순간 방 행을 읽게 된다.
+   */
+  @Column(name = "last_read_message_id")
+  private Long lastReadMessageId;
+
   private ChatRoomMember(ChatRoom room, Long userId) {
     this.room = room;
     this.userId = userId;

@@ -60,13 +60,14 @@ class ChatRoomControllerTest {
         .willReturn(
             List.of(
                 new ChatRoomSummaryView(
-                    ROOM_ID, 1L, "픽스처 모집글", LocalDateTime.of(2026, 10, 1, 9, 0), 2)));
+                    ROOM_ID, 1L, "픽스처 모집글", LocalDateTime.of(2026, 10, 1, 9, 0), 2, 3)));
 
     mockMvc
         .perform(get("/api/v1/chat-rooms").headers(bearer()))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$[0].roomId").value(ROOM_ID))
-        .andExpect(jsonPath("$[0].memberCount").value(2));
+        .andExpect(jsonPath("$[0].memberCount").value(2))
+        .andExpect(jsonPath("$[0].unreadCount").value(3));
 
     then(chatRoomListQueryService).should().findRooms(eq(USER_ID));
   }
