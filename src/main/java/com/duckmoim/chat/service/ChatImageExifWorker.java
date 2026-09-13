@@ -10,6 +10,7 @@ import java.time.ZoneOffset;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicBoolean;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -54,19 +55,25 @@ public class ChatImageExifWorker {
   private final ChatImageExifService chatImageExifService;
   private final ChatImageStorage storage;
   private final ImageMetadataStripper stripper;
+  private final ChatImageJobExecutor jobExecutor;
   private final Clock clock;
   private final int chunk;
+
+  /** 앞 회차가 아직 도는가. 전용 스레드로 넘기면 {@code @Scheduled} 의 「겹치지 않음」 보장이 사라져 직접 든다. */
+  private final AtomicBoolean running = new AtomicBoolean();
 
   public ChatImageExifWorker(
       ChatImageExifService chatImageExifService,
       ChatImageStorage storage,
       ImageMetadataStripper stripper,
+      ChatImageJobExecutor jobExecutor,
       Clock clock,
       @Value("${duckmoim.chat.image.exif.chunk}") int chunk) {
 
     this.chatImageExifService = chatImageExifService;
     this.storage = storage;
     this.stripper = stripper;
+    this.jobExecutor = jobExecutor;
     this.clock = clock;
     this.chunk = chunk;
   }
@@ -79,6 +86,16 @@ public class ChatImageExifWorker {
    * <p><b>0건이면 로그를 남기지 않는다.</b> 10초 주기라 대부분의 실행이 0건이다 — 알림 워커와 같은 판단이다.
    */
   @Scheduled(cron = "${duckmoim.chat.image.exif.cron}")
+  public void scheduleStripping() {
+    jobExecutor.submitIfIdle(running, this::stripPendingImages);
+  }
+
+  /**
+   * 한 회차를 이 스레드에서 끝까지 돈다. 스케줄러는 {@link #scheduleStripping} 으로 전용 스레드에 넘기고, 검사는 이것을 바로 부른다.
+   *
+   * <p><b>스케줄러 스레드에서 부르지 않는다</b> (리뷰). 한 회차가 최대 200장 × (10MB 내려받기 + 업로드)라 몇 분이 걸릴 수 있고, 그동안 배치
+   * 스케줄러(스레드 2)의 한 자리를 차지하면 SSE 하트비트가 발화하지 못한다 ({@code ChatImageJobExecutor}).
+   */
   public void stripPendingImages() {
     try {
       int stripped = processUntilDrained(LocalDateTime.ofInstant(clock.instant(), ZoneOffset.UTC));
