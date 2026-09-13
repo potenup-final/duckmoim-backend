@@ -133,8 +133,64 @@ class EndpointGradeTest {
           // 요청에 본문이 없어 사실은 그 앞에서 끝나지만, 번호를 없는 것으로 두는 편이
           // 본문이 붙는 날에도 이 줄이 계속 등급만 보게 한다.
           new Endpoint(HttpMethod.POST, "/api/v1/posts/404404/chat-room/members", Grade.SIGNUP),
+          // 방 목록·상세 (CH-05 · CH-06). SIGNUP 인 것은 가입 미완료 계정이 애초에 방
+          // 멤버가 될 수 없어서다 — users/me/posts 와 같은 근거.
+          new Endpoint(HttpMethod.GET, "/api/v1/chat-rooms", Grade.SIGNUP),
+          new Endpoint(HttpMethod.GET, "/api/v1/chat-rooms/404404", Grade.SIGNUP),
+          // 메시지 전송 (CH-07 · CH-08). 같은 SIGNUP 이지만 위 둘과 다른 줄로 걸린다 —
+          // 저쪽은 GET 이라 SIGNUP_READ, 이쪽은 POST 라 SIGNUP_WRITE 다.
+          // 방 멤버인지는 관문이 아니라 service 가 본다.
+          new Endpoint(HttpMethod.POST, "/api/v1/chat-rooms/404404/messages", Grade.SIGNUP),
+          // 목록·삭제 (CH-09 · CH-12). GET 은 SIGNUP_READ 가, DELETE 는 SIGNUP_WRITE 가 덮는다 —
+          // 같은 등급인데 다른 배열이라 둘 다 표에 올린다.
+          new Endpoint(HttpMethod.GET, "/api/v1/chat-rooms/404404/messages", Grade.SIGNUP),
+          new Endpoint(
+              HttpMethod.DELETE, "/api/v1/chat-rooms/404404/messages/404404", Grade.SIGNUP),
+          // 읽은 지점 적기 (CH-13). 전송과 같은 SIGNUP_WRITE 줄이다 — 알림 읽음 처리
+          // (NT-09) 가 POST 인 것과 같은 이유로 POST 이고, 같은 배열에 걸린다.
+          new Endpoint(HttpMethod.POST, "/api/v1/chat-rooms/404404/read", Grade.SIGNUP),
+          // 퇴장 (CH-04). 전송과 같은 SIGNUP_WRITE 줄이다. 제재 중에도 열리는 것은
+          // 등급이 아니라 관문 예외라 SanctionGateTest 가 본다.
+          new Endpoint(HttpMethod.DELETE, "/api/v1/chat-rooms/404404/members/me", Grade.SIGNUP),
+          // 이미지 업로드 (CH-14). 발급이 POST, 확정이 PUT 이다.
+          //
+          // **PUT 을 SIGNUP_WRITE 에 더한 것이 이 두 줄의 본체다.** 그 전까지 배열에
+          // POST · PATCH · DELETE 만 걸려 있어서 PUT 은 어느 줄에도 안 걸리고
+          // anyRequest().authenticated() 로 떨어졌다 — 가입 미완료 계정에게 열린다.
+          new Endpoint(HttpMethod.POST, "/api/v1/chat-rooms/404404/images", Grade.SIGNUP),
+          new Endpoint(HttpMethod.PUT, "/api/v1/chat-rooms/404404/images/404404", Grade.SIGNUP),
+          // 이미지 열람 (CH-15). 아래 「아직 없는 경로」 줄이 예고한 깊이에 실제로 들어온
+          // 첫 경로다 — SIGNUP_READ 의 ** 가 그대로 덮는다. 읽기라 제재 인터셉터에는
+          // 걸리지 않는다 (도메인 6장: 읽기가 막히는 것은 BANNED 뿐이다).
+          new Endpoint(
+              HttpMethod.GET, "/api/v1/chat-rooms/404404/images?messageIds=404404", Grade.SIGNUP),
+          // 아직 없는 PUT 경로다. 위 fail-open 이 되돌아오면 여기서 먼저 깨진다 —
+          // 경로가 없어도 등급 판정은 규칙만 보므로, 핸들러를 안 만들고 규칙을 고정한다.
+          new Endpoint(HttpMethod.PUT, "/api/v1/chat-rooms/404404/nothing", Grade.SIGNUP),
+          // 아직 없는 경로다. SIGNUP_READ 가 ** 라서 한 칸 더 깊어도 덮인다는 것을 못박는다
+          // (PR #131 리뷰). 이 표는 손으로 유지하는 것이라 새 경로를 자동으로 잡아 주지
+          // 않고, 그래서 규칙 쪽이 fail-closed 여야 한다 — CH-11 의 스트림, CH-13 의 읽은
+          // 지점, CH-15 의 이미지 서명이 전부 이 깊이다. 판정이 401·403 만 보므로 핸들러가
+          // 없어도 등급 검사에는 문제가 없다 (가입을 마친 계정은 404 이고 그것도 통과다).
+          new Endpoint(
+              HttpMethod.GET, "/api/v1/chat-rooms/404404/messages/404404/nothing", Grade.SIGNUP),
           // 2-6 신고
           new Endpoint(HttpMethod.POST, "/api/v1/reports", Grade.SIGNUP),
+
+          // 2-10. 알림 (Notification) · 2차
+          new Endpoint(HttpMethod.GET, "/api/v1/notifications", Grade.SIGNUP),
+          // 없는 알림 번호다. 있는 알림을 찌르면 service 가 먼저 답해서 이 줄이 등급이 아니라
+          // 본문을 보게 된다 — 채팅 초대 줄이 없는 글 번호를 쓰는 것과 같은 이유다.
+          new Endpoint(HttpMethod.POST, "/api/v1/notifications/404404/read", Grade.SIGNUP),
+          new Endpoint(HttpMethod.POST, "/api/v1/notifications/read", Grade.SIGNUP),
+          new Endpoint(HttpMethod.GET, "/api/v1/notifications/unread-count", Grade.SIGNUP),
+          new Endpoint(HttpMethod.GET, "/api/v1/notifications/settings", Grade.SIGNUP),
+          // 본문 없이 찌른다. 이 표가 보는 것은 「막혔는가」뿐이고 검증 400 은 관문을 지났다는 뜻이다.
+          new Endpoint(HttpMethod.PUT, "/api/v1/notifications/settings", Grade.SIGNUP),
+          // 접두어가 /notifications 밖이라 SecurityConfig 에 따로 등록돼 있다. 그 줄이
+          // 빠지면 anyRequest 로 떨어져 AUTH 로 열리는데, 이 두 행이 그것을 잡는다.
+          new Endpoint(HttpMethod.POST, "/api/v1/push-subscriptions", Grade.SIGNUP),
+          new Endpoint(HttpMethod.DELETE, "/api/v1/push-subscriptions", Grade.SIGNUP),
           // 2-7 백오피스
           new Endpoint(HttpMethod.GET, "/api/v1/admin/reports", Grade.ADMIN),
           new Endpoint(HttpMethod.PATCH, "/api/v1/admin/reports/1", Grade.ADMIN),
@@ -143,6 +199,13 @@ class EndpointGradeTest {
           new Endpoint(HttpMethod.POST, "/api/v1/admin/users/9/sanctions", Grade.ADMIN),
           new Endpoint(HttpMethod.DELETE, "/api/v1/admin/users/9/sanctions/1", Grade.ADMIN),
           new Endpoint(HttpMethod.GET, "/api/v1/admin/audit-logs", Grade.ADMIN),
+          // 없는 방·신고 번호다. 있는 것을 찌르면 service 가 먼저 답해서 이 줄이 등급이
+          // 아니라 본문을 보게 된다
+          new Endpoint(
+              HttpMethod.GET,
+              "/api/v1/admin/chat-rooms/404404/messages?reportId=404404",
+              Grade.ADMIN),
+          new Endpoint(HttpMethod.POST, "/api/v1/admin/messages/404404/blind", Grade.ADMIN),
           // 2-8 적재
           new Endpoint(HttpMethod.POST, "/api/v1/ingest/events/bulk", Grade.MACHINE));
 

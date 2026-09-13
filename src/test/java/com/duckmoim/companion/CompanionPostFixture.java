@@ -28,8 +28,8 @@ public final class CompanionPostFixture {
       INSERT INTO companion_post (host_id, event_id, event_title, event_image_url,
                                   title, content, meet_at,
                                   meet_place, meet_lat, meet_lng, capacity,
-                                  status, closed_reason, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, '홍대입구역 2번 출구', 37.5, 127.0, ?, ?, ?,
+                                  status, closed_reason, closed_at, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, '홍대입구역 2번 출구', 37.5, 127.0, ?, ?, ?, ?,
               COALESCE(?, UTC_TIMESTAMP(6)), UTC_TIMESTAMP(6))
       """;
 
@@ -43,6 +43,7 @@ public final class CompanionPostFixture {
   private Integer capacity;
   private PostStatus status = PostStatus.OPEN;
   private ClosedReason closedReason;
+  private LocalDateTime closedAt;
   private LocalDateTime createdAt;
 
   private CompanionPostFixture() {}
@@ -118,6 +119,17 @@ public final class CompanionPostFixture {
     return this;
   }
 
+  /**
+   * 마감 시각을 고정한다. <b>대화 보관 기간의 기준이라 파기 배치 검증에 필요하다</b> (CH-19 — 모집글 마감 후 90일). 경계를 짚으려면 90일 전후를 손으로
+   * 박아야 하고, 마감 경로로는 그 과거를 만들 수 없다.
+   *
+   * <p>저장은 UTC 다 (도메인-모델링.md 「4. 엔티티 · 값 객체 · 식별자」).
+   */
+  public CompanionPostFixture closedAt(LocalDateTime closedAtUtc) {
+    this.closedAt = closedAtUtc;
+    return this;
+  }
+
   /** 넣은 행의 id 를 준다. */
   public long insert(JdbcTemplate jdbc) {
     jdbc.update(
@@ -132,6 +144,7 @@ public final class CompanionPostFixture {
         capacity,
         status.name(),
         closedReason == null ? null : closedReason.name(),
+        closedAt,
         createdAt);
 
     return jdbc.queryForObject("SELECT id FROM companion_post WHERE title = ?", Long.class, title);

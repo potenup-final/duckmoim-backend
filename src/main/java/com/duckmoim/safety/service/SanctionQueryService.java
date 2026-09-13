@@ -61,6 +61,20 @@ public class SanctionQueryService {
   }
 
   /**
+   * 이 회원이 지금 <b>비공개 콘텐츠</b>를 읽을 수 있는가 (STAR-84).
+   *
+   * <p>{@link #canWrite} 와 같은 자리에 둔다 — 관문이 쓰기와 읽기를 한 서비스에 물어야 제재를 읽는 길이 하나로 남는다.
+   *
+   * <p>지금 이 답이 갈리는 것은 {@code BANNED} 하나다. 판정은 {@code SanctionPolicy} 가 한다.
+   */
+  @Transactional(readOnly = true)
+  public boolean canReadPrivate(Long userId) {
+    LocalDateTime now = nowInUtc();
+
+    return POLICY.canReadPrivate(activeAllAt(userId, now), now);
+  }
+
+  /**
    * 지금 유효한 제재 <b>전량</b>.
    *
    * <p><b>차단 판정은 한 건만 보면 안 된다.</b> 정지와 경고가 함께 활성이면 {@code issuedAt DESC} 상 나중에 걸린 경고가 먼저 잡히고, 그 한

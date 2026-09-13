@@ -47,11 +47,22 @@ public class NotificationOutbox extends BaseEntity {
   @Column(name = "kind", nullable = false, updatable = false, length = 20)
   private NotificationKind kind;
 
-  @Column(name = "post_id", nullable = false, updatable = false)
+  /**
+   * 가리키는 대상. 종류마다 채워지는 짝이 다르다 (V806).
+   *
+   * <p>{@link NotificationTarget} 으로 묶어 다루지만 컬럼은 넷으로 편다 — 워커·백오피스가 SQL 로 읽는 표라 값이 칸에 그대로 보여야 한다.
+   */
+  @Column(name = "post_id", updatable = false)
   private Long postId;
 
-  @Column(name = "comment_id", nullable = false, updatable = false)
+  @Column(name = "comment_id", updatable = false)
   private Long commentId;
+
+  @Column(name = "room_id", updatable = false)
+  private Long roomId;
+
+  @Column(name = "message_id", updatable = false)
+  private Long messageId;
 
   /**
    * 발송 상태.
@@ -75,12 +86,14 @@ public class NotificationOutbox extends BaseEntity {
   @Column(name = "next_attempt_at")
   private LocalDateTime nextAttemptAt;
 
-  private NotificationOutbox(NotificationKind kind, Long recipientId, Long postId, Long commentId) {
+  private NotificationOutbox(NotificationKind kind, Long recipientId, NotificationTarget target) {
 
     this.kind = kind;
     this.recipientId = recipientId;
-    this.postId = postId;
-    this.commentId = commentId;
+    this.postId = target.postId();
+    this.commentId = target.commentId();
+    this.roomId = target.roomId();
+    this.messageId = target.messageId();
     this.status = OutboxStatus.PENDING;
   }
 
@@ -94,14 +107,22 @@ public class NotificationOutbox extends BaseEntity {
    * BaseEntity} 의 {@code created_at} 으로 충분하다.
    */
   public static NotificationOutbox of(
-      NotificationKind kind, Long recipientId, Long postId, Long commentId) {
+      NotificationKind kind, Long recipientId, NotificationTarget target) {
 
     Objects.requireNonNull(kind, "아웃박스 행은 알림 종류를 가진다.");
     Objects.requireNonNull(recipientId, "아웃박스 행은 수신자를 가진다.");
-    Objects.requireNonNull(postId, "아웃박스 행은 모집글을 가진다.");
-    Objects.requireNonNull(commentId, "아웃박스 행은 댓글을 가진다.");
+    Objects.requireNonNull(target, "아웃박스 행은 가리킬 대상을 가진다.");
 
-    return new NotificationOutbox(kind, recipientId, postId, commentId);
+    return new NotificationOutbox(kind, recipientId, target);
+  }
+
+  /**
+   * 가리키는 대상을 한 덩어리로 돌려준다.
+   *
+   * <p>알림함과 DLQ 가 이 값을 그대로 옮겨 담는다. 낱개로 꺼내 가면 종류가 하나 늘 때 옮기는 자리마다 한 줄씩 빠뜨릴 수 있다.
+   */
+  public NotificationTarget target() {
+    return new NotificationTarget(postId, commentId, roomId, messageId);
   }
 
   /** 아직 보내지 않은 건인지. 워커가 「내가 처리할 건인가」를 묻는 자리다 (NT-02). */
@@ -133,6 +154,25 @@ public class NotificationOutbox extends BaseEntity {
 
     this.attempts += 1;
     this.nextAttemptAt = nextAttemptAt;
+  }
+
+  /**
+   * 이 건을 내가 맡았다고 표시한다 (NT-04).
+   *
+   * <p><b>새 상태도 새 컬럼도 두지 않는다.</b> {@link #nextAttemptAt} 의 뜻이 이미 「이 시각 전에는 집지 마라」라서, 선점은 그 값을 리스
+   * 만료로 미는 일이 된다. {@code CLAIMED} 상태를 새로 만들면 <b>선점한 워커가 죽었을 때 그 상태에서 빠져나올 길을 따로 만들어야 한다</b> — 리스는
+   * 시각이라 저절로 풀린다.
+   *
+   * <p><b>{@link #attempts} 를 올리지 않는다.</b> 선점은 시도가 아니다. 올리면 성공한 발송도 재시도를 한 번 까먹어서 NT-03 의 「3회」가
+   * 실제로는 2회가 된다.
+   *
+   * @param leaseUntil 이 시각까지는 남이 집지 않는다. 지나면 저절로 다시 집힌다
+   */
+  public void claim(LocalDateTime leaseUntil) {
+    requirePending();
+    Objects.requireNonNull(leaseUntil, "리스 만료 시각이 필요하다.");
+
+    this.nextAttemptAt = leaseUntil;
   }
 
   /** 시도를 다 썼는지 (NT-03). 다 쓴 건은 DLQ 로 옮긴다. */

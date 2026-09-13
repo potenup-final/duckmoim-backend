@@ -29,6 +29,8 @@ class NotificationDispatchServiceTest {
   private static final long RECIPIENT_ID = 7L;
   private static final long POST_ID = 10L;
   private static final long COMMENT_ID = 100L;
+  private static final long ROOM_ID = 3L;
+  private static final long MESSAGE_ID = 777L;
 
   @Autowired private NotificationDispatchService notificationDispatchService;
   @Autowired private JdbcTemplate jdbc;
@@ -48,7 +50,7 @@ class NotificationDispatchServiceTest {
     long outboxId = givenPendingOutbox();
 
     // when
-    boolean sent = notificationDispatchService.dispatch(outboxId);
+    boolean sent = dispatch(outboxId);
 
     // then — 알림에 필요한 값이 아웃박스에서 그대로 옮겨진다
     assertThat(sent).isTrue();
@@ -67,15 +69,15 @@ class NotificationDispatchServiceTest {
 
   @DisplayName("보낸 아웃박스 행은 다시 집히지 않는다.")
   @Test
-  void findSendableIds_excludesSent() {
+  void claimSendableIds_excludesSent() {
     // given
     long outboxId = givenPendingOutbox();
 
     // when
-    notificationDispatchService.dispatch(outboxId);
+    dispatch(outboxId);
 
     // then
-    assertThat(notificationDispatchService.findSendableIds(NOW, 10)).isEmpty();
+    assertThat(notificationDispatchService.claimSendableIds(NOW, 10)).isEmpty();
   }
 
   @DisplayName("남이 이미 보낸 건은 다시 보내지 않는다.")
@@ -83,10 +85,10 @@ class NotificationDispatchServiceTest {
   void dispatch_alreadySentByAnotherWorker() {
     // given — 선점이 없어 (NT-04) 두 워커가 같은 건을 집는 상황이다
     long outboxId = givenPendingOutbox();
-    notificationDispatchService.dispatch(outboxId);
+    dispatch(outboxId);
 
     // when — 뒤에 집은 워커가 같은 건을 부른다
-    boolean sent = notificationDispatchService.dispatch(outboxId);
+    boolean sent = dispatch(outboxId);
 
     // then — 예외 없이 넘어가고 알림도 늘지 않는다
     assertThat(sent).isFalse();
@@ -98,7 +100,7 @@ class NotificationDispatchServiceTest {
   void recordFailure_alreadySentByAnotherWorker() {
     // given
     long outboxId = givenPendingOutbox();
-    notificationDispatchService.dispatch(outboxId);
+    dispatch(outboxId);
 
     // when — 유니크 제약에 걸려 롤백된 워커가 실패를 적으러 온 상황이다
     boolean movedToDlq = notificationDispatchService.recordFailure(outboxId, NOW);
@@ -109,7 +111,14 @@ class NotificationDispatchServiceTest {
     assertThat(outboxColumn(outboxId, "status")).isEqualTo("SENT");
   }
 
-  @DisplayName("이미 알림이 있는 건은 알림을 새로 만들지 않는다.")
+  /**
+   * <b>이 상태가 채널이 갈린 뒤 새 뜻을 얻었다</b> (ADR 0010). 「알림함에 행이 있는데 아웃박스는 아직 {@code PENDING}」은 워커가 {@code
+   * markSent} 전에 죽은 경우이자, <b>푸시만 실패해 재시도를 기다리는 경우</b>다. 어느 쪽이든 인앱을 다시 만들지 않고 지나가야 한다.
+   *
+   * <p><b>돌려주는 값의 뜻이 바뀌었다.</b> 예전 {@code dispatch} 는 「알림을 만들었나」였고 여기서 거짓이었다. 지금은 「이 행을 끝냈나」라서 참이다 —
+   * 인앱은 이미 있었고 이번 주기가 {@code markSent} 를 마쳤다.
+   */
+  @DisplayName("이미 알림이 있는 건은 알림을 새로 만들지 않고 보냈다고 적는다.")
   @Test
   void dispatch_notificationAlreadyExists() {
     // given — 알림만 있고 아웃박스는 아직 PENDING 인 상태를 직접 만든다
@@ -128,12 +137,57 @@ class NotificationDispatchServiceTest {
         NOW);
 
     // when
-    boolean sent = notificationDispatchService.dispatch(outboxId);
+    boolean sent = dispatch(outboxId);
 
     // then — 유니크 제약에 걸리는 대신 보냈다고만 적는다
-    assertThat(sent).isFalse();
+    assertThat(sent).isTrue();
     assertThat(notifications()).hasSize(1);
     assertThat(outboxColumn(outboxId, "status")).isEqualTo("SENT");
+  }
+
+  @DisplayName("워커가 채팅 아웃박스 건을 알림함으로 옮긴다.")
+  @Test
+  void dispatch_roomMessaged() {
+    // given
+    long outboxId = givenPendingRoomOutbox();
+
+    // when
+    boolean sent = dispatch(outboxId);
+
+    // then — 모집글·댓글 칸은 비고 방·메시지 칸이 찬다 (V806)
+    assertThat(sent).isTrue();
+    assertThat(jdbc.queryForList("SELECT * FROM notification"))
+        .singleElement()
+        .satisfies(
+            row -> {
+              assertThat(row).containsEntry("kind", "ROOM_MESSAGED");
+              assertThat(row).containsEntry("room_id", ROOM_ID);
+              assertThat(row).containsEntry("message_id", MESSAGE_ID);
+              assertThat(row.get("post_id")).isNull();
+              assertThat(row.get("comment_id")).isNull();
+            });
+  }
+
+  @DisplayName("못 보낸 채팅 알림은 방과 메시지를 DLQ 에 남긴다.")
+  @Test
+  void recordFailure_movesRoomMessagedToDlq() {
+    // given — 원본 아웃박스 행은 지워지므로 여기 없으면 무엇을 못 보냈는지 복원할 수 없다
+    long outboxId = givenPendingRoomOutbox();
+    notificationDispatchService.recordFailure(outboxId, NOW);
+    notificationDispatchService.recordFailure(outboxId, NOW);
+
+    // when
+    notificationDispatchService.recordFailure(outboxId, NOW);
+
+    // then
+    assertThat(jdbc.queryForList("SELECT * FROM notification_outbox_dlq"))
+        .singleElement()
+        .satisfies(
+            row -> {
+              assertThat(row).containsEntry("kind", "ROOM_MESSAGED");
+              assertThat(row).containsEntry("room_id", ROOM_ID);
+              assertThat(row).containsEntry("message_id", MESSAGE_ID);
+            });
   }
 
   @DisplayName("발송이 실패하면 다음 시도가 백오프만큼 밀린다.")
@@ -153,7 +207,7 @@ class NotificationDispatchServiceTest {
 
   @DisplayName("재시도 시각이 되기 전에는 다시 집지 않는다.")
   @Test
-  void findSendableIds_waitsForNextAttempt() {
+  void claimSendableIds_waitsForNextAttempt() {
     // given
     long outboxId = givenPendingOutbox();
 
@@ -161,8 +215,8 @@ class NotificationDispatchServiceTest {
     notificationDispatchService.recordFailure(outboxId, NOW);
 
     // then
-    assertThat(notificationDispatchService.findSendableIds(NOW, 10)).isEmpty();
-    assertThat(notificationDispatchService.findSendableIds(NOW.plusMinutes(1), 10))
+    assertThat(notificationDispatchService.claimSendableIds(NOW, 10)).isEmpty();
+    assertThat(notificationDispatchService.claimSendableIds(NOW.plusMinutes(1), 10))
         .containsExactly(outboxId);
   }
 
@@ -212,7 +266,7 @@ class NotificationDispatchServiceTest {
 
   @DisplayName("DLQ 로 옮긴 건은 더 집히지 않는다.")
   @Test
-  void findSendableIds_excludesDlq() {
+  void claimSendableIds_excludesDlq() {
     // given
     long outboxId = givenPendingOutbox();
     notificationDispatchService.recordFailure(outboxId, NOW);
@@ -222,7 +276,7 @@ class NotificationDispatchServiceTest {
     notificationDispatchService.recordFailure(outboxId, NOW);
 
     // then — 아무리 기다려도 다시 집히지 않는다
-    assertThat(notificationDispatchService.findSendableIds(NOW.plusYears(1), 10)).isEmpty();
+    assertThat(notificationDispatchService.claimSendableIds(NOW.plusYears(1), 10)).isEmpty();
   }
 
   private long givenPendingOutbox() {
@@ -235,6 +289,23 @@ class NotificationDispatchServiceTest {
         RECIPIENT_ID,
         POST_ID,
         COMMENT_ID,
+        NOW,
+        NOW);
+
+    return jdbc.queryForObject("SELECT MAX(id) FROM notification_outbox", Long.class);
+  }
+
+  /** 채팅 알림 한 건 (NT-07). 모집글·댓글 대신 방·메시지를 가리킨다. */
+  private long givenPendingRoomOutbox() {
+    jdbc.update(
+        """
+        INSERT INTO notification_outbox
+            (recipient_id, kind, room_id, message_id, status, attempts, created_at, updated_at)
+        VALUES (?, 'ROOM_MESSAGED', ?, ?, 'PENDING', 0, ?, ?)
+        """,
+        RECIPIENT_ID,
+        ROOM_ID,
+        MESSAGE_ID,
         NOW,
         NOW);
 
@@ -264,5 +335,18 @@ class NotificationDispatchServiceTest {
         "SELECT next_attempt_at FROM notification_outbox WHERE id = ?",
         LocalDateTime.class,
         outboxId);
+  }
+
+  /**
+   * 운영의 세 단계를 그대로 편다 (ADR 0010) — 인앱을 만들고(T1), 푸시를 보내고(T2), 결과를 적는다(T3).
+   *
+   * <p>지금 채널이 하나라 T2 가 비어 있다. 그래도 <b>배치와 같은 순서로 부르는 것</b>이 이 검사의 전제다 — 다르게 부르면 여기서 재는 것이 운영에서 도는 것과
+   * 달라진다.
+   */
+  private boolean dispatch(long outboxId) {
+    return notificationDispatchService
+        .deliverInApp(outboxId)
+        .filter(delivery -> notificationDispatchService.markDelivered(delivery.outboxId()))
+        .isPresent();
   }
 }

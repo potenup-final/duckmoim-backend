@@ -26,7 +26,25 @@ public enum AuditKind {
   BLIND(AuditTargetType.COMMENT),
 
   /** 계정을 파기했다 (AU-11). */
-  PURGE(AuditTargetType.USER);
+  PURGE(AuditTargetType.USER),
+
+  /**
+   * 채팅 대화 열람 (AD-08).
+   *
+   * <p><b>{@link #SECRET_READ} 와 같은 이유로 남긴다.</b> 남의 사적인 대화를 보는 일이고, 신고가 접수된 건에 한해서만 열 수 있다
+   * (API-설계.md 「2-7. 백오피스 (Admin)」). 열람 자격은 넘긴 신고 번호가 지고, 이 기록은 <b>누가 언제 무엇을 봤는지</b>를 남긴다.
+   *
+   * <p>대상이 메시지가 아니라 <b>방</b>인 것은 열람 단위가 대화 전체이기 때문이다. 어느 신고를 처리하다 열었는지는 {@code detail} 에 적힌다.
+   */
+  CHAT_READ(AuditTargetType.CHAT_ROOM),
+
+  /**
+   * 메시지 블라인드 (AD-09).
+   *
+   * <p><b>{@link #BLIND} 를 재사용하지 않는다.</b> 이 enum 은 종류마다 대상 타입을 하나씩 묶어 두는데 ({@code BLIND} → {@code
+   * COMMENT}), 메시지를 거기 끼우면 그 일대일이 깨진다. 화면-계약.md 「감사 로그」가 같은 이유를 적어 두었다.
+   */
+  MESSAGE_BLIND(AuditTargetType.MESSAGE);
 
   private final AuditTargetType targetType;
 

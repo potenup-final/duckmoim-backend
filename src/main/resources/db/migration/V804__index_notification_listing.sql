@@ -1,0 +1,22 @@
+-- Notification 대역(V800~V899). V803 까지 썼으므로 V804 다.
+--
+-- 알림함 목록의 인덱스다 (NT-08). V801 이 이 인덱스를 일부러 비워 두고 「커서의 정렬 키가 아직
+-- 없다」고 적어 둔 자리이고, 그 정렬 키가 API-설계.md 「3. 커서 정의」에 정해지면서(2026-09-11)
+-- 이제 모양이 정해졌다.
+--
+-- 질의는 하나다 — `WHERE recipient_id = ? ORDER BY created_at DESC, id DESC`.
+-- 커서가 붙으면 `AND (created_at < ? OR (created_at = ? AND id < ?))` 가 더해지는데, 그것도
+-- 같은 컬럼 순서를 탄다.
+--
+-- **컬럼 순서가 커서 키와 같아야 한다.** 등치 조건인 recipient_id 가 맨 앞이고 그 뒤가 정렬
+-- 키다. 순서가 어긋나면 MySQL 이 정렬을 인덱스로 못 풀어 filesort 로 떨어지고, 그러면 페이지마다
+-- 내 알림 전부를 정렬한다.
+--
+-- **id 를 뒤에 붙이는 것은 성능이 아니라 정확성이다.** created_at 은 DATETIME(6) 이라 같은 값이
+-- 드물지만, 워커가 한 주기에 여러 건을 보내면 같은 마이크로초가 실제로 나온다. 그때 순서가 없으면
+-- 페이지 경계에서 누락·중복이 생긴다 — OFFSET 을 안 쓰는 커서에서는 그 누락이 조용하다.
+--
+-- 정렬이 DESC 인데 인덱스를 ASC 로 두는 이유는 InnoDB 가 인덱스를 양방향으로 읽기 때문이다.
+-- 역방향 스캔이라 별도 선언이 필요 없다.
+CREATE INDEX idx_notification_recipient_listing
+    ON notification (recipient_id, created_at, id);

@@ -12,6 +12,8 @@ import com.duckmoim.auth.service.AuthenticationService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.env.Environment;
+import org.springframework.core.env.Profiles;
 import org.springframework.http.HttpMethod;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -37,9 +39,17 @@ public class SecurityConfig {
     "/error",
     "/v3/api-docs/**",
     "/swagger-ui/**",
-    "/swagger-ui.html",
-    "/api/v1/dev/token"
+    "/swagger-ui.html"
   };
+
+  // 개발용 토큰 발급 (API-설계 「2-9. 운영·개발 (요구사항에서 나오지 않은 것)」).
+  //
+  // INFRA 와 나란히 두지 않는다 — 저 배열은 모든 프로파일에서 열리고, 이 경로는 요청한
+  // 회원번호로 admin: true 토큰까지 찍어준다. 컨트롤러의 @Profile("local") 하나가 유일한
+  // 방어이던 상태라 프로파일 설정이 한 번 어긋나면 관리자 토큰 발급기가 공개된다.
+  // 그 문 안에 비밀 댓글 본문이 있다 (CM-17).
+  private static final String DEV_TOKEN = "/api/v1/dev/token";
+  private static final String LOCAL = "local";
 
   private static final String[] AUTH_READ = {
     "/api/v1/users/me", "/api/v1/users/nickname-availability"
@@ -55,15 +65,77 @@ public class SecurityConfig {
     "/api/v1/posts/*/comments"
   };
 
+  // /api/v1/chat-rooms/** 는 메시지 전송(CH-07)이다. 조회(CH-05 · CH-06)는 GET 이라 이 줄이
+  // 덮지 않고, 그쪽은 같은 SIGNUP 이되 별도로 걸린다 — 여기 GET 을 섞으면 앞으로 열리는
+  // 채팅 조회 경로가 이 배열의 ** 아래로 조용히 들어온다.
+  //
+  // SanctionGateConfig 의 SANCTIONED_WRITE 와 같은 목록이어야 한다 (CH-20). 신고만 그쪽에
+  // 없고, 왜 없는지가 그쪽 각주에 있다.
+  //
+  // PUT 을 더했다 (CH-14 · STAR-115). 이미지 업로드 확정이 PUT 이고, 그 전까지 이 목록에
+  // POST · PATCH · DELETE 만 걸려 있어서 **PUT 이 anyRequest().authenticated() 로
+  // 떨어졌다** — 아래 SIGNUP_READ 각주가 "안 적은 메서드가 열리는 fail-open" 이라고 경고한
+  // 바로 그 자리다. 가입을 마치지 않은 계정에게 쓰기가 열린다.
+  //
+  // 채팅 밖의 세 경로에는 지금 PUT 엔드포인트가 없어 조이는 변경이다. 프로필 이미지 확정도
+  // PUT 인데 그쪽은 MY_PAGE(/api/v1/users/me/**)가 메서드 구분 없이 덮어서 같은 구멍이
+  // 없었다.
   private static final String[] SIGNUP_WRITE = {
-    "/api/v1/posts/**", "/api/v1/comments/**", "/api/v1/reports"
+    "/api/v1/posts/**", "/api/v1/comments/**", "/api/v1/reports", "/api/v1/chat-rooms/**"
   };
+
+  // 조회지만 SIGNUP 이다 (CH-05 · CH-06). 가입을 마치지 않은 계정은 애초에 방 멤버가 될 수
+  // 없다 — 초대 대상이 되려면 댓글을 써야 하고 댓글 작성 자체가 SIGNUP 이다. MY_PAGE 의
+  // users/me/posts 와 같은 근거.
+  //
+  // 방 아래 GET 은 전부 SIGNUP 이라 ** 로 덮는다. * 로 적으면 한 칸 깊어질 때마다 사람이 줄을
+  // 더해야 하고, 빠뜨린 경로는 anyRequest().authenticated() 로 떨어져 가입 미완료 계정에게
+  // 열린다 — STAR-112 가 /chat-rooms/*/messages 에서 실제로 그렇게 났다. EndpointGradeTest
+  // 는 손으로 유지하는 표라 새 경로를 자동으로 잡아 주지 않는다 (아래 NOTIFICATIONS 와 같은
+  // 성질이다).
+  //
+  // SIGNUP_WRITE 가 ** 를 경계한 것과 방향이 반대다. 그쪽은 메서드로 갈려 있어 안 적은
+  // 메서드가 열리는 fail-open 이지만, 여기서 ** 는 새 경로를 SIGNUP 으로 덮는 fail-closed 다.
+  //
+  // 관리자 열람(AD-08)이 이 아래로 들어오지 않는다. 관리자 경로는 /api/v1/admin/** 이고
+  // (CM-17 이 /api/v1/admin/comments/{id} 인 선례), 그것은 ADMIN_ALL 이 따로 덮는다.
+  //
+  // 경로 자체를 두 벌 적는 것은 NOTIFICATIONS 와 같은 이유다 — /** 가 빈 세그먼트를 먹는지가
+  // 매처 구현에 달려 있어, 목록 경로가 조용히 anyRequest 로 떨어질 수 있다.
+  private static final String[] SIGNUP_READ = {"/api/v1/chat-rooms", "/api/v1/chat-rooms/**"};
 
   private static final String[] PUBLIC_LOGIN = {"/api/v1/auth/kakao", "/api/v1/auth/token"};
   private static final String AUTH_TOKEN = "/api/v1/auth/token";
   private static final String SIGNUP_INFO = "/api/v1/users/me/signup-info";
   private static final String MY_PAGE = "/api/v1/users/me/**";
   private static final String ADMIN_ALL = "/api/v1/admin/**";
+
+  // 알림은 접두어 전체가 「내 것」이다 (API-설계 「2-10. 알림 (Notification) · 2차」).
+  //
+  // 메서드로 가르지 않고 접두어로 묶은 이유 — 남의 알림을 가리킬 수 있는 경로를 두지
+  // 않기로 했고(D-14) 그래서 이 아래에 남이 부르는 엔드포인트가 생기지 않는다. 읽음
+  // 처리(NT-09)도 자기 알림을 바꾸는 것이라 같은 등급이다.
+  //
+  // 이 줄이 깨지는 조건 — 접두어 아래에 「사람이 자기 것을 다루는」 것이 아닌 경로가 올 때다.
+  // 만료 배치(NT-11a)나 워커용 경로가 생기면 MACHINE 이어야 할 것이 SIGNUP 으로 열린다.
+  // 그런 경로는 반드시 이 줄 「위에」 적는다 — 아래에 적으면 이 줄이 먼저 걸린다. 메서드로
+  // 가르는 것은 답이 아니다: 안 적은 메서드가 anyRequest 로 떨어져 되레 가입 미완료 유저에게
+  // 열린다. EndpointGradeTest 는 손으로 유지하는 표라 새 경로를 자동으로 잡아 주지 않는다.
+  //
+  // 경로 자체를 두 벌 적는 것은 `/**` 가 빈 세그먼트를 먹는지가 매처 구현에 달려 있어서다.
+  // 목록 경로가 조용히 anyRequest 로 떨어지면 가입 미완료 유저에게 200 이 나간다.
+  private static final String[] NOTIFICATIONS = {
+    "/api/v1/notifications", "/api/v1/notifications/**"
+  };
+
+  // 웹 푸시 구독 (NT-12). 알림이지만 접두어가 다르다.
+  //
+  // **위 NOTIFICATIONS 가 이 경로를 덮지 않는다.** /api/v1/push-subscriptions 는 그 접두어
+  // 밖이라, 여기 적지 않으면 anyRequest 로 떨어져 AUTH 로 열린다 — 가입 미완료 유저가 남의
+  // 기기를 끊을 수 있게 된다. 경로를 두 벌 적는 이유도 위와 같다.
+  private static final String[] PUSH_SUBSCRIPTIONS = {
+    "/api/v1/push-subscriptions", "/api/v1/push-subscriptions/**"
+  };
 
   // 사람이 아니라 기계가 부르는 경로 (API-설계 「2-8. 적재 (Ingest)」 · D-11).
   //
@@ -78,6 +150,7 @@ public class SecurityConfig {
       HttpSecurity http,
       AuthenticationService authenticationService,
       @Value("${duckmoim.ingest.key}") String ingestKey,
+      Environment environment,
       RestAuthenticationEntryPoint authenticationEntryPoint,
       RestAccessDeniedHandler accessDeniedHandler)
       throws Exception {
@@ -93,6 +166,13 @@ public class SecurityConfig {
             registry -> {
               registry.requestMatchers(INFRA).permitAll();
 
+              // local 에서만 등록한다. 다른 프로파일에서는 어느 규칙에도 안 걸려
+              // anyRequest().authenticated() 로 떨어지고, 토큰 없는 요청은 401 이다
+              // (없는 경로의 존재 여부를 비인증 요청에 알려주지 않는다 — D-13).
+              if (environment.acceptsProfiles(Profiles.of(LOCAL))) {
+                registry.requestMatchers(HttpMethod.POST, DEV_TOKEN).permitAll();
+              }
+
               registry.requestMatchers(HttpMethod.POST, PUBLIC_LOGIN).permitAll();
               registry.requestMatchers(HttpMethod.DELETE, AUTH_TOKEN).authenticated();
 
@@ -101,10 +181,15 @@ public class SecurityConfig {
               registry.requestMatchers(MY_PAGE).hasAuthority(SIGNUP);
 
               registry.requestMatchers(HttpMethod.GET, PUBLIC_READ).permitAll();
+              registry.requestMatchers(HttpMethod.GET, SIGNUP_READ).hasAuthority(SIGNUP);
 
               registry.requestMatchers(HttpMethod.POST, SIGNUP_WRITE).hasAuthority(SIGNUP);
+              registry.requestMatchers(HttpMethod.PUT, SIGNUP_WRITE).hasAuthority(SIGNUP);
               registry.requestMatchers(HttpMethod.PATCH, SIGNUP_WRITE).hasAuthority(SIGNUP);
               registry.requestMatchers(HttpMethod.DELETE, SIGNUP_WRITE).hasAuthority(SIGNUP);
+
+              registry.requestMatchers(NOTIFICATIONS).hasAuthority(SIGNUP);
+              registry.requestMatchers(PUSH_SUBSCRIPTIONS).hasAuthority(SIGNUP);
 
               registry.requestMatchers(ADMIN_ALL).hasAuthority(ADMIN);
               registry.requestMatchers(INGEST_ALL).hasAuthority(MACHINE);

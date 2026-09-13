@@ -11,5 +11,11 @@ package com.duckmoim.admin.domain;
  */
 public enum AuditTargetType {
   USER,
-  COMMENT
+  COMMENT,
+
+  /** 채팅방 (AD-08). 관리자가 대화를 열람한 대상이다. */
+  CHAT_ROOM,
+
+  /** 메시지 한 건 (AD-09). 관리자가 가린 대상이다. */
+  MESSAGE
 }

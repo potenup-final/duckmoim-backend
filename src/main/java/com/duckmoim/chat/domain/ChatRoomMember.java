@@ -54,6 +54,21 @@ public class ChatRoomMember {
   @Column(name = "left_at")
   private LocalDateTime leftAt;
 
+  /**
+   * 마지막으로 읽은 메시지 번호 (CH-13).
+   *
+   * <p><b>{@code null} 은 「한 번도 읽지 않았다」다.</b> 0 을 기본값으로 두면 「0번 메시지까지 읽었다」와 구분되지 않는다 — 지금은 0 이 유효한
+   * 번호가 아니지만 그 사실에 기대는 값이다.
+   *
+   * <p><b>이 칸이 방이 아니라 여기 있는 것이 CH-13 의 검증 기준 둘째 줄이다</b> — 「갱신이 방 행을 잠그지 않는다」. 도메인-모델링.md 3.1 이 「읽은
+   * 지점은 멤버 행에만 쓴다」로 정했고, 근거는 <i>"여럿이 동시에 읽어도 서로 기다리지 않아야 한다"</i> 이다.
+   *
+   * <p><b>이 엔티티의 메서드로 바꾸지 않는다.</b> 갱신은 {@code ChatRoomMemberRepository} 의 조건부 UPDATE 한 문장이다 — 엔티티로
+   * 바꾸려면 방을 통해 멤버를 찾아야 하고, 그 순간 방 행을 읽게 된다.
+   */
+  @Column(name = "last_read_message_id")
+  private Long lastReadMessageId;
+
   private ChatRoomMember(ChatRoom room, Long userId) {
     this.room = room;
     this.userId = userId;
@@ -68,6 +83,22 @@ public class ChatRoomMember {
    */
   static ChatRoomMember joining(ChatRoom room, Long userId) {
     return new ChatRoomMember(room, userId);
+  }
+
+  /**
+   * 방을 나간다 (CH-04).
+   *
+   * <p><b>행을 지우지 않고 {@code leftAt} 을 채운다.</b> 클래스 주석이 이미 적은 대로 I-19 의 이중 방어가 「퇴장 이력 조회」 라, 지우는 순간
+   * 스스로 나간 것과 초대받은 적 없는 것이 구분되지 않고 재초대 차단(CH-02a)이 조용히 무너진다.
+   *
+   * <p><b>나갈 수 있는지는 여기서 보지 않는다.</b> 방장인지는 모집글이 아는 사실이고 (이 애그리게이트는 방장을 갖지 않는다) 멤버인지는 방이 쥔 목록이라, 둘 다
+   * {@link ChatRoom#leave} 가 판정한 뒤 부른다.
+   *
+   * <p><b>다시 부르면 나간 시각이 밀린다.</b> 그 자리를 막는 것도 {@link ChatRoom#leave} 다 — 나간 사람은 이미 멤버가 아니라 403 에서
+   * 끝난다.
+   */
+  void leave() {
+    this.leftAt = LocalDateTime.now(ZoneOffset.UTC);
   }
 
   /** 나가지 않은 멤버인가 (CH-18). */

@@ -6,6 +6,7 @@ import com.duckmoim.identity.domain.AuthorDisplay;
 import com.duckmoim.identity.domain.Profile;
 import com.duckmoim.identity.domain.SignupInfo;
 import com.duckmoim.identity.domain.User;
+import com.duckmoim.identity.domain.UserWithdrawn;
 import com.duckmoim.identity.exception.UserErrorCode;
 import com.duckmoim.identity.infra.UserRepository;
 import java.time.Clock;
@@ -13,6 +14,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -33,6 +35,7 @@ public class UserService {
 
   private final UserRepository userRepository;
   private final AuthService authService;
+  private final ApplicationEventPublisher events;
   private final Clock clock;
 
   /**
@@ -158,6 +161,10 @@ public class UserService {
     user.withdraw(LocalDateTime.now(ZoneOffset.UTC));
 
     authService.logout(userId);
+
+    // 탈퇴했다는 사실만 알린다. 무엇을 지울지는 듣는 쪽이 정한다 — 지금은 푸시 구독 하나이고
+    // (NT-12) 그것은 이 트랜잭션에서 함께 커밋된다 (UserWithdrawn 의 구독 규약 ①).
+    events.publishEvent(new UserWithdrawn(userId));
   }
 
   /**

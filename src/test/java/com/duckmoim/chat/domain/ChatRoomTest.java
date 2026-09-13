@@ -5,28 +5,44 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.duckmoim.chat.exception.ChatErrorCode;
 import com.duckmoim.common.exception.BusinessException;
+import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.stream.IntStream;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.springframework.test.util.ReflectionTestUtils;
 
 /**
- * 방 개설과 초대의 검증 기준 중 도메인이 지는 것 (CH-01 · CH-02 · CH-02a · CH-03).
+ * 방 개설 · 초대 · 퇴장의 검증 기준 중 도메인이 지는 것 (CH-01 · CH-02 · CH-02a · CH-03 · CH-04).
  *
  * <p><b>초대의 셋만 여기 있다</b> — 이미 멤버, 나간 사람, 인원 상한. 방장인지(403)와 댓글을 썼는지(400)는 모집글과 댓글이 아는 사실이라 {@code
  * ChatRoomInviteServiceTest} 가 본다.
+ *
+ * <p><b>퇴장은 셋 다 여기다</b> — 방장(409), 비멤버(403), 이미 나간 사람(403). 방장 여부는 밖에서 오지만 {@code hostId} 가 인자라 판정
+ * 자체는 도메인 안이고, 그 값을 모집글에서 읽어 오는 부분만 {@code ChatRoomLeaveServiceTest} 가 본다.
  *
  * <p>「방은 모집글 하나에 하나다」(I-16)는 여기 없다. 도메인-모델링.md 「5. 불변식」이 이중 방어를 유니크 제약으로 정해 DB 가 지므로 통합 테스트에서 본다
  * ({@code ChatRoomRepositoryTest}).
  */
 class ChatRoomTest {
 
+  /**
+   * 운영의 시계 존이다 ({@code ClockConfig}). 시계를 UTC 로 고정하면 만남시각의 기준(UTC)과 우연히 맞아떨어져, 판정이 벽시계를 쓰는 결함을 아래
+   * 검사들이 놓친다.
+   */
+  private static final ZoneId KST = ZoneId.of("Asia/Seoul");
+
   private static final long POST_ID = 1L;
   private static final long HOST_ID = 7L;
+
   private static final long GUEST_ID = 11L;
+
+  /** 배치가 파기를 끝낸 시각. UTC 로 들어와 그대로 남는다 (CH-19). */
+  private static final LocalDateTime PURGED_AT_UTC = LocalDateTime.of(2026, 9, 13, 19, 20);
 
   @DisplayName("모집글의 방을 열면 그 모집글을 참조한다.")
   @Test
@@ -96,14 +112,15 @@ class ChatRoomTest {
   /**
    * CH-02a. 나간 사람의 행이 남아 있어야 성립하는 규칙이라, 퇴장(CH-04)이 행을 지우는 순간 이 검사가 조용히 통과하게 된다.
    *
-   * <p>퇴장 명령이 아직 없어 {@code leftAt} 을 리플렉션으로 채운다. CH-04 가 들어오면 그 명령으로 바꾼다.
+   * <p><b>퇴장을 진짜 명령으로 만든다.</b> 전에는 {@code leftAt} 을 리플렉션으로 채웠는데, 그러면 「퇴장이 이력을 남긴다」가 아니라 「누군가 그 필드를
+   * 채우면」 만 검사하게 된다 — 명령이 행을 지우도록 바뀌어도 이 검사는 초록불이었다.
    */
   @DisplayName("스스로 나간 사람은 다시 초대할 수 없다.")
   @Test
   void inviteLeftMember() {
     ChatRoom room = ChatRoom.openFor(POST_ID, HOST_ID);
     room.invite(GUEST_ID);
-    markLeft(room, GUEST_ID);
+    room.leave(GUEST_ID, HOST_ID);
 
     assertThatThrownBy(() -> room.invite(GUEST_ID))
         .isInstanceOf(BusinessException.class)
@@ -140,7 +157,7 @@ class ChatRoomTest {
   @Test
   void leftMemberFreesSeat() {
     ChatRoom room = fullRoom();
-    markLeft(room, GUEST_ID);
+    room.leave(GUEST_ID, HOST_ID);
 
     room.invite(9999L);
 
@@ -155,14 +172,72 @@ class ChatRoomTest {
     return room;
   }
 
-  private static void markLeft(ChatRoom room, long userId) {
-    ChatRoomMember member =
-        room.getMembers().stream()
-            .filter(each -> each.getUserId() == userId)
-            .findFirst()
-            .orElseThrow();
+  @DisplayName("멤버가 나가면 현재 멤버에서 빠진다.")
+  @Test
+  void leave() {
+    ChatRoom room = ChatRoom.openFor(POST_ID, HOST_ID);
+    room.invite(GUEST_ID);
 
-    ReflectionTestUtils.setField(member, "leftAt", LocalDateTime.now(ZoneOffset.UTC));
+    room.leave(GUEST_ID, HOST_ID);
+
+    assertThat(room.currentMembers())
+        .extracting(ChatRoomMember::getUserId)
+        .containsExactly(HOST_ID);
+  }
+
+  /**
+   * I-19 의 이중 방어가 「퇴장 이력 조회」 라, 행이 남는 것 자체가 재초대 차단(CH-02a)의 조건이다.
+   *
+   * <p>{@code currentMembers} 가 아니라 {@code getMembers} 로 본다 — 앞의 것으로 보면 「빠졌다」와 「지워졌다」가 구분되지 않는다.
+   */
+  @DisplayName("나간 사람의 행은 지워지지 않고 나간 시각이 남는다.")
+  @Test
+  void leaveKeepsRow() {
+    ChatRoom room = ChatRoom.openFor(POST_ID, HOST_ID);
+    room.invite(GUEST_ID);
+
+    ChatRoomMember left = room.leave(GUEST_ID, HOST_ID);
+
+    assertThat(room.getMembers()).extracting(ChatRoomMember::getUserId).contains(GUEST_ID);
+    assertThat(left.getLeftAt()).isNotNull();
+    assertThat(left.isJoined()).isFalse();
+  }
+
+  /** CH-04 의 검증 기준. 방장이 빠지면 초대할 수 있는 사람이 사라지고 방장을 넘기는 절차가 2차에 없다. */
+  @DisplayName("방장은 방을 나갈 수 없다.")
+  @Test
+  void leave_requesterIsHost() {
+    ChatRoom room = ChatRoom.openFor(POST_ID, HOST_ID);
+
+    assertThatThrownBy(() -> room.leave(HOST_ID, HOST_ID))
+        .isInstanceOf(BusinessException.class)
+        .extracting("errorCode")
+        .isEqualTo(ChatErrorCode.CHAT_ROOM_HOST_CANNOT_LEAVE);
+  }
+
+  @DisplayName("초대받은 적 없는 사람은 방을 나갈 수 없다.")
+  @Test
+  void leave_requesterIsNotMember() {
+    ChatRoom room = ChatRoom.openFor(POST_ID, HOST_ID);
+
+    assertThatThrownBy(() -> room.leave(GUEST_ID, HOST_ID))
+        .isInstanceOf(BusinessException.class)
+        .extracting("errorCode")
+        .isEqualTo(ChatErrorCode.CHAT_ROOM_ACCESS_DENIED);
+  }
+
+  /** 나간 사람은 이미 멤버가 아니라 (CH-18) 비멤버와 같은 자리에서 걸린다. 나간 시각이 뒤로 밀리지 않는다. */
+  @DisplayName("이미 나간 사람이 다시 나가면 403 이다.")
+  @Test
+  void leave_requesterAlreadyLeft() {
+    ChatRoom room = ChatRoom.openFor(POST_ID, HOST_ID);
+    room.invite(GUEST_ID);
+    room.leave(GUEST_ID, HOST_ID);
+
+    assertThatThrownBy(() -> room.leave(GUEST_ID, HOST_ID))
+        .isInstanceOf(BusinessException.class)
+        .extracting("errorCode")
+        .isEqualTo(ChatErrorCode.CHAT_ROOM_ACCESS_DENIED);
   }
 
   @DisplayName("멤버 목록을 밖에서 고칠 수 없다.")
@@ -171,5 +246,120 @@ class ChatRoomTest {
     List<ChatRoomMember> members = ChatRoom.openFor(POST_ID, HOST_ID).getMembers();
 
     assertThatThrownBy(() -> members.remove(0)).isInstanceOf(UnsupportedOperationException.class);
+  }
+
+  @DisplayName("현재 멤버는 방 멤버로 판정된다.")
+  @Test
+  void isMemberTrue() {
+    ChatRoom room = ChatRoom.openFor(POST_ID, HOST_ID);
+
+    assertThat(room.isMember(HOST_ID)).isTrue();
+  }
+
+  @DisplayName("나간 사람은 방 멤버가 아니다.")
+  @Test
+  void isMemberFalseAfterLeaving() {
+    ChatRoom room = ChatRoom.openFor(POST_ID, HOST_ID);
+    room.invite(GUEST_ID);
+    room.leave(GUEST_ID, HOST_ID);
+
+    assertThat(room.isMember(GUEST_ID)).isFalse();
+  }
+
+  @DisplayName("초대받은 적 없는 사람은 방 멤버가 아니다.")
+  @Test
+  void isMemberFalseForStranger() {
+    ChatRoom room = ChatRoom.openFor(POST_ID, HOST_ID);
+
+    assertThat(room.isMember(GUEST_ID)).isFalse();
+  }
+
+  @DisplayName("만남시각 + 7일 이내면 채팅이 가능하다.")
+  @Test
+  void isWritableWithinWindow() {
+    ChatRoom room = ChatRoom.openFor(POST_ID, HOST_ID);
+    LocalDateTime meetAtUtc = LocalDateTime.now(ZoneOffset.UTC);
+    Clock clock = Clock.fixed(instantOf(meetAtUtc).plusSeconds(1), KST);
+
+    assertThat(room.isWritable(meetAtUtc, clock)).isTrue();
+  }
+
+  @DisplayName("만남시각 + 7일이 지나면 읽기 전용이다.")
+  @Test
+  void isWritableAfterWindow() {
+    ChatRoom room = ChatRoom.openFor(POST_ID, HOST_ID);
+    LocalDateTime meetAtUtc = LocalDateTime.now(ZoneOffset.UTC);
+    Clock clock =
+        Clock.fixed(
+            instantOf(meetAtUtc.plusDays(ChatRoom.WRITABLE_WINDOW_DAYS)).plusSeconds(1), KST);
+
+    assertThat(room.isWritable(meetAtUtc, clock)).isFalse();
+  }
+
+  /**
+   * 마감 아홉 시간 안쪽을 짚는다. 위의 두 검사는 ±1초라 시계와 만남시각의 <b>기준</b>이 어긋나도 뒤집히지 않는다 — 아홉 시간은 그 여유 안에서 소화된다.
+   *
+   * <p>운영 시계가 KST 벽시계라(ClockConfig) UTC 로 저장된 만남시각과 벽시계로 견주면 창이 아홉 시간 일찍 닫힌다. 그 결함은 「마감 한 시간 전」처럼
+   * 아홉 시간 띠 안에서만 드러난다.
+   */
+  @DisplayName("만남시각 + 7일 한 시간 전이면 아직 채팅이 가능하다.")
+  @Test
+  void isWritableJustBeforeWindowEnds() {
+    ChatRoom room = ChatRoom.openFor(POST_ID, HOST_ID);
+    LocalDateTime meetAtUtc = LocalDateTime.now(ZoneOffset.UTC);
+    Clock clock =
+        Clock.fixed(
+            instantOf(meetAtUtc.plusDays(ChatRoom.WRITABLE_WINDOW_DAYS)).minus(1, ChronoUnit.HOURS),
+            KST);
+
+    assertThat(room.isWritable(meetAtUtc, clock)).isTrue();
+  }
+
+  /**
+   * 정각을 짚는다 (CH-08 · STAR-111).
+   *
+   * <p>위의 세 검사는 ±1초·1시간이라 <b>경계 그 순간</b>을 지나지 않는다. 명세가 「만남시각 + 7일 <i>경과</i> 후」라고 적었으므로 정각은 아직 경과가
+   * 아니고, 그래서 판정이 {@code isAfter} 여야 한다. {@code isBefore} 로 뒤집히면 마지막 한 마디가 조용히 막히는데 다른 검사는 전부 초록불이다.
+   */
+  @DisplayName("만남시각 + 7일 정각에는 아직 채팅이 가능하다.")
+  @Test
+  void isWritableAtWindowEnd() {
+    ChatRoom room = ChatRoom.openFor(POST_ID, HOST_ID);
+    LocalDateTime meetAtUtc = LocalDateTime.now(ZoneOffset.UTC);
+    Clock clock = Clock.fixed(instantOf(meetAtUtc.plusDays(ChatRoom.WRITABLE_WINDOW_DAYS)), KST);
+
+    assertThat(room.isWritable(meetAtUtc, clock)).isTrue();
+  }
+
+  @DisplayName("파기하면 그 시각이 방에 남는다.")
+  @Test
+  void markPurged() {
+    ChatRoom room = ChatRoom.openFor(POST_ID, HOST_ID);
+
+    boolean marked = room.markPurged(PURGED_AT_UTC);
+
+    assertThat(marked).isTrue();
+    assertThat(room.getPurgedAt()).isEqualTo(PURGED_AT_UTC);
+  }
+
+  /**
+   * 배치는 재실행되는 작업이라 같은 방을 두 번 만날 수 있다 (CH-19 — 「배치는 멱등」).
+   *
+   * <p>덮어쓰면 「언제 파기했는가」가 마지막 실행 시각으로 밀린다. 처리방침이 고지한 기간을 지켰는지 나중에 따질 때 보는 값이 이것이다.
+   */
+  @DisplayName("이미 파기된 방을 다시 파기해도 처음 파기한 시각이 남는다.")
+  @Test
+  void markPurged_roomIsAlreadyPurged() {
+    ChatRoom room = ChatRoom.openFor(POST_ID, HOST_ID);
+    room.markPurged(PURGED_AT_UTC);
+
+    boolean marked = room.markPurged(PURGED_AT_UTC.plusDays(1));
+
+    assertThat(marked).isFalse();
+    assertThat(room.getPurgedAt()).isEqualTo(PURGED_AT_UTC);
+  }
+
+  private static Instant instantOf(LocalDateTime dateTime) {
+    return dateTime.toInstant(ZoneOffset.UTC);
   }
 }

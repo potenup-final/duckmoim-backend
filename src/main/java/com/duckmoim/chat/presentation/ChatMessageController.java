@@ -1,0 +1,228 @@
+package com.duckmoim.chat.presentation;
+
+import com.duckmoim.auth.domain.AuthUser;
+import com.duckmoim.chat.service.ChatMessageDeleteService;
+import com.duckmoim.chat.service.ChatMessageQueryService;
+import com.duckmoim.chat.service.ChatMessageSendService;
+import com.duckmoim.chat.service.ChatStreamService;
+import com.duckmoim.chat.service.MessageSlice;
+import com.duckmoim.chat.service.SentMessage;
+import com.duckmoim.common.exception.BusinessException;
+import com.duckmoim.common.exception.CommonErrorCode;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
+import org.springframework.http.MediaType;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.ModelAttribute;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+
+/**
+ * 채팅 메시지 (CH-07 · CH-08 · CH-09 · CH-10 · CH-12).
+ *
+ * <p><b>이 컨트롤러가 정본에 전송 경로를 연다.</b> API-설계.md 2-11 이 <i>"전송을 막는 409 자체는 이 절에 없다 — {@code Message}
+ * (CH-07)가 아직 없어 전송 엔드포인트가 없고, 그 티켓이 문을 연다"</i> 고 적어 두었다. 위키 반영은 별도 클론에서 따라온다.
+ *
+ * <p><b>방 번호로 받는다.</b> 2-11 이 「목록·상세는 방 번호로 받는다」로 정했고 진입점이 방 화면이다 — 거기까지 온 클라이언트는 방 번호를 이미 쥐고 있다.
+ * 초대(CH-02)만 모집글 번호인 것은 그쪽 진입점이 모집글 상세의 댓글이라 그 화면에 방 번호가 없기 때문이다.
+ *
+ * <p><b>등급이 메서드로 갈린다.</b> {@code POST}·{@code DELETE} 는 {@code SIGNUP_WRITE} 의 {@code
+ * /api/v1/chat-rooms/**} 가 덮고, {@code GET} 은 CH-05 · CH-06 이 더한 {@code SIGNUP_READ} 가 덮는다. 그런데 그쪽
+ * 목록이 {@code /api/v1/chat-rooms/*} 라 <b>한 칸 깊은 이 목록 경로에 닿지 않아</b> 줄을 하나 더했다. 셋 다 같은 {@code SIGNUP}
+ * 이고, 등급은 {@code EndpointGradeTest} 의 표가 지킨다.
+ *
+ * <p><b>{@code authUser} 는 null 이 될 수 없다.</b> 그 등급이 익명 요청을 401, 가입 미완료를 403 으로 관문에서 끝낸다.
+ */
+@Tag(name = "채팅", description = "채팅 메시지")
+@RestController
+@RequestMapping("/api/v1/chat-rooms/{roomId}/messages")
+@RequiredArgsConstructor
+public class ChatMessageController {
+
+  /**
+   * 연결을 열어 두는 시간.
+   *
+   * <p>무한이 아닌 이유는 죽은 연결을 언젠가는 걷어내야 해서다. 끊긴 뒤를 잇는 것은 {@code CH-11}(STAR-114)이고, 브라우저의 {@code
+   * EventSource} 는 끊기면 스스로 다시 붙는다.
+   *
+   * <p><b>30분에서 5분으로 줄였다</b> (NT-07 · PR #145 리뷰). 이 값이 <b>「보고 있다」가 틀린 채로 남는 시간의 상한</b>이기 때문이다.
+   *
+   * <p>폰 화면이 꺼지거나 지하철에 들어가면 TCP 가 <b>반쯤 열린 채로</b> 남는다. 그때 keep-alive 쓰기는 송신 버퍼에 들어가 <b>성공으로
+   * 반환하므로</b> 서버는 그 연결이 죽은 줄 모르고, 접속 집합에 계속 「보는 중」으로 적는다. 그 사이 그 방에 온 메시지는 {@code
+   * ChatMessageWriter} 가 수신자에서 빼버려 <b>알림 행이 아예 안 생긴다</b> — 나중에 메울 배치도 없다.
+   *
+   * <pre>
+   * 전  최대 30분 (또는 TCP 재전송 소진 ~15분)  동안 알림이 통째로 사라진다
+   * 후  5분 + 신선도 90초  =  최대 6분 30초
+   * </pre>
+   *
+   * <p><b>단순히 상한을 낮추는 것이 아니라 판정 근거가 바뀐다.</b> 타임아웃은 TCP 상태와 무관하게 벽시계로 도므로 반쯤 열린 연결도 반드시 걷히고, 다시 붙으려면
+   * <b>핸드셰이크를 새로 맺어야</b> {@code ChatStreamService#open} 이 돌아 접속 집합에 다시 찍힌다 — 그 왕복이 곧 클라이언트가 살아 있다는
+   * 증거다. SSE 는 단방향이라 이것 말고는 증거가 없다.
+   *
+   * <p><b>재연결 비용을 치를 수 있게 된 것은 {@code CH-11} 덕이다.</b> 그전이면 5분마다 유실 창을 여는 셈이라 알림 하나 살리려고 메시지를 잃는
+   * 거래였다. 지금은 {@code Last-Event-ID} 로 빈 구간이 되돌아오고, 드는 것은 재연결마다 멤버 판정 한 번과 재전송 조회 한 번이다.
+   *
+   * <p><b>남는 창 6분 30초는 이 값으로는 못 없앤다.</b> 클라이언트가 「이 방 보는 중」을 주기적으로 찍어 주는 문이 있어야 하고, 그것은 프론트 변경이 딸려
+   * 별도 티켓이다 ({@code RedisChatPresence} 에 같은 각주가 있다).
+   */
+  private static final long STREAM_TIMEOUT_MILLIS = 5 * 60 * 1000L;
+
+  private final ChatMessageSendService chatMessageSendService;
+  private final ChatMessageQueryService chatMessageQueryService;
+  private final ChatMessageDeleteService chatMessageDeleteService;
+  private final ChatStreamService chatStreamService;
+
+  /**
+   * 메시지를 보낸다 (CH-07 · CH-08).
+   *
+   * <p>생성 성공도 200 이다 (API-설계.md 「성공 응답의 상태 코드」). 201 을 쓰지 않는다.
+   *
+   * <p>멤버 판정을 여기서 하지 않는다. 관문은 {@code SIGNUP} 까지만 보고 방 멤버 여부는 service 가 본다 ({@code
+   * EndpointGradeTest} 의 「HOST 는 관문이 판정하지 않는다」와 같은 선).
+   */
+  @Operation(
+      summary = "메시지 전송",
+      description =
+          "방 멤버만 보낼 수 있다. 만남시각 + 7일이 지나면 409 다. 같은 clientMessageId 로 다시 보내면 새로 저장하지 않고 먼저 보낸 것을 그대로 돌려준다. "
+              + "imageId 를 실으면 사진 메시지가 되고, 업로드 확정을 마치지 않은 번호는 400 이다.")
+  @PostMapping
+  public ChatMessageResponse send(
+      @PathVariable Long roomId,
+      @AuthenticationPrincipal AuthUser authUser,
+      @Valid @RequestBody ChatMessageSendRequest request) {
+
+    SentMessage sent =
+        chatMessageSendService.send(
+            roomId,
+            authUser.userId(),
+            request.clientMessageId(),
+            request.contentOrEmpty(),
+            request.imageId());
+
+    return ChatMessageResponse.from(sent);
+  }
+
+  /**
+   * 메시지를 최신부터 한 페이지 읽는다 (CH-09).
+   *
+   * <p><b>OFFSET 을 쓰지 않는다</b> — 검증 기준이 「페이지 경계에서 누락·중복 없음」이고, 뒤에서 새 메시지가 계속 들어오는 목록이라 OFFSET 은 반드시
+   * 어긋난다. 커서여야 하는 이유가 성능이 아니다.
+   *
+   * <p>방 멤버 판정은 여기서 하지 않는다. 관문은 {@code SIGNUP} 까지만 보고 service 가 본다.
+   */
+  @Operation(
+      summary = "메시지 목록 조회",
+      description = "방 멤버만 볼 수 있다. 최신순 커서이고 지운 메시지는 본문 키 없이 자리표시자로 남는다.")
+  @GetMapping
+  public MessageListResponse list(
+      @PathVariable Long roomId,
+      @AuthenticationPrincipal AuthUser authUser,
+      @ModelAttribute MessageListRequest request) {
+
+    MessageSlice slice =
+        chatMessageQueryService.findMessages(request.toQuery(roomId), authUser.userId());
+
+    return MessageListResponse.from(slice);
+  }
+
+  /**
+   * 내가 보낸 메시지를 지운다 (CH-12).
+   *
+   * <p><b>본문 없는 200 이다</b> (API-설계.md 「성공 응답의 상태 코드」). 204 를 쓰지 않는다.
+   *
+   * <p><b>방장은 못 지운다.</b> 댓글(CM-10)이 작성자와 방장 둘에게 준 것과 갈리는 자리이고, 명세의 상세가 「작성자 본인만」이다.
+   */
+  @Operation(summary = "메시지 삭제", description = "보낸 사람만 지울 수 있다. 소프트 삭제라 목록에는 본문 없는 자리표시자로 남는다.")
+  @DeleteMapping("/{messageId}")
+  public void delete(
+      @PathVariable Long roomId,
+      @PathVariable Long messageId,
+      @AuthenticationPrincipal AuthUser authUser) {
+
+    chatMessageDeleteService.delete(roomId, messageId, authUser.userId());
+  }
+
+  /**
+   * 그 방의 메시지를 실시간으로 받는다 (CH-10).
+   *
+   * <p><b>응답이 끝나지 않는 요청이다.</b> {@code text/event-stream} 으로 열어 두고 사건이 생길 때마다 한 덩어리씩 흘려보낸다 — {@code
+   * SseEmitter} 를 반환하면 스프링이 그 요청을 비동기로 돌려둔다.
+   *
+   * <p><b>타임아웃을 5분으로 둔다.</b> 무한으로 두면 죽은 연결이 영원히 남고, 너무 짧으면 재연결이 잦아진다. 끊긴 뒤 빠진 것을 메우는 일은 {@code
+   * CH-11}(STAR-114) 몫이라, 여기서는 <b>끊기는 것 자체를 정상으로 다룬다</b> — 브라우저의 {@code EventSource} 가 알아서 다시 붙는다.
+   *
+   * <p><b>ALB 의 유휴 타임아웃(기본 60초)보다 짧게 무언가를 보내야 한다.</b> 대화가 없는 방은 한 시간도 조용한데, 그러면 ALB 가 먼저 끊는다. 연결 직후
+   * 주석 한 줄을 보내 선로를 여는 것까지가 이 메서드이고, 이어지는 하트비트는 {@code ChatStreamHeartbeat} 가 진다.
+   *
+   * <p><b>{@code Last-Event-ID} 를 받으면 그 뒤를 되돌려준다</b> (CH-11). 브라우저의 {@code EventSource} 가 재연결할 때
+   * <b>직전 사건의 {@code id:} 줄을 그대로</b> 이 헤더에 담아 보낸다 — 클라이언트가 따로 붙일 것이 없다. 네이티브 앱처럼 {@code
+   * EventSource} 가 없는 클라이언트는 같은 헤더를 직접 넣는다.
+   *
+   * <p><b>쿼리 파라미터로도 받지 않는다.</b> 재개 지점이 두 곳에서 오면 둘이 어긋났을 때 어느 쪽을 믿을지가 계약이 되고, 그 규칙이 「유실 0건」의 판정에
+   * 얹힌다.
+   *
+   * <p>멤버 판정을 여기서 하지 않는다. 관문은 {@code SIGNUP} 까지만 보고 방 멤버 여부는 service 가 본다.
+   */
+  @Operation(
+      summary = "메시지 실시간 수신",
+      description =
+          "방 멤버만 열 수 있다. text/event-stream 으로 메시지가 생길 때마다 밀어 준다. "
+              + "id 줄이 messageId 라 브라우저가 재연결할 때 Last-Event-ID 로 돌려주고, 서버는 그 뒤에 생긴 것을 먼저 되돌려준다. "
+              + "되돌려줄 것이 너무 많으면 event: gap 을 보내고, 그때는 메시지 목록 API 로 따라잡는다.")
+  @GetMapping(path = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+  public SseEmitter stream(
+      @PathVariable Long roomId,
+      @AuthenticationPrincipal AuthUser authUser,
+      @Parameter(description = "마지막으로 받은 messageId. EventSource 가 재연결할 때 자동으로 넣는다")
+          @RequestHeader(name = "Last-Event-ID", required = false)
+          String lastEventId) {
+
+    // 선로를 열기 전에 판독한다. 열고 나면 400 을 JSON 으로 돌려줄 자리가 없다.
+    Long resumeFrom = resumeFrom(lastEventId);
+
+    SseEmitter emitter = new SseEmitter(STREAM_TIMEOUT_MILLIS);
+    Runnable release =
+        chatStreamService.open(
+            roomId, authUser.userId(), new SseChatStreamSession(emitter), resumeFrom);
+
+    // 셋 다 걸어야 한다. 정상 종료(complete)·타임아웃·오류는 서로 다른 콜백이고,
+    // 하나라도 빠지면 그 경로로 끝난 연결이 목록에 남아 방마다 쌓인다.
+    emitter.onCompletion(release);
+    emitter.onTimeout(release);
+    emitter.onError(error -> release.run());
+
+    return emitter;
+  }
+
+  /**
+   * 재연결 지점을 판독한다 (CH-11).
+   *
+   * <p><b>Base64 커서가 아니라 숫자 그대로다.</b> 이 값은 우리가 {@code id:} 줄에 쓴 것을 브라우저가 그대로 돌려준 것이라, 형식을 정하는 쪽도 읽는
+   * 쪽도 서버다 — {@code MessageCursor} 를 불투명 문자열로 감싼 이유(클라이언트가 숫자에 의존하는 것을 막는다)가 여기에는 없다.
+   *
+   * <p><b>판독 실패는 {@code INVALID_INPUT} 400 이다.</b> 목록 커서와 같은 답이다 ({@code MessageListRequest}). 조용히
+   * 첫 연결로 다루면 <b>못 받은 구간이 말없이 사라지고</b>, 그것이 이 기능이 없애려는 증상 그 자체다.
+   */
+  private static Long resumeFrom(String lastEventId) {
+    if (lastEventId == null || lastEventId.isBlank()) {
+      return null;
+    }
+
+    try {
+      return Long.parseLong(lastEventId.trim());
+    } catch (NumberFormatException e) {
+      throw new BusinessException(CommonErrorCode.INVALID_INPUT);
+    }
+  }
+}

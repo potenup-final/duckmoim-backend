@@ -11,6 +11,10 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.OneToMany;
 import jakarta.persistence.Table;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -50,6 +54,14 @@ public class ChatRoom extends BaseEntity {
    */
   public static final int MEMBER_LIMIT = 100;
 
+  /**
+   * 채팅 가능 구간 (CH-08 · 도메인-모델링.md 「{@code ChatRoom} ※ 2차」 라이프사이클).
+   *
+   * <p>만남시각부터 이 일수가 지나면 방은 읽기 전용이다. 여기서는 CH-06(방 상세)이 보여줄 여부만 계산한다 — 전송을 막는 409 자체는 CH-08 티켓의 몫이고,
+   * {@code Message} 가 아직 없어 만들 자리도 없다.
+   */
+  public static final int WRITABLE_WINDOW_DAYS = 7;
+
   @Id
   @GeneratedValue(strategy = GenerationType.IDENTITY)
   private Long id;
@@ -60,6 +72,15 @@ public class ChatRoom extends BaseEntity {
 
   @OneToMany(mappedBy = "room", cascade = CascadeType.ALL)
   private List<ChatRoomMember> members = new ArrayList<>();
+
+  /**
+   * 대화와 사진을 파기한 시각 (CH-19). 아직 파기하지 않았으면 {@code null} 이다.
+   *
+   * <p><b>이것은 방의 상태가 아니다.</b> 클래스 주석이 적은 대로 이 애그리게이트는 상태를 저장하지 않는다 — 쓸 수 있는지는 모집글의 만남시각에서 계산한다
+   * (CH-08). 이 열이 말하는 것은 「이 방에 대해 파기 작업을 끝냈다」는 사실 하나이고, 파기 대상 조회가 끝난 방을 다시 집지 않게 하는 데만 쓴다.
+   */
+  @Column(name = "purged_at")
+  private LocalDateTime purgedAt;
 
   private ChatRoom(Long postId) {
     this.postId = postId;
@@ -132,6 +153,61 @@ public class ChatRoom extends BaseEntity {
   }
 
   /**
+   * 스스로 방을 나간다 (CH-04).
+   *
+   * <p><b>방장은 나갈 수 없다</b> (409). 명세의 검증 기준이 그 한 줄이다. 방장이 빠지면 초대할 수 있는 사람이 사라지는데 (CH-02 가 방장에게만 초대를
+   * 준다) 방장을 넘기는 절차가 2차에 없어, 나가는 순간 아무도 고칠 수 없는 방이 된다.
+   *
+   * <p><b>{@code hostId} 를 인자로 받는다.</b> 클래스 주석이 적은 대로 이 애그리게이트는 방장을 갖지 않는다 — 어느 모집글의 방장인지는 그 글이 아는
+   * 사실이라 {@code ChatRoomLeaveService} 가 읽어 넘긴다. {@link #isWritable} 이 만남시각을 인자로 받는 것과 같은 이유다.
+   *
+   * <p><b>방장 판정이 멤버 판정보다 앞이다.</b> 방장도 멤버라 (CH-01) 순서를 뒤집어도 같은 답이 나오지만, 앞에 두면 「방장이면 언제나 409」가 한 줄로
+   * 읽힌다 — 뒤에 두면 방장이 멤버 목록에 있다는 사실에 기대는 코드가 된다.
+   *
+   * <p><b>비멤버와 이미 나간 사람이 같은 403 이다</b> ({@code CHAT_ROOM_ACCESS_DENIED}). 나간 사람은 멤버가 아니고 (CH-18)
+   * 요청자에게 두 경우의 차이가 없다. 404 가 아닌 것은 CH-06 이 이 방에 대해 이미 403 을 고른 자리라 같은 방을 두 코드로 답하지 않기 위해서다.
+   *
+   * <p><b>행을 지우지 않는다</b> (I-19). {@link ChatRoomMember#leave} 가 그 이유를 갖고 있고, 그것이 {@link #invite} 의
+   * {@code CHAT_MEMBER_LEFT} 분기가 성립하는 조건이다 — 이 명령이 퇴장 이력을 만든다.
+   */
+  public ChatRoomMember leave(Long userId, Long hostId) {
+    if (userId.equals(hostId)) {
+      throw new BusinessException(ChatErrorCode.CHAT_ROOM_HOST_CANNOT_LEAVE);
+    }
+
+    ChatRoomMember member =
+        memberOf(userId)
+            .filter(ChatRoomMember::isJoined)
+            .orElseThrow(() -> new BusinessException(ChatErrorCode.CHAT_ROOM_ACCESS_DENIED));
+
+    member.leave();
+
+    return member;
+  }
+
+  /**
+   * 대화와 사진을 파기했다고 표시한다 (CH-19).
+   *
+   * <p><b>멱등이다.</b> 이미 표시된 방이면 아무것도 하지 않는다 — 파기 배치는 재실행되는 작업이라 같은 방을 두 번 만날 수 있고, 그때 시각을 덮어쓰면 <b>언제
+   * 파기했는지가 마지막 실행 시각으로 밀린다.</b> 개인정보 처리방침이 고지한 기간을 지켰는지 나중에 따질 때 보는 값이 이것이라, 남겨야 하는 것은 처음 파기한 시각이다
+   * ({@code closeForMeetTimePassed} 가 마감 사유를 덮지 않는 것과 같은 자리다).
+   *
+   * <p><b>무엇을 지울지는 여기서 정하지 않는다.</b> 메시지는 이 애그리게이트 밖이고 (도메인-모델링.md 「3.1 경계와 트랜잭션 범위」) 사진은 저장소에 있다. 이
+   * 메서드가 아는 것은 「끝났다」는 사실 하나다.
+   *
+   * @param purgedAtInUtc <b>UTC 기준</b> 파기 시각. 저장된 다른 시각과 같은 기준이어야 한다 ({@code BaseEntity})
+   * @return 이 호출이 실제로 표시했는지. 이미 파기된 방이면 {@code false}
+   */
+  public boolean markPurged(LocalDateTime purgedAtInUtc) {
+    if (purgedAt != null) {
+      return false;
+    }
+
+    purgedAt = purgedAtInUtc;
+    return true;
+  }
+
+  /**
    * 그 사람의 행 (나간 사람 포함).
    *
    * <p>나간 사람까지 보는 것이 {@code currentMembers} 와 다른 점이고 CH-02a 가 성립하는 이유다. 행이 방마다 하나뿐인 것은 {@code
@@ -148,5 +224,37 @@ public class ChatRoom extends BaseEntity {
 
   public List<ChatRoomMember> getMembers() {
     return Collections.unmodifiableList(members);
+  }
+
+  /**
+   * 지금 이 방의 멤버인가 (CH-06 · I-18).
+   *
+   * <p>나간 사람은 행이 남아 있어도(CH-04) 아니다 — {@code currentMembers} 와 같은 기준이다.
+   */
+  public boolean isMember(Long userId) {
+    return memberOf(userId).map(ChatRoomMember::isJoined).orElse(false);
+  }
+
+  /**
+   * 지금 쓸 수 있는 방인가 (CH-06 · CH-08).
+   *
+   * <p><b>{@code meetAtUtc} 를 파라미터로 받는다.</b> 이 애그리게이트는 만남시각을 갖지 않는다 — 클래스 주석이 이미 적은 대로 「쓸 수 있는지 여부는
+   * 모집글의 만남시각에서 계산한다」이고, 그 값은 {@code CompanionPost} 가 쥔다.
+   *
+   * <p>{@code Clock} 을 주입받지 않고 인자로 받는 것은 {@code AuthorDisplay}·{@code LastSeen} 과 같은 이유다 — domain 은
+   * 프레임워크에 묶이지 않는다.
+   *
+   * <p><b>{@code LocalDateTime.now(clock)} 과 비교하지 않는다.</b> {@code ClockConfig} 의 시계가 {@code
+   * Asia/Seoul} 이라 (행사 종료일 판정이 KST 여야 해서 그렇게 정해졌다) 그 벽시계를 UTC 로 저장된 만남시각과 견주면 창이 <b>아홉 시간 일찍
+   * 닫힌다.</b> 두 값을 {@code Instant} 로 맞춰 기준을 하나로 만든다. {@code MeetTimePassedCloseService.closeChunk} 가
+   * 같은 함정을 파라미터 이름({@code nowInUtc})으로 막아 둔 자리다.
+   *
+   * @param meetAtUtc <b>UTC 기준</b> 만남시각. {@code CompanionPost} 가 그 기준으로 저장한다 (도메인-모델링.md 「4. 엔티티 ·
+   *     값 객체 · 식별자」)
+   */
+  public boolean isWritable(LocalDateTime meetAtUtc, Clock clock) {
+    Instant deadline = meetAtUtc.plusDays(WRITABLE_WINDOW_DAYS).toInstant(ZoneOffset.UTC);
+
+    return !clock.instant().isAfter(deadline);
   }
 }

@@ -33,4 +33,18 @@ public final class SanctionPolicy {
   public boolean canWrite(List<Sanction> activeSanctions, LocalDateTime now) {
     return activeSanctions.stream().noneMatch(sanction -> sanction.blocksWritingAt(now));
   }
+
+  /**
+   * 이 유저가 지금 <b>비공개 콘텐츠</b>를 읽을 수 있는가 (STAR-84).
+   *
+   * <p>{@code BANNED} 만 막는다. 공개 콘텐츠는 여기서 판정하지 않는다 — 비회원에게 열려 있어 막을 수단이 없고, 도메인 6장 제재 축 표의 「공개 읽기」
+   * 열이 전부 「가능」인 이유가 그것이다.
+   *
+   * <p><b>{@link #canWrite} 와 같은 이유로 전량을 본다.</b> 하나라도 막으면 못 읽는다.
+   *
+   * @param activeSanctions 그 유저의 활성 제재 전량. <b>없으면 빈 목록이다</b>
+   */
+  public boolean canReadPrivate(List<Sanction> activeSanctions, LocalDateTime now) {
+    return activeSanctions.stream().noneMatch(sanction -> sanction.blocksPrivateReadingAt(now));
+  }
 }

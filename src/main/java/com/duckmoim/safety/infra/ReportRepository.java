@@ -38,6 +38,14 @@ public interface ReportRepository extends JpaRepository<Report, Long>, ReportQue
   Optional<Report> findByIdForUpdate(@Param("reportId") Long reportId);
 
   /**
+   * 잠그지 않고 한 건을 읽는다.
+   *
+   * <p>{@link #findByIdForUpdate} 와 갈라 둔 이유는 용도다. 그쪽은 처리 상태를 바꾸기 전에 잠그는 자리이고, 이쪽은 <b>열람 자격을 확인하는
+   * 읽기</b>다 (AD-08) — 잠그면 관리자가 대화를 여는 동안 그 신고의 처리가 기다린다.
+   */
+  Optional<Report> findById(Long id);
+
+  /**
    * 이미 신고했는지 본다 (SF-01).
    *
    * <p><b>이것만으로는 부족하다.</b> 동시 요청 2건은 둘 다 이 조회를 통과한다. 실제 차단은 V34 의 유니크 제약이 하고, 이 조회는 흔한 경우에 409 를

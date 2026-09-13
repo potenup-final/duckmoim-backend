@@ -10,9 +10,10 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 
 /**
- * I-14 의 판정 (제재 중인 유저의 쓰기 차단).
+ * 제재의 두 판정 — 쓰기 차단(I-14)과 <b>비공개 읽기 차단</b>(STAR-84).
  *
- * <p><b>네 종류를 전부 본다.</b> 대표만 고르면 {@code WARNED} 가 빠지는데, 하필 그것만 「쓰기 가능」이라 규칙이 뒤집혀도 초록불이 난다.
+ * <p><b>네 종류를 전부 본다.</b> 대표만 고르면 축이 뒤집혀도 초록불이 난다 — 쓰기는 {@code WARNED} 만, 읽기는 {@code BANNED} 만 나머지와
+ * 다르게 답한다.
  */
 class SanctionPolicyTest {
 
@@ -81,5 +82,43 @@ class SanctionPolicyTest {
 
   private static Sanction sanction(SanctionKind kind, LocalDateTime until) {
     return Sanction.of(USER_ID, kind, "사유", ISSUED_AT, until);
+  }
+
+  /** 읽기 축은 여기 하나만 「불가」다. 쓰기 축과 대칭이 아니라는 것이 이 판정의 전부다. */
+  @DisplayName("영구 정지 중에는 비공개 콘텐츠를 읽을 수 없다.")
+  @Test
+  void canReadPrivate_isBanned() {
+    assertThat(policy.canReadPrivate(List.of(sanction(SanctionKind.BANNED, null)), NOW)).isFalse();
+  }
+
+  /**
+   * <b>읽기 차단이 {@code BANNED} 에만 붙는지 본다.</b> 「제재 중이면 못 읽는다」로 한 줄 짜면 이 셋이 조용히 함께 막히고, 그때 정지당한 사람이 자기
+   * 채팅방도 못 보게 된다 — 도메인 6장 제재 축 표의 「비공개 읽기」 열이 그 셋에 「가능」을 적어 두었다.
+   */
+  @DisplayName("경고 · 나이 확인 · 기간 정지 중에는 비공개 콘텐츠를 읽을 수 있다.")
+  @ParameterizedTest(name = "{0}")
+  @EnumSource(
+      value = SanctionKind.class,
+      names = {"WARNED", "AGE_HOLD", "SUSPENDED"})
+  void canReadPrivate_isNotBanned(SanctionKind kind) {
+    LocalDateTime until = kind.hasUntil() ? ISSUED_AT.plusDays(3) : null;
+
+    assertThat(policy.canReadPrivate(List.of(sanction(kind, until)), NOW)).isTrue();
+  }
+
+  /** 관리자가 풀면 읽기가 돌아온다. 유효성과 곱하지 않으면 해제가 반영되지 않는다. */
+  @DisplayName("풀린 영구 정지는 비공개 읽기를 막지 않는다.")
+  @Test
+  void canReadPrivate_isReleased() {
+    Sanction released = sanction(SanctionKind.BANNED, null);
+    released.releaseBy(NOW);
+
+    assertThat(policy.canReadPrivate(List.of(released), NOW.plusDays(1))).isTrue();
+  }
+
+  @DisplayName("제재가 없으면 비공개 콘텐츠를 읽을 수 있다.")
+  @Test
+  void canReadPrivate_hasNoSanction() {
+    assertThat(policy.canReadPrivate(List.of(), NOW)).isTrue();
   }
 }

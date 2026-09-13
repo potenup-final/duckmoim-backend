@@ -11,6 +11,9 @@ import com.duckmoim.companion.domain.CompanionPostOpened;
 import com.duckmoim.companion.domain.MeetPoint;
 import com.duckmoim.companion.exception.PostErrorCode;
 import com.duckmoim.companion.infra.CompanionPostRepository;
+import java.time.Clock;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
@@ -37,6 +40,9 @@ public class CompanionPostCommandService {
   private final CompanionPostRepository companionPostRepository;
   private final EventRepository eventRepository;
   private final ApplicationEventPublisher events;
+
+  /** 마감 시각을 남기려고 든다 (CH-19). 보관 기간의 기준이 되는 값이라 여기서 한 번만 읽는다. */
+  private final Clock clock;
 
   /**
    * 모집글을 연다.
@@ -97,14 +103,28 @@ public class CompanionPostCommandService {
    *
    * <p>커맨드 객체를 두지 않았다. 받는 것이 경로 변수와 요청자 둘뿐이고 요청 본문이 없다 — 사유를 받지 않으므로 (화면-계약.md 「방장 취소는 1차에서 뺐다」) 옮겨
    * 담을 요청 DTO 자체가 없다.
+   *
+   * <p><b>마감 시각을 여기서 읽어 넘긴다</b> (CH-19). 도메인이 {@code Clock} 을 들지 않는 것은 PO-14 배치가 같은 자리에서 내린 판단과 같다
+   * — 시각을 밖에서 주면 검사가 실행 시각에 결과를 맡기지 않는다.
    */
   @Transactional
   public ClosedCompanionPost close(Long postId, Long requesterId) {
     CompanionPost post = requirePost(postId);
 
-    post.closeByHost(requesterId);
+    post.closeByHost(requesterId, nowInUtc());
 
     return ClosedCompanionPost.from(post);
+  }
+
+  /**
+   * UTC 기준 현재 시각.
+   *
+   * <p><b>{@code LocalDateTime.now(clock)} 이 아니다.</b> {@code ClockConfig} 의 시계가 {@code Asia/Seoul}
+   * 이라 그것을 넣으면 UTC 로 저장되는 {@code meet_at} · {@code created_at} 과 아홉 시간 어긋난다 ({@code
+   * MeetTimePassedCloseBatch} 가 같은 자리에서 같은 변환을 쓴다).
+   */
+  private LocalDateTime nowInUtc() {
+    return LocalDateTime.ofInstant(clock.instant(), ZoneOffset.UTC);
   }
 
   private CompanionPost requirePost(Long postId) {
