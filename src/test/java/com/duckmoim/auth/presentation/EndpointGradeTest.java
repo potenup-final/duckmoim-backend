@@ -156,6 +156,11 @@ class EndpointGradeTest {
           // anyRequest().authenticated() 로 떨어졌다 — 가입 미완료 계정에게 열린다.
           new Endpoint(HttpMethod.POST, "/api/v1/chat-rooms/404404/images", Grade.SIGNUP),
           new Endpoint(HttpMethod.PUT, "/api/v1/chat-rooms/404404/images/404404", Grade.SIGNUP),
+          // 이미지 열람 (CH-15). 아래 「아직 없는 경로」 줄이 예고한 깊이에 실제로 들어온
+          // 첫 경로다 — SIGNUP_READ 의 ** 가 그대로 덮는다. 읽기라 제재 인터셉터에는
+          // 걸리지 않는다 (도메인 6장: 읽기가 막히는 것은 BANNED 뿐이다).
+          new Endpoint(
+              HttpMethod.GET, "/api/v1/chat-rooms/404404/images?messageIds=404404", Grade.SIGNUP),
           // 아직 없는 PUT 경로다. 위 fail-open 이 되돌아오면 여기서 먼저 깨진다 —
           // 경로가 없어도 등급 판정은 규칙만 보므로, 핸들러를 안 만들고 규칙을 고정한다.
           new Endpoint(HttpMethod.PUT, "/api/v1/chat-rooms/404404/nothing", Grade.SIGNUP),

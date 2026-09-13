@@ -3,6 +3,7 @@ package com.duckmoim.chat.infra;
 import com.duckmoim.chat.domain.ChatImageStorage;
 import com.duckmoim.chat.domain.StoredChatImage;
 import com.duckmoim.chat.domain.UploadedChatImage;
+import java.time.Duration;
 import java.util.Optional;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -34,6 +35,11 @@ public class StubChatImageStorage {
 
       @Override
       public String presignUpload(String objectKey, String contentType, long contentLength) {
+        return "https://chat-image-storage-is-not-configured.invalid/" + objectKey;
+      }
+
+      @Override
+      public String presignView(String objectKey, Duration ttl) {
         return "https://chat-image-storage-is-not-configured.invalid/" + objectKey;
       }
 
