@@ -1,7 +1,10 @@
 package com.duckmoim.notification.service;
 
+import static com.duckmoim.identity.UserFixture.aUser;
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.duckmoim.identity.domain.UserWithdrawn;
+import com.duckmoim.identity.service.UserService;
 import com.duckmoim.notification.domain.PushSubscription;
 import com.duckmoim.notification.infra.PushSubscriptionRepository;
 import java.util.List;
@@ -32,6 +35,8 @@ class PushSubscriptionTest {
 
   @Autowired private PushSubscriptionService pushSubscriptionService;
   @Autowired private PushSubscriptionRepository pushSubscriptionRepository;
+  @Autowired private UserService userService;
+  @Autowired private org.springframework.jdbc.core.JdbcTemplate jdbc;
 
   /** <b>이 검사가 NT-12 의 검증 기준이다.</b> */
   @DisplayName("기기 둘에서 등록하면 둘 다 남는다.")
@@ -125,6 +130,50 @@ class PushSubscriptionTest {
     pushSubscriptionService.unregister(ME, PHONE);
 
     assertThat(endpointsOf(ME)).isEmpty();
+  }
+
+  /**
+   * <b>안 지우면 탈퇴한 사람 폰에 알림이 뜬다.</b>
+   *
+   * <p>탈퇴는 토큰만 끊고 행은 남기는 소프트 삭제라, 그 사람의 옛 댓글에 답글이 달리면 알림이 그대로 발행된다. 인앱은 로그인이 막혀 아무도 못 보지만 푸시는 로그인
+   * 없이 기기에 직접 닿는다 — 이 티켓이 새로 여는 노출이다.
+   */
+  @DisplayName("탈퇴하면 그 사람의 구독이 전부 지워진다.")
+  @Test
+  void forgetAll_clearsEveryDeviceOnWithdrawal() {
+    // given
+    pushSubscriptionService.register(ME, PHONE, "phone-key", "phone-auth");
+    pushSubscriptionService.register(ME, LAPTOP, "laptop-key", "laptop-auth");
+    pushSubscriptionService.register(OTHER, "https://x/other", "key", "auth");
+
+    // when
+    pushSubscriptionService.forgetAll(new UserWithdrawn(ME));
+
+    // then — 남의 것은 그대로다
+    assertThat(endpointsOf(ME)).isEmpty();
+    assertThat(endpointsOf(OTHER)).hasSize(1);
+  }
+
+  /**
+   * <b>배선까지 본다.</b> 위 검사는 리스너를 직접 불러서 「지운다」만 보이는데, 탈퇴가 그 사실을 실제로 발행하지 않으면 운영에서는 아무 일도 일어나지 않는다.
+   *
+   * <p>{@code MANDATORY} 라 탈퇴 트랜잭션에 올라탄다 — 따로 커밋되지 않는다.
+   */
+  @DisplayName("탈퇴 명령이 구독 정리까지 이어진다.")
+  @Test
+  void withdraw_clearsSubscriptions() {
+    // given
+    long userId =
+        aUser()
+            .nickname("탈퇴자" + java.util.UUID.randomUUID().toString().substring(0, 8))
+            .insert(jdbc);
+    pushSubscriptionService.register(userId, PHONE, "key", "auth");
+
+    // when
+    userService.withdraw(userId);
+
+    // then
+    assertThat(endpointsOf(userId)).isEmpty();
   }
 
   private List<PushSubscription> subscriptionsOf(long userId) {

@@ -1,12 +1,15 @@
 package com.duckmoim.notification.service;
 
+import com.duckmoim.identity.domain.UserWithdrawn;
 import com.duckmoim.notification.domain.PushSubscription;
 import com.duckmoim.notification.infra.PushSubscriptionRepository;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
@@ -46,6 +49,24 @@ public class PushSubscriptionService {
   public void unregister(Long userId, String endpoint) {
     pushSubscriptionRepository.deleteByUserIdAndEndpointHash(
         userId, PushSubscription.hash(endpoint));
+  }
+
+  /**
+   * 탈퇴한 사람의 구독을 전부 지운다 (AU-11 · NT-12).
+   *
+   * <p><b>탈퇴와 같은 트랜잭션에서 돈다.</b> {@code MANDATORY} 가 그것을 강제한다 — {@code UserWithdrawn} 의 구독 규약 ①이고,
+   * 탈퇴가 롤백되면 구독도 남아야 하고 커밋되면 구독은 반드시 없어야 한다.
+   *
+   * <p><b>안 지우면 탈퇴한 사람 폰에 알림이 뜬다.</b> 탈퇴는 토큰만 끊고 행은 남기는 소프트 삭제라 (진짜 파기는 AD-05) 그 사람의 옛 댓글에 답글이 달리면
+   * 알림이 그대로 발행된다. 인앱은 로그인이 막혀 아무도 못 보지만 <b>푸시는 로그인 없이 기기에 직접 닿는다.</b>
+   *
+   * <p><b>처리방침 제3조는 탈퇴를 트리거로 적지 않았다.</b> 거기 적힌 것은 보관의 상한이고 우리는 더 짧게 지우므로 어긋나지 않는다. 문면 보완은 담당자에게 넘겼다
+   * (티켓 본문).
+   */
+  @EventListener
+  @Transactional(propagation = Propagation.MANDATORY)
+  public void forgetAll(UserWithdrawn withdrawn) {
+    pushSubscriptionRepository.deleteByUserId(withdrawn.userId());
   }
 
   /**

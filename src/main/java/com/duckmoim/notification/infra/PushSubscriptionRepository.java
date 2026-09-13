@@ -65,4 +65,11 @@ public interface PushSubscriptionRepository extends JpaRepository<PushSubscripti
    * <p>부르는 쪽이 발송 중이라 트랜잭션 밖이다. 지우지 못해도 다음 발송이 같은 답을 받아 다시 지운다.
    */
   int deleteByEndpointHash(String endpointHash);
+
+  /**
+   * 그 사람의 구독 전부를 지운다. 탈퇴가 부르는 자리다.
+   *
+   * <p>{@code idx_push_subscription_user} 가 발송 조회와 함께 이 조건도 받는다 (V808).
+   */
+  int deleteByUserId(Long userId);
 }
