@@ -9,6 +9,7 @@ import com.duckmoim.common.infra.NotificationMuteRepository;
 import com.duckmoim.notification.service.NotificationSettingService;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
+import java.util.EnumSet;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -169,6 +170,45 @@ class NotificationMuteTest {
         .containsExactly(NotificationKind.ROOM_MESSAGED);
     assertThat(notificationSettingService.findMutedKinds(ROOM_MATE))
         .containsExactly(NotificationKind.POST_COMMENTED);
+  }
+
+  /**
+   * <b>이 검사가 없어서 PUT 두 번에 500 이 나는 것을 못 잡았다</b> (PR #148 리뷰).
+   *
+   * <p>기존 검사가 저장소를 직접 부르거나 서비스를 목으로 두어서, <b>{@code replaceMutedKinds} 를 실제로 도는 자리가 하나도 없었다.</b> 그
+   * 메서드의 자바독은 「같은 것을 두 번 보내도 결과가 같다」고 적어 두었는데 검증된 적이 없었다.
+   *
+   * <p>화면에서 토글을 두 번 누르는 가장 흔한 경로다 — 채팅을 끄고, 이어서 댓글도 끈다. 둘째 PUT 이 {@code ROOM_MESSAGED} 를 다시 넣으면서
+   * {@code uq_notification_mute} 에 걸렸다.
+   */
+  @DisplayName("이미 끈 종류가 있어도 다시 저장할 수 있다.")
+  @Test
+  void replaceMutedKinds_keepsWorkingWhenSettingsAlreadyExist() {
+    // given — 1차 PUT. 지울 행이 없어 여기까지는 늘 통과했다
+    notificationSettingService.replaceMutedKinds(ME, EnumSet.of(NotificationKind.ROOM_MESSAGED));
+
+    // when — 2차 PUT. ROOM_MESSAGED 가 그대로 남은 채 POST_COMMENTED 가 는다
+    notificationSettingService.replaceMutedKinds(
+        ME, EnumSet.of(NotificationKind.ROOM_MESSAGED, NotificationKind.POST_COMMENTED));
+
+    // then
+    assertThat(notificationSettingService.findMutedKinds(ME))
+        .containsExactlyInAnyOrder(NotificationKind.ROOM_MESSAGED, NotificationKind.POST_COMMENTED);
+  }
+
+  /** {@code PUT} 이라 들어온 것이 곧 새 상태다. 줄이는 방향이 안 되면 사용자가 켠 것이 꺼진 채로 남는다. */
+  @DisplayName("빈 목록으로 저장하면 끈 것이 없어진다.")
+  @Test
+  void replaceMutedKinds_clearsWhenGivenNothing() {
+    // given
+    notificationSettingService.replaceMutedKinds(
+        ME, EnumSet.of(NotificationKind.ROOM_MESSAGED, NotificationKind.POST_COMMENTED));
+
+    // when
+    notificationSettingService.replaceMutedKinds(ME, EnumSet.noneOf(NotificationKind.class));
+
+    // then
+    assertThat(notificationSettingService.findMutedKinds(ME)).isEmpty();
   }
 
   private void publishAllThree() {

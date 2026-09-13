@@ -5,6 +5,7 @@ import com.duckmoim.common.domain.NotificationMute;
 import java.util.Collection;
 import java.util.List;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -39,6 +40,24 @@ public interface NotificationMuteRepository extends JpaRepository<NotificationMu
    *
    * <p><b>지운 뒤에 다시 넣는 이유는 PUT 이기 때문이다.</b> 무엇이 늘고 줄었는지 따져 부분만 고치면 계산이 하나 더 생기는데, 한 사람의 행이 많아야 종류
    * 수(셋)다.
+   *
+   * <p><b>이름으로 만든 파생 삭제가 아니라 벌크 삭제여야 한다</b> (PR #148 리뷰). 파생 삭제는 읽어서 {@code em.remove} 를 부를 뿐이라 실제
+   * {@code DELETE} 가 flush 까지 미뤄지는데, {@link NotificationMute} 가 {@code IDENTITY} 라 뒤따르는 {@code
+   * save} 의 {@code INSERT} 는 채번하려고 <b>즉시 실행된다.</b> 그래서 이미 끈 종류를 다시 보내면 {@code uq_notification_mute}
+   * 에 부딪힌다.
+   *
+   * <pre>
+   * 1차 PUT  채팅만 끔        지울 행이 없어 통과한다
+   * 2차 PUT  채팅 + 댓글 끔   ROOM_MESSAGED 를 다시 넣다가 Duplicate entry
+   * </pre>
+   *
+   * <p><b>{@code flush()} 를 끼워 넣는 것으로도 되지만 이쪽을 골랐다.</b> 파생 삭제는 {@code SELECT} 한 번에 행마다 {@code
+   * DELETE} 한 번이고, 벌크는 그것을 한 문장으로 준다. 순서를 지키려고 {@code flush} 를 부르는 것보다 <b>애초에 미뤄지지 않는 문장</b>을 쓰는 편이
+   * 다음 사람이 잘못 건드릴 자리도 적다.
+   *
+   * <p>영속성 컨텍스트를 지나치지만 여기서는 문제가 없다 — 부르는 쪽이 이 트랜잭션에서 {@code NotificationMute} 를 읽어 둔 적이 없다.
    */
-  void deleteByUserId(Long userId);
+  @Modifying
+  @Query("delete from NotificationMute m where m.userId = :userId")
+  void deleteByUserId(@Param("userId") Long userId);
 }
