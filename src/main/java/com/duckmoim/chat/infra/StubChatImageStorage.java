@@ -1,6 +1,7 @@
 package com.duckmoim.chat.infra;
 
 import com.duckmoim.chat.domain.ChatImageStorage;
+import com.duckmoim.chat.domain.StoredChatImage;
 import com.duckmoim.chat.domain.UploadedChatImage;
 import java.util.Optional;
 import lombok.extern.slf4j.Slf4j;
@@ -44,6 +45,18 @@ public class StubChatImageStorage {
       @Override
       public boolean delete(String objectKey) {
         return true;
+      }
+
+      /** 올라온 것이 없으니 내려받을 것도 없다. 워커는 대상이 사라진 것으로 보고 넘어간다. */
+      @Override
+      public Optional<StoredChatImage> download(String objectKey) {
+        return Optional.empty();
+      }
+
+      @Override
+      public boolean overwriteIfUnchanged(
+          String objectKey, byte[] bytes, String contentType, String etag) {
+        return false;
       }
     };
   }

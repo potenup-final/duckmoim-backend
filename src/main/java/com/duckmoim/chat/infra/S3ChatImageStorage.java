@@ -1,6 +1,7 @@
 package com.duckmoim.chat.infra;
 
 import com.duckmoim.chat.domain.ChatImageStorage;
+import com.duckmoim.chat.domain.StoredChatImage;
 import com.duckmoim.chat.domain.UploadedChatImage;
 import java.time.Duration;
 import java.util.Optional;
@@ -8,8 +9,12 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.stereotype.Component;
+import software.amazon.awssdk.core.ResponseBytes;
+import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
+import software.amazon.awssdk.services.s3.model.GetObjectRequest;
+import software.amazon.awssdk.services.s3.model.GetObjectResponse;
 import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
 import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
 import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
@@ -131,6 +136,51 @@ public class S3ChatImageStorage implements ChatImageStorage {
     } catch (S3Exception e) {
       log.error("[S3ChatImageStorage.delete] 객체를 지우지 못했다. status={}", e.statusCode(), e);
       return false;
+    }
+  }
+
+  /**
+   * <b>없음만 빈 값이고 나머지 실패는 던진다.</b> {@code findUploaded} 가 권한 부족까지 「없음」으로 접는 것과 갈리는 자리다 — 그쪽은 사용자
+   * 요청이라 400 으로 끝내는 것이 맞지만, 여기는 워커라 <b>일시 장애를 영구 실패로 오인하면 좌표가 남은 사진이 {@code FAILED} 로 굳는다.</b>
+   */
+  @Override
+  public Optional<StoredChatImage> download(String objectKey) {
+    try {
+      ResponseBytes<GetObjectResponse> object =
+          s3Client.getObjectAsBytes(
+              GetObjectRequest.builder().bucket(bucket).key(objectKey).build());
+
+      return Optional.of(
+          new StoredChatImage(
+              object.asByteArray(), object.response().contentType(), object.response().eTag()));
+    } catch (NoSuchKeyException e) {
+      return Optional.empty();
+    }
+  }
+
+  /**
+   * {@code If-Match} 로 조건을 건다. 조건이 거짓이면 S3 가 <b>412</b>, 그 사이 지워졌으면 <b>404</b> 를 준다 — 둘 다 「재시도해도
+   * 소용없음」이라 {@code false} 로 접는다. {@code awssdk 2.29.52} 의 {@code PutObjectRequest#ifMatch} 를 바이트코드로
+   * 확인했다.
+   */
+  @Override
+  public boolean overwriteIfUnchanged(
+      String objectKey, byte[] bytes, String contentType, String etag) {
+    try {
+      s3Client.putObject(
+          PutObjectRequest.builder()
+              .bucket(bucket)
+              .key(objectKey)
+              .contentType(contentType)
+              .ifMatch(etag)
+              .build(),
+          RequestBody.fromBytes(bytes));
+      return true;
+    } catch (S3Exception e) {
+      if (e.statusCode() == 412 || e.statusCode() == 404) {
+        return false;
+      }
+      throw e;
     }
   }
 }
