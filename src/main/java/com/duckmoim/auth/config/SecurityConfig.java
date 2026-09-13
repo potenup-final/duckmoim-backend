@@ -128,6 +128,15 @@ public class SecurityConfig {
     "/api/v1/notifications", "/api/v1/notifications/**"
   };
 
+  // 웹 푸시 구독 (NT-12). 알림이지만 접두어가 다르다.
+  //
+  // **위 NOTIFICATIONS 가 이 경로를 덮지 않는다.** /api/v1/push-subscriptions 는 그 접두어
+  // 밖이라, 여기 적지 않으면 anyRequest 로 떨어져 AUTH 로 열린다 — 가입 미완료 유저가 남의
+  // 기기를 끊을 수 있게 된다. 경로를 두 벌 적는 이유도 위와 같다.
+  private static final String[] PUSH_SUBSCRIPTIONS = {
+    "/api/v1/push-subscriptions", "/api/v1/push-subscriptions/**"
+  };
+
   // 사람이 아니라 기계가 부르는 경로 (API-설계 「2-8. 적재 (Ingest)」 · D-11).
   //
   // ADMIN_ALL 아래에 두지 않은 이유 — 저 줄은 hasAuthority(ADMIN) 하나로 백오피스
@@ -180,6 +189,7 @@ public class SecurityConfig {
               registry.requestMatchers(HttpMethod.DELETE, SIGNUP_WRITE).hasAuthority(SIGNUP);
 
               registry.requestMatchers(NOTIFICATIONS).hasAuthority(SIGNUP);
+              registry.requestMatchers(PUSH_SUBSCRIPTIONS).hasAuthority(SIGNUP);
 
               registry.requestMatchers(ADMIN_ALL).hasAuthority(ADMIN);
               registry.requestMatchers(INGEST_ALL).hasAuthority(MACHINE);

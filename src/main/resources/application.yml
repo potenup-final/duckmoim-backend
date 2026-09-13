@@ -128,6 +128,23 @@ duckmoim:
   #
   # cron 이 아니라 고정 지연이다. 「몇 시에」가 아니라 「얼마나 자주」의 문제라서 마감 배치나
   # 알림 워커와 갈린다. 테스트에서 끄는 방법은 같다 (build.gradle 의 systemProperty).
+  # 웹 푸시 (NT-12 ~ NT-15).
+  #
+  # **비어 있는 것이 정상이다.** 키가 없으면 아무것도 보내지 않는 구현이 떠서 웹 푸시만
+  # 꺼지고 알림함·배지·수신 설정은 그대로 돈다. Redis 팬아웃·채팅 이미지 저장소와 같은
+  # 판단이라 ci-cd.yml 의 필수 시크릿 목록에도 넣지 않았다 — 필수로 두면 시크릿을 등록하기
+  # 전에 머지되는 순간 배포 전체가 멈춘다.
+  #
+  # 대신 기동 로그에 한 줄을 남긴다. 안 남기면 「푸시만 조용히 안 되는 정상 기동」이 된다.
+  #
+  # subject 는 푸시 서비스가 요구하는 연락처다 (mailto: 또는 https:). 형식이 어긋나면
+  # 발송이 400 으로 거절된다.
+  push:
+    vapid:
+      public-key: ${VAPID_PUBLIC_KEY:}
+      private-key: ${VAPID_PRIVATE_KEY:}
+      subject: ${VAPID_SUBJECT:}
+
   chat:
     stream:
       heartbeat-interval-ms: ${CHAT_STREAM_HEARTBEAT_MS:30000}
