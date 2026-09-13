@@ -21,6 +21,7 @@ import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.model.S3Exception;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
+import software.amazon.awssdk.services.s3.presigner.model.GetObjectPresignRequest;
 import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignRequest;
 
 /**
@@ -37,8 +38,9 @@ import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignReques
  * 버킷/*} 이면 {@code chat/} 도 함께 공개된다 — 주소를 저장하지 않아도 <b>추측해서 남의 대화 사진을 볼 수 있다.</b> {@code profile/*} 로
  * 좁혀져 있어야 {@code CH-15} 가 성립한다. 코드로 확인할 수 없어 여기 적어 둔다.
  *
- * <p><b>자격증명을 받지 않는다.</b> SDK 기본 공급자가 EC2 인스턴스 역할을 읽는다. <b>{@code s3:DeleteObject} 가 그 역할에 필요하다</b>
- * — 프로필 이미지는 지운 적이 없어 없을 수 있다.
+ * <p><b>자격증명을 받지 않는다.</b> SDK 기본 공급자가 EC2 인스턴스 역할을 읽는다. <b>{@code s3:DeleteObject} 와 {@code
+ * s3:GetObject} 가 그 역할에 필요하다</b> — 프로필 이미지는 지운 적이 없고 읽기를 공개로 받아서 둘 다 없을 수 있다. 서명은 서명자의 권한을 넘겨주는
+ * 것이라, 역할에 없는 권한은 서명된 주소로도 나가지 않는다.
  */
 @Slf4j
 @Component
@@ -112,6 +114,30 @@ public class S3ChatImageStorage implements ChatImageStorage {
                 .signatureDuration(presignTtl)
                 .putObjectRequest(put)
                 .build())
+        .url()
+        .toString();
+  }
+
+  /**
+   * 볼 수 있는 서명된 주소 (CH-15).
+   *
+   * <p><b>업로드 서명과 갈리는 것이 둘이다.</b> 요청이 {@code GetObject} 이고, 수명이 이 클래스의 {@code presignTtl} 이 아니라
+   * <b>부르는 쪽이 준 값</b>이다 — 파일을 고르고 올리는 시간(업로드)과 화면이 사진을 받는 시간(열람)은 다른 길이이고, 캐시가 남은 수명을 세려면 그 값을 알아야
+   * 한다.
+   *
+   * <p><b>묶는 헤더가 없다.</b> 브라우저의 {@code <img src>} 는 헤더를 붙이지 않는다 — 서명에 헤더를 넣으면 그 태그로는 열리지 않는다. 이 주소가
+   * 허용하는 것은 <b>그 키 하나를 읽는 것</b>뿐이고, 그 범위를 좁히는 것은 헤더가 아니라 TTL 이다.
+   *
+   * <p><b>자격증명이 EC2 인스턴스 역할이라 {@code s3:GetObject} 가 필요하다.</b> 서명은 서명자의 권한을 넘겨주는 것이라, 역할에 없는 권한은 이
+   * 주소로도 나가지 않는다 — 프로필 이미지는 공개 읽기로 받아서 이 권한이 없을 수 있다.
+   */
+  @Override
+  public String presignView(String objectKey, Duration ttl) {
+    GetObjectRequest get = GetObjectRequest.builder().bucket(bucket).key(objectKey).build();
+
+    return presigner
+        .presignGetObject(
+            GetObjectPresignRequest.builder().signatureDuration(ttl).getObjectRequest(get).build())
         .url()
         .toString();
   }

@@ -143,6 +143,41 @@ class S3ChatImageStorageTest {
     assertThat(storage.download("chat/3/gone.jpg")).isEmpty();
   }
 
+  /**
+   * <b>수명이 부르는 쪽이 준 값이다</b> (CH-15). 업로드 서명의 {@code presignTtl}(5분) 과 갈리므로, 다른 값을 줬을 때 그대로 실리는지 본다.
+   *
+   * <p>이 값이 어긋나면 캐시가 세는 남은 수명과 실제 만료가 갈라진다 — 캐시는 아직 절반 남았다고 보는데 S3 는 이미 거절하는 상태가 된다.
+   */
+  @DisplayName("열람 서명의 수명은 부르는 쪽이 준 값이다.")
+  @Test
+  void presignView_usesGivenTtl() {
+    String url = storage.presignView("chat/3/abc.jpg", Duration.ofMinutes(2));
+
+    assertThat(queryValue(url, "X-Amz-Expires")).isEqualTo("120");
+  }
+
+  /**
+   * <b>헤더를 묶지 않는다.</b> 브라우저의 {@code <img src>} 는 헤더를 붙이지 않아서, 서명에 {@code content-type} 같은 것이 들어가면 그
+   * 태그로는 열리지 않는다 — 업로드 서명이 정확히 그 반대다.
+   */
+  @DisplayName("열람 서명은 host 말고 다른 헤더를 묶지 않는다.")
+  @Test
+  void presignView_signsNoExtraHeaders() {
+    String url = storage.presignView("chat/3/abc.jpg", Duration.ofMinutes(5));
+
+    assertThat(signedHeaders(url)).containsExactly("host");
+  }
+
+  private static String queryValue(String url, String name) {
+    return Arrays.stream(URI.create(url).getRawQuery().split("&"))
+        .filter(pair -> pair.startsWith(name + "="))
+        .map(
+            pair ->
+                URLDecoder.decode(pair.substring(pair.indexOf('=') + 1), StandardCharsets.UTF_8))
+        .findFirst()
+        .orElseThrow();
+  }
+
   private static List<String> signedHeaders(String url) {
     String query = URI.create(url).getRawQuery();
 

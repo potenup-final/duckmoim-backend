@@ -1,5 +1,6 @@
 package com.duckmoim.chat.domain;
 
+import java.time.Duration;
 import java.util.Optional;
 
 /**
@@ -16,13 +17,16 @@ import java.util.Optional;
  *
  * <pre>
  * 프로필   presignUpload · findUploaded · publicUrlOf
- * 채팅     presignUpload · findUploaded · delete          (+ CH-15 의 서명된 GET)
- *                                        ▔▔▔▔▔▔
- *              지울 일이 있다 — CH-17 이 고아 객체를 치운다
+ * 채팅     presignUpload · findUploaded · delete · presignView
+ *                                        ▔▔▔▔▔▔   ▔▔▔▔▔▔▔▔▔▔▔
+ *              지울 일이 있다 — CH-17     주소를 저장하지 않아 볼 때마다 만든다 — CH-15
  * </pre>
  *
  * <p><b>{@code publicUrlOf} 가 없는 것이 이 포트의 요점이다.</b> {@code CH-15} 가 「공개 주소를 쓰지 않는다」로 정했으므로 <b>만들 수
  * 있는 메서드를 두지 않는다</b> — 있으면 쓰게 되고, 쓰면 저장된 값 전부가 그 티켓의 마이그레이션 대상이 된다. 합쳤다면 이 메서드를 상속받게 됐다.
+ *
+ * <p><b>{@link #presignView} 가 그 자리를 대신한다.</b> 이름이 갈리는 것이 요점이다 — 공개 주소는 <b>한 번 만들면 영원히 유효</b>하고 서명된
+ * 주소는 <b>발급 시점부터 TTL 만큼만</b> 유효하다. 저장할 수 있는 값과 저장하면 안 되는 값의 차이다.
  *
  * <p>인터페이스와 반환 타입에 프레임워크가 없어 {@code DOMAIN_IS_FRAMEWORK_FREE} 를 지킨다.
  */
@@ -44,6 +48,23 @@ public interface ChatImageStorage {
 
   /** 그 키로 올라간 것이 있으면 메타데이터를, 없으면 빈 값을 준다. 확정 단계의 판정 근거다. */
   Optional<UploadedChatImage> findUploaded(String objectKey);
+
+  /**
+   * 그 키를 <b>볼 수 있는</b> 서명된 주소를 만든다 (CH-15).
+   *
+   * <p><b>권한 판정은 이 포트 밖에서 끝난다.</b> 저장소는 「이 키의 주소를 만들어라」만 안다 — 방 멤버인지, 그 사진이 실린 메시지가 아직 보이는지는 부르는 쪽이
+   * 이미 물었다. 판정을 여기 넣으면 {@code chat.domain} 이 방과 메시지를 알게 되고, 저장소 구현마다 같은 규칙을 두 벌 쓰게 된다.
+   *
+   * <p><b>주소가 밖으로 나가는 것은 결함이 아니라 전제다.</b> 서명 URL 은 키를 담고 있고 화면에 그대로 실린다 — 그래서 <b>수명을 짧게</b> 두는 것이고,
+   * 그것이 검증 기준 「서명 만료 후 원본 주소로 접근 불가」가 성립하는 방식이다. 버킷이 비공개라는 전제 위에서만 성립한다 ({@code application.yml} 의
+   * {@code chat-bucket}).
+   *
+   * <p><b>같은 키에 같은 주소가 나오지 않는다.</b> 서명에 발급 시각이 들어가 부를 때마다 값이 달라진다 — 그 성질 때문에 재사용이 필요하고, 부르는 쪽이
+   * {@code ChatImageViewUrlCache} 로 묶는다.
+   *
+   * @param ttl 이 주소가 유효한 시간. 부르는 쪽이 정한다 — 업로드 서명과 수명이 갈리고, 캐시가 그 값을 알아야 남은 수명을 셀 수 있다
+   */
+  String presignView(String objectKey, Duration ttl);
 
   /**
    * 그 키의 객체를 지운다 (CH-17).
