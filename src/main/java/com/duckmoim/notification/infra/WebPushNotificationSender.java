@@ -68,7 +68,7 @@ public class WebPushNotificationSender implements NotificationPushSender {
    *
    * <p><b>서명·암호화가 실패하면 되돌릴 수 없다.</b> 키 설정이 틀렸거나 구독이 준 키가 깨진 것이라 세 번 더 해도 같다.
    *
-   * <p><b>만료 처리는 아직 없다.</b> NT-14 가 다음 커밋에서 {@link #classify} 에 붙는다.
+   * <p><b>만료면 그 구독을 지우고 성공으로 끝낸다</b> (NT-14).
    */
   private void sendToOne(PushSubscription subscription, String payload) {
     try {
@@ -82,6 +82,11 @@ public class WebPushNotificationSender implements NotificationPushSender {
 
       HttpResponse response = pushService.send(notification, Encoding.AES128GCM);
       int status = response.getStatusLine().getStatusCode();
+
+      if (isGone(status)) {
+        forget(subscription);
+        return;
+      }
 
       if (status >= 300) {
         throw classify(subscription, status);
@@ -112,6 +117,46 @@ public class WebPushNotificationSender implements NotificationPushSender {
    *
    * <p>{@code ERROR} 로 남기는 것은 재시도가 없어 <b>이 한 줄이 유일한 신호</b>이기 때문이다.
    */
+  /**
+   * 그 주소가 더는 없다 (NT-14).
+   *
+   * <pre>
+   * 410 Gone       구독이 만료됐거나 사용자가 브라우저에서 알림을 껐다
+   * 404 Not Found  푸시 서비스가 그 주소를 모른다
+   * </pre>
+   *
+   * <p>둘 다 <b>우리가 고칠 수 있는 실패가 아니고, 다시 보낼 대상도 아니다.</b>
+   */
+  private static boolean isGone(int status) {
+    return status == 404 || status == 410;
+  }
+
+  /**
+   * 만료된 구독을 지운다 (NT-14).
+   *
+   * <p><b>실패가 아니다.</b> 성공으로 끝내지 않으면 이미 전달된 인앱 알림이 시도 횟수를 까먹고, 세 번 겹치면 DLQ 로 간다 — 그 표는 「못 보낸 것」이라는
+   * 뜻이므로 장부가 거짓이 된다 (ADR 0010).
+   *
+   * <p><b>기기가 여럿이면 나머지는 그대로 간다.</b> 하나가 만료됐다고 그 사람의 다른 기기를 건너뛰지 않는다.
+   *
+   * <p>지우다 실패해도 던지지 않는다. 다음 발송이 같은 답을 받아 다시 지운다 — 여기서 던지면 <b>멀쩡히 끝난 발송이 실패로 뒤집힌다.</b>
+   */
+  private void forget(PushSubscription subscription) {
+    try {
+      pushSubscriptionRepository.deleteByEndpointHash(subscription.getEndpointHash());
+
+      log.info(
+          "[WebPushNotificationSender.forget] 만료된 구독을 지웠다. subscriptionId={}",
+          subscription.getId());
+
+    } catch (RuntimeException e) {
+      log.warn(
+          "[WebPushNotificationSender.forget] 만료 구독 정리 실패. subscriptionId={} cause={}",
+          subscription.getId(),
+          e.getClass().getSimpleName());
+    }
+  }
+
   private RuntimeException classify(PushSubscription subscription, int status) {
     if (status == 429 || status >= 500) {
       return new TransientPushException("푸시 서비스가 거절했다. status=" + status, null);

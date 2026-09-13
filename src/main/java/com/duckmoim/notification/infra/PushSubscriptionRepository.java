@@ -56,4 +56,13 @@ public interface PushSubscriptionRepository extends JpaRepository<PushSubscripti
    * <p><b>주인 조건을 함께 건다.</b> 주소만으로 지우면 남의 기기를 끊을 수 있다 — 주소는 비밀이 아니고, 공용 기기를 쓴 사람은 그 값을 본 적이 있다.
    */
   int deleteByUserIdAndEndpointHash(Long userId, String endpointHash);
+
+  /**
+   * 만료된 기기를 지운다 (NT-14).
+   *
+   * <p><b>주인 조건이 없다.</b> 푸시 서비스가 「그 주소는 이제 없다」고 답한 것이라 누구의 것이든 지워야 한다 — 해제(사용자의 명령)와 갈리는 지점이다.
+   *
+   * <p>부르는 쪽이 발송 중이라 트랜잭션 밖이다. 지우지 못해도 다음 발송이 같은 답을 받아 다시 지운다.
+   */
+  int deleteByEndpointHash(String endpointHash);
 }
