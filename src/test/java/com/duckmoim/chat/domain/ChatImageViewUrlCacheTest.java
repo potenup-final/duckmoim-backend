@@ -140,6 +140,17 @@ class ChatImageViewUrlCacheTest {
     public boolean delete(String objectKey) {
       throw new UnsupportedOperationException();
     }
+
+    @Override
+    public Optional<StoredChatImage> download(String objectKey) {
+      throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public boolean overwriteIfUnchanged(
+        String objectKey, byte[] bytes, String contentType, String etag) {
+      throw new UnsupportedOperationException();
+    }
   }
 
   /** 원하는 만큼 앞으로 미는 시계. 경계를 보려고 5분을 실제로 기다릴 수는 없다. */

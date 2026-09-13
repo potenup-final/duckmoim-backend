@@ -13,6 +13,7 @@ import static org.mockito.Mockito.verify;
 
 import com.duckmoim.chat.domain.ChatImageStorage;
 import com.duckmoim.chat.domain.ChatRoom;
+import com.duckmoim.chat.domain.ExifStatus;
 import com.duckmoim.chat.domain.Message;
 import com.duckmoim.chat.domain.UploadedChatImage;
 import com.duckmoim.chat.exception.ChatErrorCode;
@@ -255,6 +256,37 @@ class ChatImageViewServiceTest {
   }
 
   /**
+   * <b>벗기기 전에는 보여주지 않는다</b> (CH-16 · STAR-116 과의 계약).
+   *
+   * <p>사진이 실제로 밖으로 나가는 자리가 이 경로뿐이라, 벗기는 워커가 있어도 이 판정이 없으면 <b>원본이 먼저 나간다.</b> 확정 직후의 사진은 아직 {@code
+   * PENDING} 이고 그 상태로 전송까지 갈 수 있다 — 전송은 EXIF 축을 보지 않기 때문이다.
+   */
+  @DisplayName("EXIF 를 아직 안 벗긴 사진은 서명이 발급되지 않는다.")
+  @Test
+  void viewUrlsOf_dropsImageWithPendingExif() {
+    Long messageId = messageWithUnstrippedImage();
+
+    List<ChatImageView> issued =
+        chatImageViewService.viewUrlsOf(roomId, List.of(messageId), memberId);
+
+    assertThat(issued).isEmpty();
+    verify(storage, times(0)).presignView(anyString(), any());
+  }
+
+  /** 벗기지 못한 사진은 <b>영구히</b> 안 보여준다 — 원본에 무엇이 남았는지 모른다. */
+  @DisplayName("EXIF 제거에 실패한 사진은 영구히 서명이 발급되지 않는다.")
+  @Test
+  void viewUrlsOf_dropsImageWithFailedExif() {
+    Long messageId = messageWithImage();
+    markExif(messageId, ExifStatus.FAILED);
+
+    List<ChatImageView> issued =
+        chatImageViewService.viewUrlsOf(roomId, List.of(messageId), memberId);
+
+    assertThat(issued).isEmpty();
+  }
+
+  /**
    * <b>캐시가 이 경로에 실제로 붙어 있는지 본다.</b>
    *
    * <p>같은 사진을 둘이 열어도 서명은 한 번이다 — 서명이 사람이 아니라 객체에 걸리기 때문이고, 그래서 <b>둘이 같은 주소를 받아 브라우저 캐시가 맞는다.</b>
@@ -277,8 +309,21 @@ class ChatImageViewServiceTest {
     assertThat(signCount.get()).isEqualTo(1);
   }
 
-  /** 업로드 → 확정 → 전송까지 지나야 사진이 메시지에 실린다 (CH-14). 그 상태가 이 경로의 입력이다. */
+  /**
+   * 업로드 → 확정 → 전송까지 지나고 <b>EXIF 까지 벗긴</b> 사진 (CH-14 · CH-16).
+   *
+   * <p>벗기는 것까지 여기서 하는 이유는, 그것이 이 경로가 사진을 <b>내보내는</b> 정상 상태이기 때문이다 — 안 벗긴 상태는 그 자체가 검사 대상이라 {@link
+   * #viewUrlsOf_dropsImageWithPendingExif} 가 따로 본다.
+   */
   private Long messageWithImage() {
+    Long messageId = messageWithUnstrippedImage();
+    markExif(messageId, ExifStatus.STRIPPED);
+
+    return messageId;
+  }
+
+  /** 확정 직후의 사진은 아직 {@code PENDING} 이다 — 전송은 EXIF 축을 보지 않아 그대로 메시지에 실린다. */
+  private Long messageWithUnstrippedImage() {
     given(storage.presignUpload(anyString(), anyString(), anyLong()))
         .willReturn("https://s3.example/put");
     Long imageId = chatImageService.issueUpload(roomId, memberId, JPEG, SMALL).imageId();
@@ -290,6 +335,20 @@ class ChatImageViewServiceTest {
     return chatMessageSendService
         .send(roomId, memberId, newClientId(), "사진 보냄", imageId)
         .messageId();
+  }
+
+  /**
+   * EXIF 축을 원하는 상태로 옮긴다 (CH-16).
+   *
+   * <p>워커를 돌리지 않고 열로 직접 쓴다 — 여기서 보는 것은 벗기는 절차가 아니라 <b>그 결과에 따라 서명이 나가는가</b>이고, 절차 자체는 {@code
+   * ChatImageExifWorkerTest} 가 본다.
+   */
+  private void markExif(Long messageId, ExifStatus status) {
+    jdbcTemplate.update(
+        "UPDATE chat_image SET exif_status = ?"
+            + " WHERE id = (SELECT image_id FROM chat_message WHERE id = ?)",
+        status.name(),
+        messageId);
   }
 
   /** 관리자 경로를 거치지 않고 상태만 만든다. 여기서 보는 것은 블라인드 절차가 아니라 <b>가려진 뒤</b>다. */

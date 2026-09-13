@@ -24,11 +24,21 @@ import org.springframework.transaction.annotation.Transactional;
  * <p><b>공개 주소를 쓰지 않기로 한 결정이 이 서비스를 있게 했다</b> (계획서 8.2 · V704). 주소를 저장해 두면 그것을 아는 누구나 보게 되고, 거기에는
  * <b>방을 나간 사람과 링크가 새어 나간 외부인</b>이 포함된다 (도메인 「가시성과 권한」). 그래서 볼 때마다 자격을 다시 묻고 짧은 수명의 서명을 발급한다.
  *
- * <p><b>묻는 것이 둘이다.</b>
+ * <p><b>묻는 것이 셋이다.</b>
  *
  * <pre>
- * ① 이 방의 현재 멤버인가        I-18 · CH-18. 나가면 그 순간 아니다
- * ② 그 사진이 실린 메시지가 아직 보이는가   CH-12 삭제 · AD-09 블라인드
+ * ① 이 방의 현재 멤버인가                  I-18 · CH-18. 나가면 그 순간 아니다
+ * ② 그 사진이 실린 메시지가 아직 보이는가    CH-12 삭제 · AD-09 블라인드
+ * ③ 그 사진의 EXIF 를 벗겼는가             CH-16. STRIPPED 만 내보낸다
+ * </pre>
+ *
+ * <p><b>③이 없으면 촬영 좌표가 방 멤버에게 나간다</b> (STAR-116 · PR #152 리뷰 ①). 사진이 실제로 밖으로 나가는 자리가 여기뿐이라, 벗기는 워커가
+ * 있어도 이 줄이 없으면 <b>벗기기 전의 원본이 먼저 나간다.</b> 명세가 「개인위치정보를 수집하지 않기로 한 판단을 뒷문으로 되돌리지 않는다」로 막아 둔 자리다.
+ *
+ * <pre>
+ * PENDING    아직 안 보여준다. 워커 한 주기(최대 10초)를 기다린다
+ * STRIPPED   보여준다
+ * FAILED     영구히 안 보여준다 — 원본에 무엇이 남았는지 모른다
  * </pre>
  *
  * <p><b>②가 없으면 지운 사진이 그대로 나간다.</b> 목록은 이미 {@code AuthoredMessage} 에서 보이지 않는 메시지의 {@code imageId} 를
@@ -151,6 +161,7 @@ public class ChatImageViewService {
 
     return chatImageRepository.findAllById(imageIds).stream()
         .filter(image -> image.getRoomId().equals(roomId))
+        .filter(ChatImage::isExifStripped)
         .collect(Collectors.toMap(ChatImage::getId, ChatImage::getObjectKey));
   }
 }
