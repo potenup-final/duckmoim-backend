@@ -79,6 +79,20 @@ class S3ChatImageStorageTest {
     assertThat(signedHeaders(url)).contains("content-type");
   }
 
+  /**
+   * <b>업로드 주소는 한 번만 쓸 수 있다</b> (CH-16 리뷰).
+   *
+   * <p>서명 PUT 주소는 만료 전까지 재사용된다. 이 조건이 빠지면 EXIF 워커가 벗긴 뒤 같은 주소로 원본을 다시 올려 <b>DB 는 STRIPPED 인데 S3 에는
+   * 좌표가 든 파일</b>이 남고, CH-15 가 그것을 믿고 서명한다.
+   */
+  @DisplayName("업로드 서명에 If-None-Match 가 묶여 한 번만 올릴 수 있다.")
+  @Test
+  void presignUpload_signsIfNoneMatch() {
+    String url = storage.presignUpload("chat/3/abc.jpg", "image/jpeg", 204_800L);
+
+    assertThat(signedHeaders(url)).contains("if-none-match");
+  }
+
   // ── 조건부 덮어쓰기 (CH-16) ─────────────────────────────────────────────
 
   /**

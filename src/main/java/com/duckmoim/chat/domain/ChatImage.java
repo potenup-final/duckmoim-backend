@@ -188,6 +188,10 @@ public class ChatImage extends BaseEntity {
    * <p><b>서명 URL 을 발급하는 쪽(CH-15)이 이 값이 참일 때만 발급해야 한다.</b> 전송은 이 값을 기다리지 않고 사진을 싣는다 — 대신 보여주는 쪽이
    * 기다린다. {@code PENDING} 은 「처리 중」이고 {@code FAILED} 는 영구히 거짓이다.
    *
+   * <p><b>이 값이 참이면 저장소의 파일이 다시 바뀌지 않는다.</b> 업로드 서명 주소가 {@code If-None-Match: *} 로 한 번만 쓰이기 때문이다
+   * ({@code S3ChatImageStorage#presignUpload}) — 그 조건이 없던 동안에는 벗긴 뒤 같은 주소로 원본을 다시 올려 이 약속을 거짓으로 만들
+   * 수 있었다.
+   *
    * <p>방 멤버 판정 · 첨부 여부 같은 나머지 조건은 CH-15 의 몫이라 여기 섞지 않는다.
    */
   public boolean isExifStripped() {
