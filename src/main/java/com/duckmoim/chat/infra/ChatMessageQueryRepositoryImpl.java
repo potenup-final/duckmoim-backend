@@ -46,6 +46,15 @@ public class ChatMessageQueryRepositoryImpl implements ChatMessageQueryRepositor
   private static final String SELECT_ONE =
       SELECT_IN_ROOM.replace("WHERE m.roomId = :roomId", "WHERE m.id = :messageId");
 
+  /**
+   * 끊긴 지점부터 따라잡는 질의 (CH-11).
+   *
+   * <p><b>부등호와 정렬이 목록과 반대다.</b> 목록은 최신부터 거슬러 올라가고 이쪽은 앞으로 이어 읽는다. 같은 {@code (room_id, id)} 인덱스를 반대
+   * 방향으로 훑는 것이라 추가 인덱스가 필요하지 않다 ({@code V703__chat_message_status_and_listing_index.sql}).
+   */
+  private static final String AFTER_CURSOR_OLDEST_FIRST =
+      SELECT_IN_ROOM + "   AND m.id > :afterId\n" + " ORDER BY m.id ASC";
+
   @PersistenceContext private EntityManager entityManager;
 
   @Override
@@ -65,6 +74,16 @@ public class ChatMessageQueryRepositoryImpl implements ChatMessageQueryRepositor
 
     // OFFSET 을 쓰지 않는다 (CH-09 의 검증 기준). 한 건을 더 읽어 다음 페이지 유무를 판정한다.
     return typed.setMaxResults(query.size() + 1).getResultList();
+  }
+
+  @Override
+  public List<AuthoredMessage> findAfter(Long roomId, Long afterMessageId, int limit) {
+    return entityManager
+        .createQuery(AFTER_CURSOR_OLDEST_FIRST, AuthoredMessage.class)
+        .setParameter("roomId", roomId)
+        .setParameter("afterId", afterMessageId)
+        .setMaxResults(limit)
+        .getResultList();
   }
 
   @Override
