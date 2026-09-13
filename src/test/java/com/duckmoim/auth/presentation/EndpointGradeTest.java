@@ -176,6 +176,9 @@ class EndpointGradeTest {
           new Endpoint(HttpMethod.POST, "/api/v1/notifications/404404/read", Grade.SIGNUP),
           new Endpoint(HttpMethod.POST, "/api/v1/notifications/read", Grade.SIGNUP),
           new Endpoint(HttpMethod.GET, "/api/v1/notifications/unread-count", Grade.SIGNUP),
+          new Endpoint(HttpMethod.GET, "/api/v1/notifications/settings", Grade.SIGNUP),
+          // 본문 없이 찌른다. 이 표가 보는 것은 「막혔는가」뿐이고 검증 400 은 관문을 지났다는 뜻이다.
+          new Endpoint(HttpMethod.PUT, "/api/v1/notifications/settings", Grade.SIGNUP),
           // 2-7 백오피스
           new Endpoint(HttpMethod.GET, "/api/v1/admin/reports", Grade.ADMIN),
           new Endpoint(HttpMethod.PATCH, "/api/v1/admin/reports/1", Grade.ADMIN),
