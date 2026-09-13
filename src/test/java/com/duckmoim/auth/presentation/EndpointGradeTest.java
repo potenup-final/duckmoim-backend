@@ -146,6 +146,9 @@ class EndpointGradeTest {
           new Endpoint(HttpMethod.GET, "/api/v1/chat-rooms/404404/messages", Grade.SIGNUP),
           new Endpoint(
               HttpMethod.DELETE, "/api/v1/chat-rooms/404404/messages/404404", Grade.SIGNUP),
+          // 읽은 지점 적기 (CH-13). 전송과 같은 SIGNUP_WRITE 줄이다 — 알림 읽음 처리
+          // (NT-09) 가 POST 인 것과 같은 이유로 POST 이고, 같은 배열에 걸린다.
+          new Endpoint(HttpMethod.POST, "/api/v1/chat-rooms/404404/read", Grade.SIGNUP),
           // 퇴장 (CH-04). 전송과 같은 SIGNUP_WRITE 줄이다. 제재 중에도 열리는 것은
           // 등급이 아니라 관문 예외라 SanctionGateTest 가 본다.
           new Endpoint(HttpMethod.DELETE, "/api/v1/chat-rooms/404404/members/me", Grade.SIGNUP),
@@ -184,6 +187,10 @@ class EndpointGradeTest {
           new Endpoint(HttpMethod.GET, "/api/v1/notifications/settings", Grade.SIGNUP),
           // 본문 없이 찌른다. 이 표가 보는 것은 「막혔는가」뿐이고 검증 400 은 관문을 지났다는 뜻이다.
           new Endpoint(HttpMethod.PUT, "/api/v1/notifications/settings", Grade.SIGNUP),
+          // 접두어가 /notifications 밖이라 SecurityConfig 에 따로 등록돼 있다. 그 줄이
+          // 빠지면 anyRequest 로 떨어져 AUTH 로 열리는데, 이 두 행이 그것을 잡는다.
+          new Endpoint(HttpMethod.POST, "/api/v1/push-subscriptions", Grade.SIGNUP),
+          new Endpoint(HttpMethod.DELETE, "/api/v1/push-subscriptions", Grade.SIGNUP),
           // 2-7 백오피스
           new Endpoint(HttpMethod.GET, "/api/v1/admin/reports", Grade.ADMIN),
           new Endpoint(HttpMethod.PATCH, "/api/v1/admin/reports/1", Grade.ADMIN),
