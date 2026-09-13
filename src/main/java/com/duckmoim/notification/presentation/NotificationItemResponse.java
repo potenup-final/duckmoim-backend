@@ -17,8 +17,14 @@ import java.time.ZoneOffset;
  * <p><b>{@code readAt} 이 아니라 {@code read} 다.</b> 화면이 쓰는 것은 「읽었나」 하나이고, 시각은 나중에 되돌아볼 때를 위해 표에만 남는다.
  * boolean 에 {@code is} 를 붙이지 않는 것은 API 컨벤션이다.
  *
- * @param postId 알림을 눌렀을 때 갈 모집글
- * @param commentId 그 모집글에서 가리킬 댓글
+ * <p><b>참조 ID 는 종류마다 다른 칸이 찬다.</b> 댓글 알림은 모집글·댓글이고 채팅 알림은 방·메시지다. 해당 없는 쪽을 빼지 않고 {@code null} 로 내리는
+ * 것은 <b>종류마다 응답 모양이 달라지면 화면이 타입을 둘로 쥐게 되기</b> 때문이다 — 문구를 조립하려면 어차피 {@code kind} 로 먼저 갈라 읽는다
+ * (API-설계.md 「2-10. 알림 (Notification) · 2차」).
+ *
+ * @param postId 알림을 눌렀을 때 갈 모집글. 채팅 알림이면 비어 있다
+ * @param commentId 그 모집글에서 가리킬 댓글. 채팅 알림이면 비어 있다
+ * @param roomId 알림을 눌렀을 때 갈 채팅방. 댓글 알림이면 비어 있다
+ * @param messageId 그 방에서 가리킬 메시지. 댓글 알림이면 비어 있다
  * @param createdAt 저장은 UTC 이고 응답은 KST 오프셋을 포함한다 (API-컨벤션.md 「필드 표기 규칙」)
  */
 public record NotificationItemResponse(
@@ -26,6 +32,8 @@ public record NotificationItemResponse(
     @Schema(description = "알림 종류") NotificationKind kind,
     @Schema(description = "대상 모집글") Long postId,
     @Schema(description = "대상 댓글") Long commentId,
+    @Schema(description = "대상 채팅방") Long roomId,
+    @Schema(description = "대상 메시지") Long messageId,
     @Schema(description = "읽었는지") boolean read,
     @Schema(description = "알림이 생긴 시각") OffsetDateTime createdAt) {
 
@@ -37,6 +45,8 @@ public record NotificationItemResponse(
         view.kind(),
         view.postId(),
         view.commentId(),
+        view.roomId(),
+        view.messageId(),
         view.read(),
         toKst(view.createdAt()));
   }

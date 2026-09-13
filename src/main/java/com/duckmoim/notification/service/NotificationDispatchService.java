@@ -154,21 +154,12 @@ public class NotificationDispatchService {
 
     if (!notificationRepository.existsByOutboxId(outboxId)) {
       notificationRepository.save(
-          Notification.of(
-              outboxId,
-              outbox.getRecipientId(),
-              outbox.getKind(),
-              outbox.getPostId(),
-              outbox.getCommentId()));
+          Notification.of(outboxId, outbox.getRecipientId(), outbox.getKind(), outbox.target()));
     }
 
     return Optional.of(
         new NotificationDelivery(
-            outboxId,
-            outbox.getRecipientId(),
-            outbox.getKind(),
-            outbox.getPostId(),
-            outbox.getCommentId()));
+            outboxId, outbox.getRecipientId(), outbox.getKind(), outbox.target()));
   }
 
   /**
