@@ -21,6 +21,11 @@ import org.springframework.http.HttpStatus;
  * <p><b>그래서 그 문구가 「조회할 수 있습니다」에서 「이용할 수 있습니다」로 바뀌었다</b> (STAR-111). CH-06 이 이 코드를 낼 때는 조회뿐이었지만 이제
  * 전송(CH-07)도 같은 코드로 막힌다 — 메시지를 못 보낸 사람에게 「조회할 수 있습니다」는 사실과 다른 안내다.
  *
+ * <p><b>이미지 네 줄이 다 400 이다</b> (CH-14 · STAR-115). 검증 기준이 「허용 밖 형식·크기 400」 · 「업로드 확인 전 메시지 전송 시
+ * 400」으로 상태를 직접 정했다. <b>없음을 404 로 가르지 않은 것이 그 줄을 따른 결과다</b> — 전송 시점에 「그 번호의 사진이 없다」와 「확인 전이다」와 「남이
+ * 이미 썼다」를 갈라 답하면, 그 번호의 사진이 존재한다는 사실을 알려준다. AU-08 이 <i>"남의 키를 들고 오면 「올린 것이 없다」로 답한다"</i> 로 같은 판단을
+ * 했다.
+ *
  * <p><b>409 가 다섯이다.</b> 다섯 다 「대상은 있는데 지금 그 명령이 성립하지 않는다」 이고, 서로 다른 이름인 이유는 화면이 달리 답해야 하기 때문이다 — 이미
  * 멤버면 초대 버튼을 감추면 되고, 나간 사람이면 다시는 못 부른다는 것을 말해야 하고, 상한이면 방이 꽉 찬 것이라 초대 대상과 무관하고, 읽기 전용이면 입력창 자체를 닫아야
  * 하고, 방장이면 나가기 버튼을 애초에 보이지 않아야 한다.
@@ -44,7 +49,12 @@ public enum ChatErrorCode implements ErrorCode {
   CHAT_MESSAGE_NOT_FOUND(HttpStatus.NOT_FOUND, "메시지를 찾을 수 없습니다."),
   CHAT_MESSAGE_NOT_SENDER(HttpStatus.FORBIDDEN, "보낸 사람만 지울 수 있습니다."),
   CHAT_ROOM_NOT_REPORTED(HttpStatus.FORBIDDEN, "신고가 접수된 방만 열람할 수 있습니다."),
-  CHAT_MESSAGE_NOT_ACTIVE(HttpStatus.CONFLICT, "이미 지워지거나 가려진 메시지입니다.");
+  CHAT_MESSAGE_NOT_ACTIVE(HttpStatus.CONFLICT, "이미 지워지거나 가려진 메시지입니다."),
+  CHAT_MESSAGE_EMPTY(HttpStatus.BAD_REQUEST, "본문과 이미지 중 하나는 있어야 합니다."),
+  CHAT_IMAGE_TYPE_NOT_ALLOWED(HttpStatus.BAD_REQUEST, "허용되지 않는 이미지 형식입니다."),
+  CHAT_IMAGE_TOO_LARGE(HttpStatus.BAD_REQUEST, "이미지 용량이 허용 범위를 넘습니다."),
+  CHAT_IMAGE_NOT_UPLOADED(HttpStatus.BAD_REQUEST, "업로드된 이미지를 찾을 수 없습니다."),
+  CHAT_IMAGE_NOT_CONFIRMED(HttpStatus.BAD_REQUEST, "업로드 확인을 마친 이미지만 보낼 수 있습니다.");
 
   private final HttpStatus status;
   private final String message;

@@ -149,6 +149,16 @@ class EndpointGradeTest {
           // 퇴장 (CH-04). 전송과 같은 SIGNUP_WRITE 줄이다. 제재 중에도 열리는 것은
           // 등급이 아니라 관문 예외라 SanctionGateTest 가 본다.
           new Endpoint(HttpMethod.DELETE, "/api/v1/chat-rooms/404404/members/me", Grade.SIGNUP),
+          // 이미지 업로드 (CH-14). 발급이 POST, 확정이 PUT 이다.
+          //
+          // **PUT 을 SIGNUP_WRITE 에 더한 것이 이 두 줄의 본체다.** 그 전까지 배열에
+          // POST · PATCH · DELETE 만 걸려 있어서 PUT 은 어느 줄에도 안 걸리고
+          // anyRequest().authenticated() 로 떨어졌다 — 가입 미완료 계정에게 열린다.
+          new Endpoint(HttpMethod.POST, "/api/v1/chat-rooms/404404/images", Grade.SIGNUP),
+          new Endpoint(HttpMethod.PUT, "/api/v1/chat-rooms/404404/images/404404", Grade.SIGNUP),
+          // 아직 없는 PUT 경로다. 위 fail-open 이 되돌아오면 여기서 먼저 깨진다 —
+          // 경로가 없어도 등급 판정은 규칙만 보므로, 핸들러를 안 만들고 규칙을 고정한다.
+          new Endpoint(HttpMethod.PUT, "/api/v1/chat-rooms/404404/nothing", Grade.SIGNUP),
           // 아직 없는 경로다. SIGNUP_READ 가 ** 라서 한 칸 더 깊어도 덮인다는 것을 못박는다
           // (PR #131 리뷰). 이 표는 손으로 유지하는 것이라 새 경로를 자동으로 잡아 주지
           // 않고, 그래서 규칙 쪽이 fail-closed 여야 한다 — CH-11 의 스트림, CH-13 의 읽은

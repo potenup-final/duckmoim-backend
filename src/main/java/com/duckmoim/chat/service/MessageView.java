@@ -15,12 +15,18 @@ import java.time.LocalDateTime;
  * <p><b>{@code status} 를 함께 싣는 이유</b> — {@code content} 가 없다는 것만으로는 화면이 「지워졌습니다」를 그릴 근거가 없다. 댓글 응답도
  * 같은 이유로 {@code status} 를 내린다.
  *
+ * <p><b>{@code imageId} 를 함께 내린다</b> (CH-14). <b>주소가 아니라 번호다</b> — {@code CH-15} 가 「공개 주소를 쓰지 않는다.
+ * 조회할 때마다 방 멤버인지 판정한 뒤 짧은 TTL 의 서명을 발급한다」로 정했고 그것은 별 티켓이다. 그래서 <b>그 티켓이 들어올 때까지 사진이 화면에 뜨지 않는다</b>
+ * — 클라이언트가 쓸 주소가 없다. 주소를 지금 내리면 저장된 값 전부가 그 티켓의 마이그레이션 대상이 된다 (계획서 8.2).
+ *
  * @param content 지운 메시지면 null 이다
+ * @param imageId 사진이 없으면 null 이다
  */
 public record MessageView(
     Long messageId,
     Long senderId,
     AuthorDisplay sender,
     String content,
+    Long imageId,
     MessageStatus status,
     LocalDateTime createdAt) {}

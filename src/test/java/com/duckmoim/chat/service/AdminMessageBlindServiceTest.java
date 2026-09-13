@@ -54,7 +54,7 @@ class AdminMessageBlindServiceTest {
     roomId = chatRoomRepository.saveAndFlush(ChatRoom.openFor(postId, HOST_ID)).getId();
     messageId =
         chatMessageRepository
-            .saveAndFlush(Message.send(roomId, HOST_ID, UUID.randomUUID().toString(), "가릴 말"))
+            .saveAndFlush(Message.send(roomId, HOST_ID, UUID.randomUUID().toString(), "가릴 말", null))
             .getId();
   }
 
