@@ -80,7 +80,56 @@ public class WebPushNotificationSender implements NotificationPushSender {
     }
 
     String payload = encode(delivery);
-    subscriptions.forEach(subscription -> sendToOne(subscription, payload));
+    deliverToEach(subscriptions, payload);
+  }
+
+  /**
+   * 기기마다 따로 보내고 결과를 모은다 (PR #157 리뷰).
+   *
+   * <p><b>예외를 밖으로 흘리면 첫 실패가 나머지 기기를 끊는다.</b> 키가 깨진 구독 하나로 그 사람의 폰이 통째로 조용해지고, 아웃박스 행이 DLQ 로 가서
+   * <b>어느 기기로도 못 받는다.</b>
+   *
+   * <p><b>하나라도 닿았으면 던지지 않는다.</b> 던지면 다음 주기가 <b>이미 받은 기기에 또 보낸다</b> — 한 건이 남기는 것은 재시도의 값어치보다 크다.
+   *
+   * <pre>
+   * 성공 하나라도 있다      →  끝낸다. 못 받은 기기는 이번 건을 놓친다
+   * 전부 되돌릴 수 없는 실패 →  끝낸다. 다시 해도 같다
+   * 전부 일시 실패          →  던진다. 그때만 재시도가 값을 한다
+   * </pre>
+   *
+   * <p><b>「되돌릴 수 없는 실패는 바로 DLQ」(ADR 0010)가 여기서 갈린다.</b> 그 결정은 채널이 하나이고 발송이 한 번일 때 쓴 것이라 <b>기기가 여럿인
+   * 경우를 다루지 않는다.</b> 지금 구분은 이렇다.
+   *
+   * <pre>
+   * 본문을 못 만든다        발송 전체의 실패다. 그대로 올라가 DLQ 로 간다
+   * 이 기기가 못 받는다     그 기기만의 실패다. 인앱 알림은 이미 만들어져 있다
+   * </pre>
+   *
+   * <p>후자를 DLQ 로 보내면 <b>사용자가 알림함에서 이미 본 알림이 「못 보낸 것」으로 장부에 남는다.</b>
+   */
+  private void deliverToEach(List<PushSubscription> subscriptions, String payload) {
+    RuntimeException lastTransient = null;
+    boolean anyDelivered = false;
+
+    for (PushSubscription subscription : subscriptions) {
+      try {
+        sendToOne(subscription, payload);
+        anyDelivered = true;
+
+      } catch (PermanentPushException e) {
+        // 그 기기만의 문제다. 나머지는 계속 보낸다.
+        log.warn(
+            "[WebPushNotificationSender.deliverToEach] 이 기기는 건너뛴다. subscriptionId={}",
+            subscription.getId());
+
+      } catch (RuntimeException e) {
+        lastTransient = e;
+      }
+    }
+
+    if (!anyDelivered && lastTransient != null) {
+      throw lastTransient;
+    }
   }
 
   /**
@@ -102,8 +151,8 @@ public class WebPushNotificationSender implements NotificationPushSender {
 
       int status = statusOf(notification);
 
-      if (isGone(status)) {
-        forget(subscription);
+      if (isUnusable(status)) {
+        forget(subscription, status);
         return;
       }
 
@@ -160,17 +209,21 @@ public class WebPushNotificationSender implements NotificationPushSender {
   }
 
   /**
-   * 그 주소가 더는 없다 (NT-14).
+   * 그 구독을 다시 쓸 수 없다 (NT-14 · PR #157 리뷰).
    *
    * <pre>
-   * 410 Gone       구독이 만료됐거나 사용자가 브라우저에서 알림을 껐다
-   * 404 Not Found  푸시 서비스가 그 주소를 모른다
+   * 410 Gone        구독이 만료됐거나 사용자가 브라우저에서 알림을 껐다
+   * 404 Not Found   푸시 서비스가 그 주소를 모른다
+   * 400 Bad Request 그 구독이 준 키로는 본문을 만들 수 없다
    * </pre>
    *
-   * <p>둘 다 <b>우리가 고칠 수 있는 실패가 아니고, 다시 보낼 대상도 아니다.</b>
+   * <p>셋 다 <b>우리가 고칠 수 있는 실패가 아니고, 다시 보낼 대상도 아니다.</b>
+   *
+   * <p><b>{@code 403} 은 여기 없다.</b> 그것은 「구독을 만들 때 쓴 VAPID 키와 지금 서명한 키가 다르다」라서, 우리가 키를 잘못 바꾸면 <b>모든
+   * 구독이 403 을 받는다.</b> 그때 지우면 전 사용자의 구독이 한 주기에 날아가고 되돌릴 수단이 없다 — 죽은 행이 남는 대가를 치르더라도 지우지 않는다.
    */
-  private static boolean isGone(int status) {
-    return status == 404 || status == 410;
+  private static boolean isUnusable(int status) {
+    return status == 400 || status == 404 || status == 410;
   }
 
   /**
@@ -183,13 +236,14 @@ public class WebPushNotificationSender implements NotificationPushSender {
    *
    * <p>지우다 실패해도 던지지 않는다. 다음 발송이 같은 답을 받아 다시 지운다 — 여기서 던지면 <b>멀쩡히 끝난 발송이 실패로 뒤집힌다.</b>
    */
-  private void forget(PushSubscription subscription) {
+  private void forget(PushSubscription subscription, int status) {
     try {
       pushSubscriptionRepository.deleteByEndpointHash(subscription.getEndpointHash());
 
       log.info(
-          "[WebPushNotificationSender.forget] 만료된 구독을 지웠다. subscriptionId={}",
-          subscription.getId());
+          "[WebPushNotificationSender.forget] 못 쓰는 구독을 지웠다. subscriptionId={} status={}",
+          subscription.getId(),
+          status);
 
     } catch (RuntimeException e) {
       log.warn(
@@ -202,6 +256,17 @@ public class WebPushNotificationSender implements NotificationPushSender {
   private RuntimeException classify(PushSubscription subscription, int status) {
     if (status == 429 || status >= 500) {
       return new TransientPushException("푸시 서비스가 거절했다. status=" + status, null);
+    }
+
+    if (status == 403) {
+      // 구독을 만들 때 쓴 키와 지금 서명한 키가 다르다. 한 건의 문제가 아니라 설정의 문제일 수
+      // 있어 크게 남긴다 — 키를 잘못 바꿨다면 전 사용자가 여기로 온다.
+      log.error(
+          "[WebPushNotificationSender.classify] VAPID 키가 구독과 맞지 않는다."
+              + " 설정을 확인한다. subscriptionId={}",
+          subscription.getId());
+
+      return new PermanentPushException("푸시 서명이 구독과 맞지 않는다.");
     }
 
     // 주소를 남기지 않는다. 어느 구독이었는지는 번호로 찾는다.
