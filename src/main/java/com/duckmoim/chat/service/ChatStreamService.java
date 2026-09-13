@@ -5,13 +5,16 @@ import com.duckmoim.chat.infra.ChatFanout;
 import com.duckmoim.chat.infra.ChatFanoutCodec;
 import com.duckmoim.chat.infra.ChatFanoutEvent;
 import com.duckmoim.chat.infra.ChatFanoutSubscription;
+import com.duckmoim.chat.infra.ChatPresence;
 import java.util.ArrayDeque;
 import java.util.List;
 import java.util.Map;
 import java.util.Queue;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -46,6 +49,7 @@ public class ChatStreamService {
   private final ChatRoomMembershipReader chatRoomReader;
   private final ChatFanout chatFanout;
   private final ChatFanoutCodec chatFanoutCodec;
+  private final ChatPresence chatPresence;
   private final ChatStreamHeartbeatExecutor heartbeatExecutor;
   private final ChatStreamReplayReader replayReader;
 
@@ -84,7 +88,8 @@ public class ChatStreamService {
    * 명령이다 — 채팅 티켓이 남의 도메인에 손을 넣어 연결을 끊는 것은 범위를 넘는다. <b>막으려면 제재 실행이 {@link #disconnect} 를 부르거나, 하트비트가
    * 30초마다 멤버·제재를 다시 보면 된다</b> (후자는 연결 수만큼 조회가 는다).
    *
-   * <p>노출은 스트림 타임아웃 30분으로 상한이 있다 — 그 뒤 재연결할 때 관문이 다시 돌아 막힌다.
+   * <p>노출은 스트림 타임아웃 5분으로 상한이 있다 — 그 뒤 재연결할 때 관문이 다시 돌아 막힌다. NT-07 이 접속 판정을 위해 그 값을 30분에서 줄이면서 이쪽
+   * 노출도 함께 짧아졌다 (PR #145 리뷰).
    *
    * <p><b>등록한 뒤로는 던지지 않아야 한다</b> (PR #142 리뷰). 컨트롤러는 <b>이 메서드가 돌려준 손잡이</b>로 {@code onCompletion} ·
    * {@code onTimeout} · {@code onError} 를 거는데, 등록 뒤에 예외가 나가면 그 셋 중 아무것도 안 걸린다 — 연결은 목록에 남고 그것을 뺄 길이
@@ -112,6 +117,12 @@ public class ChatStreamService {
     RoomConnection connection = new RoomConnection(userId, session);
     connections.computeIfAbsent(roomId, room -> new CopyOnWriteArrayList<>()).add(connection);
     Runnable release = () -> remove(roomId, connection);
+
+    // 「보고 있다」를 인스턴스 밖에도 적는다 (NT-07). 이 줄이 없으면 다른 인스턴스에서
+    // 보낸 메시지가 이 사람에게 알림을 만든다 — 화면에는 이미 말풍선이 떠 있는데도.
+    //
+    // 구독이 터져 아래 release 가 돌면 remove 가 되돌린다.
+    chatPresence.enter(roomId, userId);
 
     try {
       subscribeIfFirst(roomId);
@@ -221,8 +232,8 @@ public class ChatStreamService {
    * 20:32  하늘의 메시지 ─ Redis ─▶ blue    ⚠️ 나간 지민에게 계속 흘러간다
    * </pre>
    *
-   * <p>노출은 스트림 타임아웃 30분까지다. 목록 조회는 매 요청 멤버를 보므로 같은 구멍이 없고, <b>스트림만 붙는 순간 한 번 보기 때문에</b> 생긴다 —
-   * {@code I-18} 이 걸린 자리다.
+   * <p>노출은 스트림 타임아웃 5분까지다. 목록 조회는 매 요청 멤버를 보므로 같은 구멍이 없고, <b>스트림만 붙는 순간 한 번 보기 때문에</b> 생긴다 — {@code
+   * I-18} 이 걸린 자리다.
    *
    * <p><b>이미 있는 통로에 얹는다.</b> 메시지가 다니는 그 채널로 「누가 나갔다」를 함께 보낸다. 채널을 따로 파면 방마다 구독이 둘이 되고 그 둘의 수명을 따로
    * 관리해야 한다.
@@ -277,11 +288,29 @@ public class ChatStreamService {
    *
    * <p>그러면 <b>조용한 방의 멀쩡한 연결이 60초마다 끊기고 재연결한다</b> — 하트비트를 넣은 이유가 그대로 무너진다. 이 실패는 예외가 아니라 「반환하지 않는
    * 것」이라 {@code catch} 로도 안 잡히고 로그에도 안 남는다.
+   *
+   * <p><b>접속 갱신도 같은 풀로 넘긴다</b> (NT-07 · PR #145 리뷰). 세션 쓰기만 빼고 이쪽을 이 스레드에 두면 위 논거가 반만 적용된 상태가 된다 —
+   * {@code refresh} 한 번이 Redis 명령 셋이고 명령마다 {@code spring.data.redis.timeout: 1s} 라 방 하나가 최악 3초다.
+   *
+   * <pre>
+   * 방 20개 × 3초  =  한 바퀴 60초
+   *    ① fixedDelay 라 다음 주기가 안 잡히고, 뒤쪽 방은 beat 가 제출조차 안 된다 → ALB 유휴 60초
+   *    ② taskScheduler 풀이 2인데 그중 하나를 60초 물고 있다 → 10초 주기인 알림 워커가 밀린다
+   * </pre>
+   *
+   * <p><b>방 단위로 하나씩 넘긴다.</b> 명령 단위로 쪼개면 {@code zAdd} 보다 낡은 점수 걷어내기가 먼저 돌아 <b>방금 올린 점수를 지운다.</b>
+   *
+   * <p><b>넘기기 전에 명단을 뜬다.</b> {@code room} 은 살아 있는 목록이라 그대로 넘기면 풀에서 읽는 시점의 명단이 되는데, 갱신하려는 것은 <b>이
+   * 주기에 붙어 있던 사람</b>이다.
    */
   public void heartbeat() {
-    connections
-        .values()
-        .forEach(room -> room.forEach(connection -> heartbeatExecutor.beat(connection.session())));
+    connections.forEach(
+        (roomId, room) -> {
+          room.forEach(connection -> heartbeatExecutor.beat(connection.session()));
+
+          Set<Long> viewers = viewerIdsOf(room);
+          heartbeatExecutor.submit(() -> chatPresence.refresh(roomId, viewers));
+        });
   }
 
   /** 이 방에 열려 있는 연결 수. 구독 수명과 퇴장 끊기를 검사할 때 쓴다. */
@@ -350,7 +379,34 @@ public class ChatStreamService {
     // 비었을 때만 지운다. 지우는 사이에 새 연결이 붙으면 computeIfPresent 가 그 목록을 살려 둔다.
     connections.computeIfPresent(
         roomId, (key, remaining) -> remaining.isEmpty() ? null : remaining);
+    leaveIfLastHere(roomId, connection.userId());
     unsubscribeIfEmpty(roomId);
+  }
+
+  /**
+   * 이 인스턴스에 그 사람의 연결이 더 없으면 접속 집합에서도 뺀다 (NT-07).
+   *
+   * <p><b>탭을 둘 열면 연결이 둘이다.</b> 하나를 닫았다고 빼면 남은 탭이 보고 있는데도 알림이 생긴다.
+   *
+   * <p><b>인스턴스가 갈리면 이 판정이 반 걸음 어긋난다.</b> 같은 사람이 blue 와 green 에 하나씩 붙어 있다가 blue 쪽을 닫으면, blue 는 「내게 더
+   * 없다」로 보고 집합에서 빼 버린다. green 의 하트비트가 30초 안에 다시 넣지만 그 사이의 메시지는 알림을 만든다.
+   *
+   * <p>고치려면 연결 수를 사람이 아니라 <b>연결마다</b> 세야 하는데, 그러면 죽은 인스턴스가 남긴 연결을 누가 지울지가 다시 문제가 된다. 어긋나는 방향이
+   * <b>알림이 하나 더 가는 쪽</b>이라 그대로 둔다 — 이 포트가 못 읽었을 때와 같은 방향이다.
+   */
+  private void leaveIfLastHere(Long roomId, Long userId) {
+    boolean stillHere =
+        connections.getOrDefault(roomId, List.of()).stream()
+            .anyMatch(remaining -> remaining.userId().equals(userId));
+
+    if (!stillHere) {
+      chatPresence.leave(roomId, userId);
+    }
+  }
+
+  /** 이 인스턴스가 그 방에 쥐고 있는 사람들. 탭을 둘 열어도 한 사람이다. */
+  private static Set<Long> viewerIdsOf(List<RoomConnection> room) {
+    return room.stream().map(RoomConnection::userId).collect(Collectors.toSet());
   }
 
   private void unsubscribeIfEmpty(Long roomId) {

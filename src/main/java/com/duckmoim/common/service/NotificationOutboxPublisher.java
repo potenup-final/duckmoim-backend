@@ -2,6 +2,7 @@ package com.duckmoim.common.service;
 
 import com.duckmoim.common.domain.NotificationKind;
 import com.duckmoim.common.domain.NotificationOutbox;
+import com.duckmoim.common.domain.NotificationTarget;
 import com.duckmoim.common.infra.NotificationOutboxRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -35,7 +36,11 @@ public class NotificationOutboxPublisher {
    */
   @Transactional(propagation = Propagation.MANDATORY)
   public void postCommented(Long hostId, Long authorId, Long postId, Long commentId) {
-    publish(NotificationKind.POST_COMMENTED, hostId, authorId, postId, commentId);
+    publish(
+        NotificationKind.POST_COMMENTED,
+        hostId,
+        authorId,
+        NotificationTarget.ofComment(postId, commentId));
   }
 
   /**
@@ -46,23 +51,49 @@ public class NotificationOutboxPublisher {
    */
   @Transactional(propagation = Propagation.MANDATORY)
   public void commentReplied(Long parentAuthorId, Long authorId, Long postId, Long commentId) {
-    publish(NotificationKind.COMMENT_REPLIED, parentAuthorId, authorId, postId, commentId);
+    publish(
+        NotificationKind.COMMENT_REPLIED,
+        parentAuthorId,
+        authorId,
+        NotificationTarget.ofComment(postId, commentId));
+  }
+
+  /**
+   * 채팅방에 새 메시지가 있다 (NT-06 · NT-07).
+   *
+   * <p><b>한 사람씩 부른다.</b> 수신자가 여럿이라 목록을 받는 편이 짧아 보이지만, 그러면 「누구를 뺄지」의 규칙이 여기와 부르는 쪽 둘로 갈린다 — 자기 자신은
+   * 아래가 빼고 <b>지금 보고 있는 사람은 부르는 쪽이 뺀다</b> (NT-07). 한쪽만 보고 고치면 다른 쪽이 조용히 남는다.
+   *
+   * <p><b>보고 있는 사람을 여기서 못 거른다.</b> 「보고 있다」는 채팅의 사실이고, {@code common} 이 Chat 을 참조하면 의존이 거꾸로 흐른다
+   * (도메인-모델링.md 「2. 바운디드 컨텍스트」). 수신자를 넣는 쪽이 정한다는 이 클래스의 규칙이 그대로 적용되는 자리다.
+   *
+   * @param recipientId 알림을 받는 사람. 방 멤버 중 보낸 사람과 보고 있는 사람을 뺀 나머지다
+   * @param senderId 메시지를 보낸 사람
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public void roomMessaged(Long recipientId, Long senderId, Long roomId, Long messageId) {
+    publish(
+        NotificationKind.ROOM_MESSAGED,
+        recipientId,
+        senderId,
+        NotificationTarget.ofRoomMessage(roomId, messageId));
   }
 
   /**
    * <b>자기 행동으로 자기에게 알림을 만들지 않는다.</b> 명세에 없어 STAR-118 에서 정했다 — NT-06 이 알림을 넣은 이유로 든 것이 「방장이 댓글을 알
    * 방법이 없다」 인데, 자기가 쓴 댓글은 이미 알고 있다.
    *
-   * <p>판정을 여기 두는 이유는 넣는 쪽이 둘이 되기 때문이다. 채팅 메시지가 붙을 때 같은 규칙을 다시 쓰게 하면 한쪽이 빠뜨린다.
+   * <p>판정을 여기 두는 이유는 넣는 쪽이 둘이기 때문이다. 채팅 메시지가 붙으면서 실제로 둘이 됐고, 규칙을 양쪽에 두었으면 한쪽이 빠뜨렸을 것이다 — 채팅은 수신자가
+   * 여럿이라 보낸 사람이 목록에 그냥 들어 있다.
    */
   private void publish(
-      NotificationKind kind, Long recipientId, Long actorId, Long postId, Long commentId) {
+      NotificationKind kind, Long recipientId, Long actorId, NotificationTarget target) {
 
     // 수신자가 없는 것과 자기 자신인 것을 섞지 않는다. null 은 아래 엔티티가 거른다.
     if (recipientId != null && recipientId.equals(actorId)) {
       return;
     }
 
-    notificationOutboxRepository.save(NotificationOutbox.of(kind, recipientId, postId, commentId));
+    notificationOutboxRepository.save(NotificationOutbox.of(kind, recipientId, target));
   }
 }

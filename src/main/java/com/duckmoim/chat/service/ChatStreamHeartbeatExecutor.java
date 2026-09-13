@@ -48,6 +48,21 @@ public class ChatStreamHeartbeatExecutor implements DisposableBean {
     executor.execute(session::beat);
   }
 
+  /**
+   * 주기 작업에 딸린 그 밖의 느린 일을 같은 풀에서 돌린다 (NT-07 · PR #145 리뷰).
+   *
+   * <p><b>접속 갱신이 이 문으로 들어온다.</b> 그쪽도 <b>부르는 쪽이 스케줄러 스레드</b>이고 <b>안에 든 것이 네트워크 왕복</b>이라, {@link
+   * #beat} 를 여기로 뺀 이유가 글자 그대로 같다 — 방 하나가 Redis 명령 셋을 동기로 보내는데 명령마다 {@code
+   * spring.data.redis.timeout: 1s} 라, Redis 가 느려지면 방 스무 개에 한 바퀴가 60초가 된다.
+   *
+   * <p><b>버려지는 쪽이 안전한 방향이다.</b> 큐가 넘쳐 갱신이 버려지면 그 사람은 「보고 있지 않다」가 되어 <b>알림이 하나 더 생긴다</b> — API-설계.md
+   * 「채팅 알림 (NT-07)」이 <i>"접속 상태를 못 읽으면 알림을 만든다. 억제는 부속이고 알림은 본 기능이라 열리는 쪽으로 실패한다"</i> 로 정한 방향과 같다.
+   * 그래서 {@code DiscardPolicy} 를 그대로 쓴다.
+   */
+  public void submit(Runnable task) {
+    executor.execute(task);
+  }
+
   @Override
   public void destroy() {
     executor.shutdown();

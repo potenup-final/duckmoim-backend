@@ -31,6 +31,7 @@ import org.springframework.test.web.servlet.MockMvc;
 class RedisAbsentTest {
 
   @Autowired private ChatFanout chatFanout;
+  @Autowired private ChatPresence chatPresence;
   @Autowired private MockMvc mockMvc;
   @Autowired private HealthContributorRegistry healthContributorRegistry;
 
@@ -70,5 +71,31 @@ class RedisAbsentTest {
   void healthDoesNotCheckRedis() {
     assertThat(healthContributorRegistry.stream().map(contributor -> contributor.getName()))
         .doesNotContain("redis");
+  }
+
+  /**
+   * <b>억제가 못 읽으면 알림이 생기는 쪽으로 실패한다</b> (NT-07).
+   *
+   * <p>막는 쪽으로 실패하면 그 알림은 <b>재시도도 없이 영영 사라진다.</b> 아웃박스에 행이 안 생겼으니 워커가 다시 볼 것도 없다. 반대로 열어 두면 보고 있던
+   * 사람이 알림을 하나 더 받을 뿐이고, 그 뒤는 「수신자가 없으면 안 만든다」가 아니라 <b>평소의 알림 경로</b>다.
+   *
+   * <p>그래서 여기서 보는 것이 「빈 집합」이다 — 「아무도 안 보고 있다」와 「못 읽었다」가 같은 답이어야 억제만 꺼지고 알림은 산다.
+   */
+  @Test
+  @DisplayName("Redis 가 없어도 접속 조회가 예외 없이 빈 집합을 준다.")
+  void viewersFailsOpen() {
+    assertThat(chatPresence.viewers(42L)).isEmpty();
+  }
+
+  @Test
+  @DisplayName("Redis 가 없어도 접속 기록이 예외를 던지지 않는다.")
+  void presenceWritesSwallowFailure() {
+    // 스트림 열기와 정리가 이 둘을 부른다. 던지면 Redis 장애가 SSE 연결의 500 이 된다.
+    assertThatCode(
+            () -> {
+              chatPresence.enter(42L, 7L);
+              chatPresence.leave(42L, 7L);
+            })
+        .doesNotThrowAnyException();
   }
 }

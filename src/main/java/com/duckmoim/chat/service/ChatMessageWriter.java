@@ -2,15 +2,18 @@ package com.duckmoim.chat.service;
 
 import com.duckmoim.chat.domain.ChatImage;
 import com.duckmoim.chat.domain.ChatRoom;
+import com.duckmoim.chat.domain.ChatRoomMember;
 import com.duckmoim.chat.domain.Message;
 import com.duckmoim.chat.exception.ChatErrorCode;
 import com.duckmoim.chat.infra.ChatImageRepository;
 import com.duckmoim.chat.infra.ChatMessageRepository;
 import com.duckmoim.chat.infra.ChatRoomRepository;
 import com.duckmoim.common.exception.BusinessException;
+import com.duckmoim.common.service.NotificationOutboxPublisher;
 import com.duckmoim.companion.domain.CompanionPost;
 import com.duckmoim.companion.infra.CompanionPostRepository;
 import java.time.Clock;
+import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
@@ -37,6 +40,7 @@ public class ChatMessageWriter {
   private final ChatMessageRepository chatMessageRepository;
   private final ChatImageRepository chatImageRepository;
   private final CompanionPostRepository companionPostRepository;
+  private final NotificationOutboxPublisher notificationOutboxPublisher;
   private final Clock clock;
 
   /**
@@ -49,12 +53,22 @@ public class ChatMessageWriter {
    * <p><b>이미지가 있으면 같은 트랜잭션에서 {@code ATTACHED} 로 바꾼다</b> (CH-14). 이 클래스가 두 표를 쓰게 된 자리다 — 메시지가 커밋되고
    * 이미지가 그대로 {@code CONFIRMED} 로 남으면 <b>고아 정리 배치가 실려 있는 사진을 지운다.</b> 같은 트랜잭션이어야 그 창이 없다.
    *
+   * <p><b>알림 발행이 이 트랜잭션 안이다</b> (NT-01 · I-25). {@code NotificationOutboxPublisher} 가 {@code
+   * MANDATORY} 라 밖에서 부르면 아예 실패한다 — 메시지만 저장되고 알림이 없는 상태를 기계가 막는다.
+   *
+   * @param viewers 지금 그 방을 보고 있는 사람들 (NT-07). <b>이 트랜잭션 밖에서 읽어 넘어온다</b> — 여기서 읽으면 Redis 지연이 DB 커넥션
+   *     점유로 번진다 ({@link ChatMessageSendService})
    * @throws org.springframework.dao.DataIntegrityViolationException 같은 식별자가 동시에 들어와 두 번째가 거부된 경우.
    *     {@link ChatMessageSendService} 가 잡아 기존 건을 돌려준다
    */
   @Transactional
   public SentMessage write(
-      Long roomId, Long senderId, String clientMessageId, String content, Long imageId) {
+      Long roomId,
+      Long senderId,
+      String clientMessageId,
+      String content,
+      Long imageId,
+      Set<Long> viewers) {
 
     ChatRoom room =
         chatRoomRepository
@@ -72,6 +86,8 @@ public class ChatMessageWriter {
         chatMessageRepository.save(
             Message.send(roomId, senderId, clientMessageId, content, imageId));
     chatMessageRepository.flush();
+
+    publishNotifications(room, message, senderId, viewers);
 
     return SentMessage.from(message);
   }
@@ -112,6 +128,28 @@ public class ChatMessageWriter {
       // 읽은 뒤에 고아 정리 배치가 이 사진을 DELETING 으로 못박았다 (PR #147 리뷰).
       throw new BusinessException(ChatErrorCode.CHAT_IMAGE_NOT_CONFIRMED);
     }
+  }
+
+  /**
+   * 방의 다른 멤버에게 알림을 쌓는다 (NT-06 · NT-07).
+   *
+   * <p><b>여기서 빼는 것은 보고 있는 사람뿐이다.</b> 보낸 사람은 {@code NotificationOutboxPublisher} 가 뺀다 — 그 규칙은 댓글 알림과
+   * 공유하는 것이라 한 곳에 있어야 한다.
+   *
+   * <p><b>나간 사람은 {@code currentMembers} 가 거른다</b> (CH-18). 퇴장 행은 남지만 멤버가 아니다.
+   *
+   * <p><b>저장 뒤에 부른다.</b> {@code flush} 가 지나야 메시지 번호가 정해지고, 알림은 그 번호를 가리켜야 한다 (V806).
+   */
+  private void publishNotifications(
+      ChatRoom room, Message message, Long senderId, Set<Long> viewers) {
+
+    room.currentMembers().stream()
+        .map(ChatRoomMember::getUserId)
+        .filter(userId -> !viewers.contains(userId))
+        .forEach(
+            userId ->
+                notificationOutboxPublisher.roomMessaged(
+                    userId, senderId, room.getId(), message.getId()));
   }
 
   /**

@@ -16,6 +16,7 @@ import com.duckmoim.chat.infra.ChatFanout;
 import com.duckmoim.chat.infra.ChatFanoutCodec;
 import com.duckmoim.chat.infra.ChatFanoutEvent;
 import com.duckmoim.chat.infra.ChatFanoutSubscription;
+import com.duckmoim.chat.infra.ChatPresence;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -52,6 +53,7 @@ class ChatStreamOpenFailureTest {
   @Mock private ChatRoomMembershipReader chatRoomReader;
   @Mock private ChatFanout chatFanout;
   @Mock private ChatFanoutCodec chatFanoutCodec;
+  @Mock private ChatPresence chatPresence;
   @Mock private ChatStreamHeartbeatExecutor heartbeatExecutor;
   @Mock private ChatStreamReplayReader replayReader;
   @Mock private ChatFanoutSubscription subscription;
