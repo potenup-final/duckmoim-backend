@@ -73,6 +73,15 @@ public class ChatRoom extends BaseEntity {
   @OneToMany(mappedBy = "room", cascade = CascadeType.ALL)
   private List<ChatRoomMember> members = new ArrayList<>();
 
+  /**
+   * 대화와 사진을 파기한 시각 (CH-19). 아직 파기하지 않았으면 {@code null} 이다.
+   *
+   * <p><b>이것은 방의 상태가 아니다.</b> 클래스 주석이 적은 대로 이 애그리게이트는 상태를 저장하지 않는다 — 쓸 수 있는지는 모집글의 만남시각에서 계산한다
+   * (CH-08). 이 열이 말하는 것은 「이 방에 대해 파기 작업을 끝냈다」는 사실 하나이고, 파기 대상 조회가 끝난 방을 다시 집지 않게 하는 데만 쓴다.
+   */
+  @Column(name = "purged_at")
+  private LocalDateTime purgedAt;
+
   private ChatRoom(Long postId) {
     this.postId = postId;
   }
@@ -174,6 +183,28 @@ public class ChatRoom extends BaseEntity {
     member.leave();
 
     return member;
+  }
+
+  /**
+   * 대화와 사진을 파기했다고 표시한다 (CH-19).
+   *
+   * <p><b>멱등이다.</b> 이미 표시된 방이면 아무것도 하지 않는다 — 파기 배치는 재실행되는 작업이라 같은 방을 두 번 만날 수 있고, 그때 시각을 덮어쓰면 <b>언제
+   * 파기했는지가 마지막 실행 시각으로 밀린다.</b> 개인정보 처리방침이 고지한 기간을 지켰는지 나중에 따질 때 보는 값이 이것이라, 남겨야 하는 것은 처음 파기한 시각이다
+   * ({@code closeForMeetTimePassed} 가 마감 사유를 덮지 않는 것과 같은 자리다).
+   *
+   * <p><b>무엇을 지울지는 여기서 정하지 않는다.</b> 메시지는 이 애그리게이트 밖이고 (도메인-모델링.md 「3.1 경계와 트랜잭션 범위」) 사진은 저장소에 있다. 이
+   * 메서드가 아는 것은 「끝났다」는 사실 하나다.
+   *
+   * @param purgedAtInUtc <b>UTC 기준</b> 파기 시각. 저장된 다른 시각과 같은 기준이어야 한다 ({@code BaseEntity})
+   * @return 이 호출이 실제로 표시했는지. 이미 파기된 방이면 {@code false}
+   */
+  public boolean markPurged(LocalDateTime purgedAtInUtc) {
+    if (purgedAt != null) {
+      return false;
+    }
+
+    purgedAt = purgedAtInUtc;
+    return true;
   }
 
   /**
