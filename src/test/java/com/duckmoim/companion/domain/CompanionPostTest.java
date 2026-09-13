@@ -20,6 +20,9 @@ class CompanionPostTest {
   private static final long STRANGER_ID = 99L;
   private static final LocalDate ENDS_ON = LocalDate.of(2026, 9, 14);
 
+  /** 방장이 마감을 누른 시각. UTC 로 들어와 그대로 남는다 (CH-19). */
+  private static final LocalDateTime CLOSED_AT_UTC = LocalDateTime.of(2026, 9, 13, 1, 0);
+
   private static final MeetPoint MEET_POINT =
       MeetPoint.of("더현대 서울 지하 1층", new BigDecimal("37.5256381"), new BigDecimal("126.9289384"));
 
@@ -200,7 +203,7 @@ class CompanionPostTest {
   @Test
   void editByHost_postIsAlreadyClosed() {
     CompanionPost post = open(kst("2026-09-14T09:00:00+09:00"), null);
-    post.closeByHost(HOST_ID);
+    post.closeByHost(HOST_ID, CLOSED_AT_UTC);
 
     assertThatThrownBy(() -> edit(post, HOST_ID))
         .isInstanceOf(BusinessException.class)
@@ -219,24 +222,26 @@ class CompanionPostTest {
         .isEqualTo(PostErrorCode.POST_NOT_HOST);
   }
 
-  @DisplayName("방장이 마감하면 모집이 완료되고 사유가 직접 마감으로 남는다.")
+  @DisplayName("방장이 마감하면 모집이 완료되고 사유와 마감 시각이 남는다.")
   @Test
   void closeByHost() {
     CompanionPost post = open(kst("2026-09-14T09:00:00+09:00"), null);
 
-    post.closeByHost(HOST_ID);
+    post.closeByHost(HOST_ID, CLOSED_AT_UTC);
 
     assertThat(post.getStatus()).isEqualTo(PostStatus.CLOSED);
     assertThat(post.getClosedReason()).isEqualTo(ClosedReason.MANUAL);
+    // 대화 보관 기간의 기준이 이 값이다 (CH-19).
+    assertThat(post.getClosedAt()).isEqualTo(CLOSED_AT_UTC);
   }
 
   @DisplayName("이미 마감된 모집글은 다시 마감할 수 없다.")
   @Test
   void closeByHost_postIsAlreadyClosed() {
     CompanionPost post = open(kst("2026-09-14T09:00:00+09:00"), null);
-    post.closeByHost(HOST_ID);
+    post.closeByHost(HOST_ID, CLOSED_AT_UTC);
 
-    assertThatThrownBy(() -> post.closeByHost(HOST_ID))
+    assertThatThrownBy(() -> post.closeByHost(HOST_ID, CLOSED_AT_UTC))
         .isInstanceOf(BusinessException.class)
         .extracting(thrown -> ((BusinessException) thrown).getErrorCode())
         .isEqualTo(PostErrorCode.POST_ALREADY_CLOSED);
@@ -247,7 +252,7 @@ class CompanionPostTest {
   void closeByHost_requesterIsNotHost() {
     CompanionPost post = open(kst("2026-09-14T09:00:00+09:00"), null);
 
-    assertThatThrownBy(() -> post.closeByHost(STRANGER_ID))
+    assertThatThrownBy(() -> post.closeByHost(STRANGER_ID, CLOSED_AT_UTC))
         .isInstanceOf(BusinessException.class)
         .extracting(thrown -> ((BusinessException) thrown).getErrorCode())
         .isEqualTo(PostErrorCode.POST_NOT_HOST);
@@ -263,15 +268,15 @@ class CompanionPostTest {
   @Test
   void closeByHost_closedPostReportsStatusBeforeHost() {
     CompanionPost post = open(kst("2026-09-14T09:00:00+09:00"), null);
-    post.closeByHost(HOST_ID);
+    post.closeByHost(HOST_ID, CLOSED_AT_UTC);
 
-    assertThatThrownBy(() -> post.closeByHost(STRANGER_ID))
+    assertThatThrownBy(() -> post.closeByHost(STRANGER_ID, CLOSED_AT_UTC))
         .isInstanceOf(BusinessException.class)
         .extracting(thrown -> ((BusinessException) thrown).getErrorCode())
         .isEqualTo(PostErrorCode.POST_ALREADY_CLOSED);
   }
 
-  @DisplayName("만남시각이 지난 모집글을 닫으면 사유가 만남시각 경과로 남는다.")
+  @DisplayName("만남시각이 지난 모집글을 닫으면 사유가 만남시각 경과로 남고 마감 시각도 남는다.")
   @Test
   void closeForMeetTimePassed() {
     CompanionPost post = open(kst("2026-09-14T09:00:00+09:00"), null);
@@ -281,6 +286,8 @@ class CompanionPostTest {
     assertThat(closed).isTrue();
     assertThat(post.getStatus()).isEqualTo(PostStatus.CLOSED);
     assertThat(post.getClosedReason()).isEqualTo(ClosedReason.MEET_TIME_PASSED);
+    // 배치가 판정에 쓴 시각이 그대로 마감 시각이다 (CH-19).
+    assertThat(post.getClosedAt()).isEqualTo(utc("2026-09-14T00:00:01"));
   }
 
   @DisplayName("만남시각이 남은 모집글은 닫지 않는다.")
@@ -293,6 +300,7 @@ class CompanionPostTest {
     assertThat(closed).isFalse();
     assertThat(post.getStatus()).isEqualTo(PostStatus.OPEN);
     assertThat(post.getClosedReason()).isNull();
+    assertThat(post.getClosedAt()).isNull();
   }
 
   /**
@@ -341,7 +349,7 @@ class CompanionPostTest {
   @Test
   void closeForMeetTimePassed_keepsManualReason() {
     CompanionPost post = open(kst("2026-09-14T09:00:00+09:00"), null);
-    post.closeByHost(HOST_ID);
+    post.closeByHost(HOST_ID, CLOSED_AT_UTC);
 
     boolean closed = post.closeForMeetTimePassed(utc("2026-09-14T00:00:01"));
 

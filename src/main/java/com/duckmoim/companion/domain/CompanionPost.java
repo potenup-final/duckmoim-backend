@@ -79,6 +79,18 @@ public class CompanionPost extends BaseEntity {
   @Column(name = "closed_reason", length = 30)
   private ClosedReason closedReason;
 
+  /**
+   * 마감된 시각. 열린 글은 {@code null} 이다.
+   *
+   * <p><b>저장은 UTC 다</b> ({@code meetAt} 과 같다). 대화 보관 기간의 기준이 이 값이라 (CH-19 — 모집글 마감 후 90일) 시간대가 어긋나면
+   * 파기가 아홉 시간 빨라지거나 늦어진다.
+   *
+   * <p><b>{@code updated_at} 으로 대신하지 않는 이유는 V300 에 적었다.</b> 요약하면 그 열은 「마지막으로 바뀐 시각」이지 「마감된 시각」이
+   * 아니고, 개인정보 처리방침이 고지한 기간을 거기에 매달 수 없다.
+   */
+  @Column(name = "closed_at")
+  private LocalDateTime closedAt;
+
   private CompanionPost(
       Long hostId,
       String title,
@@ -188,12 +200,15 @@ public class CompanionPost extends BaseEntity {
    *
    * <p><b>상태를 권한보다 먼저 본다.</b> {@code Comment} 가 같은 순서다 — 종착 상태에 도달한 리소스는 누가 요청하든 조작 대상이 아니다. 상세 조회가
    * {@code PUBLIC} 이라 (PO-11) 마감 여부는 이미 공개된 사실이고, 409 가 숨겨야 할 것을 알려주지 않는다.
+   *
+   * @param nowInUtc <b>UTC 기준</b> 현재 시각. 마감 시각으로 남아 대화 보관 기간의 기준이 된다 (CH-19). 시각을 스스로 읽지 않는 것은
+   *     {@link #closeForMeetTimePassed} 와 같은 이유다 — 경계가 검증 대상이면 그 값을 밖에서 준다
    */
-  public void closeByHost(Long requesterId) {
+  public void closeByHost(Long requesterId, LocalDateTime nowInUtc) {
     requireOpen();
     requireHost(requesterId);
 
-    closeWith(ClosedReason.MANUAL);
+    closeWith(ClosedReason.MANUAL, nowInUtc);
   }
 
   /**
@@ -217,7 +232,7 @@ public class CompanionPost extends BaseEntity {
       return false;
     }
 
-    closeWith(ClosedReason.MEET_TIME_PASSED);
+    closeWith(ClosedReason.MEET_TIME_PASSED, nowInUtc);
     return true;
   }
 
@@ -228,10 +243,14 @@ public class CompanionPost extends BaseEntity {
    * 도메인-모델링.md 「6. 라이프사이클」의 전이도표에는 그런 칸이 없다.
    *
    * <p>PO-14 배치가 여기에 {@code MEET_TIME_PASSED} 를 넣는다. 그때도 이 메서드를 지나야 전이 규칙이 한 곳에 남는다.
+   *
+   * <p><b>마감 시각도 여기서 함께 박는다</b> (CH-19). 상태 · 사유와 같은 줄이다 — 셋 중 하나라도 따로 두면 마감됐는데 시각이 없는 행이 생기고, 그 행의
+   * 대화는 파기 대상 조회에 걸리지 않아 보관 기간을 넘겨 남는다.
    */
-  private void closeWith(ClosedReason reason) {
+  private void closeWith(ClosedReason reason, LocalDateTime closedAtInUtc) {
     this.status = PostStatus.CLOSED;
     this.closedReason = reason;
+    this.closedAt = closedAtInUtc;
   }
 
   /** 열린 글에만 손댈 수 있다 (PO-06 · PO-07). */
