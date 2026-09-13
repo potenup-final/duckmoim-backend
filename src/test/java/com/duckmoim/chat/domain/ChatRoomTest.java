@@ -38,7 +38,11 @@ class ChatRoomTest {
 
   private static final long POST_ID = 1L;
   private static final long HOST_ID = 7L;
+
   private static final long GUEST_ID = 11L;
+
+  /** 배치가 파기를 끝낸 시각. UTC 로 들어와 그대로 남는다 (CH-19). */
+  private static final LocalDateTime PURGED_AT_UTC = LocalDateTime.of(2026, 9, 13, 19, 20);
 
   @DisplayName("모집글의 방을 열면 그 모집글을 참조한다.")
   @Test
@@ -325,6 +329,34 @@ class ChatRoomTest {
     Clock clock = Clock.fixed(instantOf(meetAtUtc.plusDays(ChatRoom.WRITABLE_WINDOW_DAYS)), KST);
 
     assertThat(room.isWritable(meetAtUtc, clock)).isTrue();
+  }
+
+  @DisplayName("파기하면 그 시각이 방에 남는다.")
+  @Test
+  void markPurged() {
+    ChatRoom room = ChatRoom.openFor(POST_ID, HOST_ID);
+
+    boolean marked = room.markPurged(PURGED_AT_UTC);
+
+    assertThat(marked).isTrue();
+    assertThat(room.getPurgedAt()).isEqualTo(PURGED_AT_UTC);
+  }
+
+  /**
+   * 배치는 재실행되는 작업이라 같은 방을 두 번 만날 수 있다 (CH-19 — 「배치는 멱등」).
+   *
+   * <p>덮어쓰면 「언제 파기했는가」가 마지막 실행 시각으로 밀린다. 처리방침이 고지한 기간을 지켰는지 나중에 따질 때 보는 값이 이것이다.
+   */
+  @DisplayName("이미 파기된 방을 다시 파기해도 처음 파기한 시각이 남는다.")
+  @Test
+  void markPurged_roomIsAlreadyPurged() {
+    ChatRoom room = ChatRoom.openFor(POST_ID, HOST_ID);
+    room.markPurged(PURGED_AT_UTC);
+
+    boolean marked = room.markPurged(PURGED_AT_UTC.plusDays(1));
+
+    assertThat(marked).isFalse();
+    assertThat(room.getPurgedAt()).isEqualTo(PURGED_AT_UTC);
   }
 
   private static Instant instantOf(LocalDateTime dateTime) {

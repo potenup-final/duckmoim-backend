@@ -89,6 +89,52 @@ public interface ChatImageRepository extends JpaRepository<ChatImage, Long> {
       """)
   int deleteClaimed(@Param("id") Long id);
 
+  // ── 보관 기간 파기 (CH-19) ───────────────────────────────────────────────
+
+  /**
+   * 한 방의 사진을 전부 {@code DELETING} 으로 못박는다 (CH-19).
+   *
+   * <p><b>{@link #claimForDeletion} 과 갈리는 것은 {@code ATTACHED} 하나다.</b> 고아 정리는 실려 있는 사진을 건드리면 말풍선이
+   * 없는 객체를 가리키게 되어 제외하지만, 여기는 <b>그 말풍선까지 함께 지우는</b> 일이라 실린 사진이야말로 대상이다.
+   *
+   * <p><b>상태를 목록으로 적는다.</b> {@code claimForDeletion} 과 같은 이유다 — {@code NOT IN} 으로 쓰면 앞으로 생길 상태가 조용히
+   * 포함된다. {@code DELETING} 이 빠진 것은 앞 주기에 저장소 삭제가 실패해 이미 못박힌 행이기 때문이다. 다시 못박을 필요가 없고, 버전만 올리면 그 행을
+   * 읽어 둔 쪽이 애먼 충돌을 본다.
+   *
+   * <p><b>버전을 함께 올린다.</b> 벌크 UPDATE 가 {@code @Version} 을 거치지 않아서, 안 올리면 이 행을 먼저 읽어 둔 전송이 버전 검사를 통과해
+   * {@code DELETING} 을 덮는다. 보관 기간이 지난 방이라 전송이 올 리는 없지만 ({@code CH-08} 이 만남시각 + 7일에 이미 막는다) 근거를 시각이
+   * 아니라 구조에 둔다.
+   *
+   * @return 이번에 못박은 행 수
+   */
+  @Modifying(clearAutomatically = true, flushAutomatically = true)
+  @Query(
+      """
+      UPDATE ChatImage i
+         SET i.status = com.duckmoim.chat.domain.ChatImageStatus.DELETING,
+             i.version = i.version + 1
+       WHERE i.roomId = :roomId
+         AND i.status IN (com.duckmoim.chat.domain.ChatImageStatus.PENDING,
+                          com.duckmoim.chat.domain.ChatImageStatus.CONFIRMED,
+                          com.duckmoim.chat.domain.ChatImageStatus.ATTACHED)
+      """)
+  int claimRoomForPurge(@Param("roomId") Long roomId);
+
+  /**
+   * 그 방에서 못박힌 사진. 저장소에서 지울 대상이다.
+   *
+   * <p>앞 주기에 저장소 삭제가 실패해 {@code DELETING} 으로 남은 행도 함께 온다 — 그래서 위 UPDATE 가 그 상태를 다시 못박지 않아도 된다.
+   */
+  List<ChatImage> findByRoomIdAndStatusOrderByIdAsc(Long roomId, ChatImageStatus status);
+
+  /**
+   * 그 방에 아직 사진 행이 남아 있는가.
+   *
+   * <p>파기를 끝냈다고 표시해도 되는지의 판정이다. 저장소 삭제가 하나라도 실패하면 행이 남고, 그때 표시해 버리면 그 방이 대상 목록에서 빠져 <b>사진이 영영
+   * 남는다.</b>
+   */
+  boolean existsByRoomId(Long roomId);
+
   // ── EXIF 워커 (CH-16) ────────────────────────────────────────────────────
   //
   // ⚠️ 아래는 전부 버전을 올리지 않는다. 워커는 확정 직후, 사용자가 보내는 바로 그 몇 초

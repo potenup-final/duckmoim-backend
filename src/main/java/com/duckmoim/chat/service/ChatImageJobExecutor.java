@@ -10,7 +10,7 @@ import org.springframework.stereotype.Component;
 /**
  * 채팅 이미지 작업을 도는 전용 스레드 (CH-16 · CH-17 리뷰).
  *
- * <p><b>배치 스케줄러({@code taskScheduler})에서 돌리지 않는다.</b> 그쪽은 풀이 2인데 {@code @Scheduled} 가 일곱이고, 그중 하나가
+ * <p><b>배치 스케줄러({@code taskScheduler})에서 돌리지 않는다.</b> 그쪽은 풀이 2인데 {@code @Scheduled} 가 여덟이고, 그중 하나가
  * SSE 하트비트다. 지금까지의 배치는 DB 만 짧게 썼지만 이미지 작업은 <b>한 장마다 S3 에서 최대 10MB 를 받고 올린다.</b>
  *
  * <pre>
@@ -25,8 +25,9 @@ import org.springframework.stereotype.Component;
  *
  * <p><b>{@code @Scheduled} 는 넘기기만 한다.</b> 스케줄러 스레드는 밀리초 만에 풀려 하트비트가 제때 발화한다.
  *
- * <p><b>스레드가 둘인 것은 작업이 둘이라서다</b> — EXIF 워커와 고아 정리. 한 스레드를 나눠 쓰면 새벽 고아 정리(S3 삭제 수천 건)가 그동안 EXIF 처리를
- * 막아 사진이 오래 안 보인다.
+ * <p><b>스레드 수가 곧 작업 수다</b> — EXIF 워커 · 고아 정리 · 보관 기간 파기(CH-19) 셋이다. 한 스레드를 나눠 쓰면 새벽 고아 정리(S3 삭제 수천
+ * 건)가 그동안 EXIF 처리를 막아 사진이 오래 안 보인다. <b>큐가 없어 남는 자리가 없으면 그 회차가 통째로 버려지므로</b> (아래 {@code
+ * setQueueCapacity(0)}), 작업이 늘면 여기도 함께 늘린다 — 새벽 정리와 파기가 같은 시각대에 도는데 자리가 둘이면 셋째가 거부된다.
  *
  * <p><b>같은 작업이 겹치지 않는다.</b> 스프링의 {@code @Scheduled} 는 앞 회차가 끝나야 다음을 부르지만, 여기로 넘기는 순간 그 보장이 사라진다 —
  * 그래서 작업마다 「돌고 있나」를 들고 와 돌고 있으면 이번 회차를 건너뛴다. 쌓아 두지 않는 것은 다음 주기에 어차피 다시 집기 때문이다.
@@ -35,7 +36,7 @@ import org.springframework.stereotype.Component;
 @Component
 public class ChatImageJobExecutor implements DisposableBean {
 
-  private static final int POOL_SIZE = 2;
+  private static final int POOL_SIZE = 3;
 
   /**
    * 종료 때 기다리는 시간. 한 장을 마저 처리할 만큼이다.

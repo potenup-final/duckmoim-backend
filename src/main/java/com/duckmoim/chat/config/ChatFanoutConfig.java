@@ -72,7 +72,7 @@ public class ChatFanoutConfig {
    * <p><b>상한을 두면 그 줄이 큐로 바뀐다.</b> 스레드가 쌓이는 대신 큐가 차고, 큐가 넘치면 {@code CallerRunsPolicy} 가 구독 스레드에서 직접
    * 처리해 <b>받는 속도를 자연히 늦춘다</b> — 버리는 것보다 늦는 편이 채팅에서는 낫다.
    *
-   * <p><b>배치 스케줄러({@code taskScheduler})를 빌려 쓰지 않는다.</b> 그쪽은 풀이 2인데 {@code @Scheduled} 가 일곱이라, 여기서
+   * <p><b>배치 스케줄러({@code taskScheduler})를 빌려 쓰지 않는다.</b> 그쪽은 풀이 2인데 {@code @Scheduled} 가 여덟이라, 여기서
    * 하나를 오래 잡으면 알림 워커가 밀린다.
    */
   private ThreadPoolTaskExecutor fanoutExecutor() {
