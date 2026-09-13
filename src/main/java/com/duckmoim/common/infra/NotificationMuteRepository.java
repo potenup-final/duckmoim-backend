@@ -29,4 +29,16 @@ public interface NotificationMuteRepository extends JpaRepository<NotificationMu
   @Query("select m.userId from NotificationMute m where m.kind = :kind and m.userId in :userIds")
   List<Long> findMutedUserIds(
       @Param("kind") NotificationKind kind, @Param("userIds") Collection<Long> userIds);
+
+  /** 이 사람이 끈 종류 전부. <b>설정 화면</b>이 부르는 자리다. */
+  @Query("select m.kind from NotificationMute m where m.userId = :userId")
+  List<NotificationKind> findMutedKinds(@Param("userId") Long userId);
+
+  /**
+   * 이 사람의 설정을 통째로 지운다. 저장이 「지우고 다시 넣기」라 그 앞단이다.
+   *
+   * <p><b>지운 뒤에 다시 넣는 이유는 PUT 이기 때문이다.</b> 무엇이 늘고 줄었는지 따져 부분만 고치면 계산이 하나 더 생기는데, 한 사람의 행이 많아야 종류
+   * 수(셋)다.
+   */
+  void deleteByUserId(Long userId);
 }

@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.duckmoim.common.domain.NotificationKind;
 import com.duckmoim.common.domain.NotificationMute;
 import com.duckmoim.common.infra.NotificationMuteRepository;
+import com.duckmoim.notification.service.NotificationSettingService;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import java.util.List;
@@ -44,6 +45,7 @@ class NotificationMuteTest {
 
   @Autowired private NotificationOutboxPublisher notificationOutboxPublisher;
   @Autowired private NotificationMuteRepository notificationMuteRepository;
+  @Autowired private NotificationSettingService notificationSettingService;
   @Autowired private JdbcTemplate jdbc;
   @PersistenceContext private EntityManager entityManager;
 
@@ -131,6 +133,42 @@ class NotificationMuteTest {
     // when & then — uq_notification_mute (V807)
     assertThatThrownBy(() -> mute(ME, NotificationKind.ROOM_MESSAGED))
         .isInstanceOf(DataIntegrityViolationException.class);
+  }
+
+  /**
+   * 완료 조건 ②와 ③이 부딪히는 것처럼 읽히는 자리다.
+   *
+   * <p>「끈 종류는 알림함에도 배지에도 안 나타난다」를 <b>새로 안 생긴다</b>로 읽는다. ③이 소급 삭제를 명시적으로 막고 있고, 끊는 자리가 발행 직전인 것도 같은
+   * 방향이다.
+   *
+   * <p><b>워커는 이 설정을 다시 보지 않는다.</b> 아웃박스에 든 것은 「보내기로 이미 정해진 것」이라, 여기 남은 행은 그대로 알림함까지 간다.
+   */
+  @DisplayName("끄기 전에 쌓인 알림은 꺼도 그대로 있다.")
+  @Test
+  void publish_keepsWhatWasAlreadyQueued() {
+    // given
+    notificationOutboxPublisher.postCommented(ME, ACTOR, POST_ID, COMMENT_ID);
+
+    // when
+    mute(ME, NotificationKind.POST_COMMENTED);
+
+    // then — 설정은 앞으로 올 것에만 걸린다
+    assertThat(kindsFor(ME)).containsExactly(NotificationKind.POST_COMMENTED);
+  }
+
+  /** 회원번호가 경로가 아니라 인증 주체에서 오지만, 저장소 조건이 빠지면 남의 설정이 섞인다. */
+  @DisplayName("내 설정만 조회되고 남의 것은 섞이지 않는다.")
+  @Test
+  void findMutedKinds_isScopedToOwner() {
+    // given
+    mute(ME, NotificationKind.ROOM_MESSAGED);
+    mute(ROOM_MATE, NotificationKind.POST_COMMENTED);
+
+    // when & then
+    assertThat(notificationSettingService.findMutedKinds(ME))
+        .containsExactly(NotificationKind.ROOM_MESSAGED);
+    assertThat(notificationSettingService.findMutedKinds(ROOM_MATE))
+        .containsExactly(NotificationKind.POST_COMMENTED);
   }
 
   private void publishAllThree() {
