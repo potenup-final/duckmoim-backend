@@ -6,7 +6,9 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -120,35 +122,51 @@ public class ChatPurgeBatch {
   private ChatPurge purgeUntilDrained(LocalDateTime cutoffInUtc) {
     ChatPurge total = ChatPurge.empty();
 
-    for (int chunks = 0; chunks < MAX_CHUNKS; chunks++) {
-      List<Long> roomIds = chatPurgeService.findPurgeableRooms(cutoffInUtc, batchSize);
-      ChatPurge chunk = purgeChunk(roomIds);
-      total = total.plus(chunk);
+    // 이번 회차에 파기를 끝내지 못한 방. 표시가 안 붙어 다음 청크 조회에 그대로 다시
+    // 나오는데, 같은 회차에서 다시 집어도 저장소는 방금 실패한 그대로다.
+    Set<Long> failed = new HashSet<>();
 
-      // 집은 수로 끊는다. 파기한 수로 끊으면 저장소 삭제가 실패한 주기에 아직 남은 방을
-      // 두고 배치가 끝난다.
-      if (roomIds.size() < batchSize) {
+    for (int chunks = 0; chunks < MAX_CHUNKS; chunks++) {
+      List<Long> picked = chatPurgeService.findPurgeableRooms(cutoffInUtc, batchSize);
+      List<Long> roomIds = picked.stream().filter(roomId -> !failed.contains(roomId)).toList();
+
+      // 집은 것이 전부 이번 회차에 실패한 방이면 더 할 일이 없다. 저장소가 막힌 상태라
+      // 계속 돌아도 같은 방을 MAX_CHUNKS 번 다시 만난다.
+      if (roomIds.isEmpty()) {
+        log.warn(
+            "[ChatPurgeBatch.purgeUntilDrained] 집은 방을 한 곳도 파기하지 못했다 — 저장소 권한을 확인한다." + " picked={}",
+            picked.size());
         return total;
       }
 
-      // 한 청크가 가득 찼는데 하나도 못 지웠으면 저장소가 막힌 것이다. 계속 돌면 파기
-      // 표시가 안 붙은 같은 방을 MAX_CHUNKS 번 다시 집는다.
-      if (chunk.purged() == 0) {
-        log.warn(
-            "[ChatPurgeBatch.purgeUntilDrained] 집었으나 한 방도 파기하지 못했다 — 저장소 권한을 확인한다." + " picked={}",
-            chunk.picked());
+      total = total.plus(purgeChunk(roomIds, failed));
+
+      // 집은 수로 끊는다. 파기한 수로 끊으면 저장소 삭제가 실패한 주기에 아직 남은 방을
+      // 두고 배치가 끝난다.
+      if (picked.size() < batchSize) {
         return total;
       }
     }
 
+    // 상한에 걸려 나간다. 남은 것이 있는데 조용히 끝나면 「어제 다 지웠다」로 읽힌다
+    // ({@code NotificationExpiryBatch} 가 같은 자리에 같은 경고를 둔다).
+    log.warn(
+        "[ChatPurgeBatch.purgeUntilDrained] 청크 상한에 걸렸다 — 남은 방은 다음 주기가 집는다. purged={}",
+        total.purged());
+
     return total;
   }
 
-  private ChatPurge purgeChunk(List<Long> roomIds) {
+  private ChatPurge purgeChunk(List<Long> roomIds, Set<Long> failed) {
     ChatPurge chunk = ChatPurge.empty();
 
     for (Long roomId : roomIds) {
-      chunk = chunk.plus(purgeOne(roomId));
+      ChatPurge room = purgeOne(roomId);
+      chunk = chunk.plus(room);
+
+      if (room.purged() == 0) {
+        failed.add(roomId);
+      }
     }
 
     return chunk;
