@@ -1,16 +1,21 @@
 package com.duckmoim.notification.domain;
 
 import com.duckmoim.common.domain.BaseEntity;
+import com.duckmoim.common.exception.BusinessException;
+import com.duckmoim.notification.exception.NotificationErrorCode;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Objects;
 import lombok.AccessLevel;
 import lombok.Getter;
@@ -32,6 +37,22 @@ import lombok.NoArgsConstructor;
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class PushSubscription extends BaseEntity {
+
+  /**
+   * 보낼 수 있는 푸시 서비스.
+   *
+   * <p>브라우저마다 다르고, 새 서비스가 나오면 여기 더한다. 넓게 열지 않는 이유는 {@link #requireAllowedEndpoint} 에 있다.
+   */
+  private static final List<String> ALLOWED_HOSTS =
+      List.of(
+          // Chrome · Edge · Opera
+          "fcm.googleapis.com",
+          // Firefox
+          "push.services.mozilla.com",
+          // Safari
+          "push.apple.com",
+          // Edge 레거시 (WNS)
+          "notify.windows.com");
 
   @Id
   @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -69,14 +90,59 @@ public class PushSubscription extends BaseEntity {
     this.auth = auth;
   }
 
-  /** 브라우저가 준 구독 하나를 담는다. */
+  /**
+   * 브라우저가 준 구독 하나를 담는다.
+   *
+   * <p><b>저장 경로가 upsert 한 문장이라 이 객체가 그대로 저장되지는 않는다.</b> 그래도 등록이 반드시 여기를 지나게 두는 것은, 주소 검증과 해시 계산이
+   * <b>한 자리에</b> 있어야 하기 때문이다 — 저장할 때와 찾을 때가 갈리면 재등록이 매번 새 행을 만든다.
+   */
   public static PushSubscription of(Long userId, String endpoint, String p256dh, String auth) {
     Objects.requireNonNull(userId, "구독은 주인을 가진다.");
     Objects.requireNonNull(endpoint, "구독은 보낼 주소를 가진다.");
     Objects.requireNonNull(p256dh, "구독은 암호화 키를 가진다.");
     Objects.requireNonNull(auth, "구독은 인증 비밀을 가진다.");
 
+    requireAllowedEndpoint(endpoint);
+
     return new PushSubscription(userId, endpoint, p256dh, auth);
+  }
+
+  /**
+   * 알려진 푸시 서비스의 {@code https} 주소인가 (PR #157 리뷰).
+   *
+   * <p><b>이 값은 브라우저가 만들지만 요청 본문으로 들어온다.</b> 사람이 아무 주소나 적어 보낼 수 있고, 그대로 저장하면 <b>워커가 그 주소로 POST 를
+   * 보낸다.</b>
+   *
+   * <pre>
+   * endpoint: http://169.254.169.254/...   →  서버가 내부 주소를 찌른다
+   *                                            본문은 안 돌아와도 상태 코드가 갈려 스캔이 된다
+   * </pre>
+   *
+   * <p><b>허용 목록이 틀리면 그 브라우저만 조용히 등록이 막힌다.</b> 그래서 거절할 때 호스트를 남긴다 — 빠진 것이 로그에서 드러나야 새 서비스를 더할 수 있다.
+   */
+  private static void requireAllowedEndpoint(String endpoint) {
+    URI uri = parse(endpoint);
+
+    if (!"https".equals(uri.getScheme()) || !isKnownHost(uri.getHost())) {
+      throw new BusinessException(NotificationErrorCode.PUSH_ENDPOINT_NOT_ALLOWED);
+    }
+  }
+
+  private static URI parse(String endpoint) {
+    try {
+      return new URI(endpoint);
+    } catch (URISyntaxException e) {
+      throw new BusinessException(NotificationErrorCode.PUSH_ENDPOINT_NOT_ALLOWED);
+    }
+  }
+
+  private static boolean isKnownHost(String host) {
+    return host != null && ALLOWED_HOSTS.stream().anyMatch(allowed -> matches(host, allowed));
+  }
+
+  /** 접두어가 붙는 서비스가 있어 접미어로 본다. 앞에 점을 두어 {@code evilmozilla.com} 이 걸리지 않게 한다. */
+  private static boolean matches(String host, String allowed) {
+    return host.equals(allowed) || host.endsWith("." + allowed);
   }
 
   /**

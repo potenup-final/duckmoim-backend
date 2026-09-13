@@ -9,6 +9,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import lombok.extern.slf4j.Slf4j;
 import nl.martijndwars.webpush.Encoding;
 import nl.martijndwars.webpush.Notification;
@@ -35,6 +38,23 @@ public class WebPushNotificationSender implements NotificationPushSender {
    * 알림함과 갈리는 지점이고, 푸시는 「지금 불러오는 신호」다.
    */
   private static final int TTL_SECONDS = 86400;
+
+  /**
+   * 한 기기의 발송을 기다릴 시간 (PR #157 리뷰).
+   *
+   * <p><b>없으면 스케줄러가 통째로 멈춘다.</b> 라이브러리의 {@code send} 는 {@code sendAsync(...).get()} 이고 그 {@code
+   * get} 에 타임아웃이 없다 (5.1.2 바이트코드). 응답하지 않는 주소 하나면 그 호출이 영영 돌아오지 않는다.
+   *
+   * <pre>
+   * taskScheduler 풀 = 2          (SchedulingConfig)
+   * @Scheduled 메서드 = 일곱
+   *      ↓
+   * 물린 발송 둘  →  채팅 하트비트 · 이미지 정리 · 마감 배치 · 알림 만료까지 전부 멈춘다
+   * </pre>
+   *
+   * <p>10초로 둔 것은 푸시 서비스가 정상일 때 수백 밀리초에 끝나기 때문이다. 넉넉하되 한 주기(10초)를 크게 넘기지 않는 값이다.
+   */
+  private static final long SEND_TIMEOUT_MILLIS = 10_000;
 
   private final PushService pushService;
   private final PushSubscriptionRepository pushSubscriptionRepository;
@@ -80,8 +100,7 @@ public class WebPushNotificationSender implements NotificationPushSender {
               payload.getBytes(java.nio.charset.StandardCharsets.UTF_8),
               TTL_SECONDS);
 
-      HttpResponse response = pushService.send(notification, Encoding.AES128GCM);
-      int status = response.getStatusLine().getStatusCode();
+      int status = statusOf(notification);
 
       if (isGone(status)) {
         forget(subscription);
@@ -117,6 +136,29 @@ public class WebPushNotificationSender implements NotificationPushSender {
    *
    * <p>{@code ERROR} 로 남기는 것은 재시도가 없어 <b>이 한 줄이 유일한 신호</b>이기 때문이다.
    */
+  /**
+   * 보내고 응답 코드를 받는다. <b>정해진 시간을 넘기면 끊는다</b> (PR #157 리뷰).
+   *
+   * <p><b>{@code send} 를 쓰지 않고 {@code sendAsync} 를 쓰는 이유가 그것이다.</b> 전자는 타임아웃 없는 {@code get()} 이라
+   * 응답하지 않는 주소에 영영 물린다.
+   *
+   * <p><b>물린 요청을 끊는다.</b> {@code cancel} 하지 않으면 타임아웃으로 빠져나온 뒤에도 그 요청이 커넥션을 쥔 채 남는다.
+   */
+  private int statusOf(Notification notification) throws Exception {
+    Future<HttpResponse> pending = pushService.sendAsync(notification, Encoding.AES128GCM);
+
+    try {
+      return pending
+          .get(SEND_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)
+          .getStatusLine()
+          .getStatusCode();
+    } catch (TimeoutException e) {
+      pending.cancel(true);
+
+      throw new TransientPushException("푸시 발송이 시간을 넘겼다.", e);
+    }
+  }
+
   /**
    * 그 주소가 더는 없다 (NT-14).
    *

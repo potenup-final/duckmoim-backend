@@ -15,6 +15,7 @@ import com.duckmoim.notification.domain.PushSubscription;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.security.Security;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import nl.martijndwars.webpush.Encoding;
 import nl.martijndwars.webpush.Notification;
 import nl.martijndwars.webpush.PushService;
@@ -141,7 +142,7 @@ class WebPushExpiryTest {
     sender.send(delivery());
 
     // then
-    then(pushService).should(never()).send(any(Notification.class), any(Encoding.class));
+    then(pushService).should(never()).sendAsync(any(Notification.class), any(Encoding.class));
   }
 
   private void givenOneSubscription() {
@@ -149,9 +150,14 @@ class WebPushExpiryTest {
         .willReturn(List.of(aSubscription()));
   }
 
+  /**
+   * <b>{@code send} 가 아니라 {@code sendAsync} 를 잡는다</b> (PR #157 리뷰).
+   *
+   * <p>전자는 타임아웃 없는 {@code get()} 이라 응답하지 않는 주소에 영영 물린다. 발송기가 그래서 후자를 쓴다.
+   */
   private void givenResponse(int status) throws Exception {
-    given(pushService.send(any(Notification.class), any(Encoding.class)))
-        .willReturn(responseOf(status));
+    given(pushService.sendAsync(any(Notification.class), any(Encoding.class)))
+        .willReturn(CompletableFuture.completedFuture(responseOf(status)));
   }
 
   private static HttpResponse responseOf(int status) {

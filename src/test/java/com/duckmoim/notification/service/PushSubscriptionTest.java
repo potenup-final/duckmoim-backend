@@ -2,14 +2,19 @@ package com.duckmoim.notification.service;
 
 import static com.duckmoim.identity.UserFixture.aUser;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.duckmoim.common.exception.BusinessException;
 import com.duckmoim.identity.domain.UserWithdrawn;
 import com.duckmoim.identity.service.UserService;
 import com.duckmoim.notification.domain.PushSubscription;
+import com.duckmoim.notification.exception.NotificationErrorCode;
 import com.duckmoim.notification.infra.PushSubscriptionRepository;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.transaction.annotation.Transactional;
@@ -32,6 +37,7 @@ class PushSubscriptionTest {
 
   private static final String PHONE = "https://fcm.googleapis.com/fcm/send/phone-token";
   private static final String LAPTOP = "https://updates.push.services.mozilla.com/wpush/v2/laptop";
+  private static final String TABLET = "https://web.push.apple.com/tablet";
 
   @Autowired private PushSubscriptionService pushSubscriptionService;
   @Autowired private PushSubscriptionRepository pushSubscriptionRepository;
@@ -144,7 +150,7 @@ class PushSubscriptionTest {
     // given
     pushSubscriptionService.register(ME, PHONE, "phone-key", "phone-auth");
     pushSubscriptionService.register(ME, LAPTOP, "laptop-key", "laptop-auth");
-    pushSubscriptionService.register(OTHER, "https://x/other", "key", "auth");
+    pushSubscriptionService.register(OTHER, TABLET, "key", "auth");
 
     // when
     pushSubscriptionService.forgetAll(new UserWithdrawn(ME));
@@ -174,6 +180,79 @@ class PushSubscriptionTest {
 
     // then
     assertThat(endpointsOf(userId)).isEmpty();
+  }
+
+  /**
+   * <b>이 값은 브라우저가 만들지만 요청 본문으로 들어온다</b> (PR #157 리뷰).
+   *
+   * <p>막지 않으면 워커가 그 주소로 POST 를 보낸다 — 본문이 안 돌아와도 상태 코드가 갈려 내부 스캔이 된다.
+   */
+  @DisplayName("알려진 푸시 서비스가 아닌 주소는 등록되지 않는다.")
+  @ParameterizedTest(name = "{0}")
+  @ValueSource(
+      strings = {
+        "http://169.254.169.254/latest/meta-data/",
+        "https://169.254.169.254/latest/meta-data/",
+        "http://localhost:8080/actuator",
+        "https://evil.example.com/push",
+        "https://fcm.googleapis.com.evil.example.com/push",
+        "not-a-url"
+      })
+  void register_rejectsUnknownEndpoint(String endpoint) {
+    assertThatThrownBy(() -> pushSubscriptionService.register(ME, endpoint, "key", "auth"))
+        .isInstanceOf(BusinessException.class)
+        .extracting("errorCode")
+        .isEqualTo(NotificationErrorCode.PUSH_ENDPOINT_NOT_ALLOWED);
+  }
+
+  /** {@code https} 가 아니면 안 된다. 알려진 호스트여도 평문으로는 보내지 않는다. */
+  @DisplayName("알려진 호스트여도 https 가 아니면 등록되지 않는다.")
+  @Test
+  void register_requiresHttps() {
+    assertThatThrownBy(
+            () ->
+                pushSubscriptionService.register(
+                    ME, "http://fcm.googleapis.com/fcm/send/x", "key", "auth"))
+        .isInstanceOf(BusinessException.class);
+  }
+
+  /**
+   * 상한이 없으면 증폭 통로가 된다 (PR #157 리뷰).
+   *
+   * <p>구독 하나가 알림 하나마다 HTTP 요청 하나라, 수천 개를 등록해 두면 알림 한 건이 수천 번의 발송이 된다.
+   */
+  @DisplayName("기기 수가 상한을 넘으면 오래된 것부터 밀려난다.")
+  @Test
+  void register_evictsOldestBeyondLimit() {
+    // given — 상한(10)까지 채운다
+    for (int i = 0; i < 10; i++) {
+      pushSubscriptionService.register(ME, "https://fcm.googleapis.com/fcm/send/d" + i, "k", "a");
+    }
+
+    // when
+    pushSubscriptionService.register(ME, "https://fcm.googleapis.com/fcm/send/new", "k", "a");
+
+    // then — 수는 그대로이고 가장 오래된 것이 빠진다
+    assertThat(endpointsOf(ME))
+        .hasSize(10)
+        .doesNotContain("https://fcm.googleapis.com/fcm/send/d0")
+        .contains("https://fcm.googleapis.com/fcm/send/new");
+  }
+
+  /** 재등록은 갱신이라 수가 늘지 않는다. 세면 재등록만 반복해도 멀쩡한 기기가 밀려난다. */
+  @DisplayName("이미 있는 기기를 다시 등록해도 남이 밀려나지 않는다.")
+  @Test
+  void register_doesNotEvictOnRefresh() {
+    // given
+    for (int i = 0; i < 10; i++) {
+      pushSubscriptionService.register(ME, "https://fcm.googleapis.com/fcm/send/d" + i, "k", "a");
+    }
+
+    // when — 가장 최근 기기가 구독을 갱신한다
+    pushSubscriptionService.register(ME, "https://fcm.googleapis.com/fcm/send/d9", "k2", "a2");
+
+    // then
+    assertThat(endpointsOf(ME)).hasSize(10).contains("https://fcm.googleapis.com/fcm/send/d0");
   }
 
   private List<PushSubscription> subscriptionsOf(long userId) {

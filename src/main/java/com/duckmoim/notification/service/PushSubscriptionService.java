@@ -6,6 +6,7 @@ import com.duckmoim.notification.infra.PushSubscriptionRepository;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
@@ -24,6 +25,16 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class PushSubscriptionService {
 
+  /**
+   * 한 사람이 가질 수 있는 기기 수 (PR #157 리뷰).
+   *
+   * <p><b>없으면 증폭 통로가 된다.</b> 구독 하나가 알림 하나마다 HTTP 요청 하나이므로, 수천 개를 등록해 두면 그 사람에게 가는 알림 한 건이 수천 번의 발송이
+   * 되어 배치가 거기서 멈춘다.
+   *
+   * <p>열로 둔 것은 실제로 쓰는 기기가 폰·태블릿·노트북·회사 PC 정도이고, 브라우저를 갈아입을 때마다 새 주소가 나오는 것을 감안한 값이다.
+   */
+  private static final int MAX_DEVICES = 10;
+
   private final PushSubscriptionRepository pushSubscriptionRepository;
   private final Clock clock;
 
@@ -35,8 +46,40 @@ public class PushSubscriptionService {
    */
   @Transactional
   public void register(Long userId, String endpoint, String p256dh, String auth) {
+    // 주소 검증과 해시 계산이 여기를 지난다. 저장은 upsert 한 문장이 하지만, 그 둘이 갈리면
+    // 재등록이 매번 새 행을 만든다.
+    PushSubscription candidate = PushSubscription.of(userId, endpoint, p256dh, auth);
+
+    evictOldestIfFull(userId, candidate.getEndpointHash());
+
     pushSubscriptionRepository.upsert(
-        userId, endpoint, PushSubscription.hash(endpoint), p256dh, auth, nowInUtc());
+        userId,
+        candidate.getEndpoint(),
+        candidate.getEndpointHash(),
+        candidate.getP256dh(),
+        candidate.getAuth(),
+        nowInUtc());
+  }
+
+  /**
+   * 기기 수가 상한을 넘으면 오래된 것부터 버린다 (PR #157 리뷰).
+   *
+   * <p><b>거절하지 않고 버린다.</b> 거절하면 기기를 오래 쓴 사람이 어느 날 알림을 못 켜게 되는데, 그 사람은 무엇이 문제인지 알 길이 없다. 오래된 주소는 대개
+   * 이미 죽은 것이고 (브라우저를 갈아입으면 새 주소가 나온다) 죽은 것은 발송 때 410 으로 정리되지만, 그 정리는 <b>알림이 갈 일이 있어야</b> 돈다.
+   *
+   * <p><b>이미 있는 기기면 아무 일도 하지 않는다.</b> 그때 등록은 갱신이라 수가 늘지 않는다 — 세지 않으면 재등록만 반복해도 멀쩡한 기기가 밀려난다.
+   */
+  private void evictOldestIfFull(Long userId, String endpointHash) {
+    if (pushSubscriptionRepository.existsByEndpointHash(endpointHash)) {
+      return;
+    }
+
+    List<PushSubscription> mine = pushSubscriptionRepository.findByUserIdOrderByIdAsc(userId);
+    int over = mine.size() + 1 - MAX_DEVICES;
+
+    if (over > 0) {
+      pushSubscriptionRepository.deleteAll(mine.subList(0, over));
+    }
   }
 
   /**

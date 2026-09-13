@@ -51,6 +51,16 @@ public interface PushSubscriptionRepository extends JpaRepository<PushSubscripti
   List<PushSubscription> findByUserId(Long userId);
 
   /**
+   * 이 사람의 구독을 오래된 순으로. 상한을 넘겼을 때 <b>앞에서부터</b> 버리려고 쓴다 (PR #157 리뷰).
+   *
+   * <p>거절이 아니라 버리는 쪽을 고른 이유는 {@code PushSubscriptionService} 에 있다.
+   */
+  List<PushSubscription> findByUserIdOrderByIdAsc(Long userId);
+
+  /** 이미 있는 기기인가. 있으면 갱신이라 구독 수가 늘지 않는다. */
+  boolean existsByEndpointHash(String endpointHash);
+
+  /**
    * 이 사람의 그 기기 하나를 끊는다 (NT-12).
    *
    * <p><b>주인 조건을 함께 건다.</b> 주소만으로 지우면 남의 기기를 끊을 수 있다 — 주소는 비밀이 아니고, 공용 기기를 쓴 사람은 그 값을 본 적이 있다.
