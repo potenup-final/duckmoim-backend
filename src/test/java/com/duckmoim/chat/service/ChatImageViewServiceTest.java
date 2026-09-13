@@ -14,13 +14,13 @@ import static org.mockito.Mockito.verify;
 import com.duckmoim.chat.domain.ChatImageStorage;
 import com.duckmoim.chat.domain.ChatRoom;
 import com.duckmoim.chat.domain.Message;
-import com.duckmoim.chat.domain.SignedChatImageUrl;
 import com.duckmoim.chat.domain.UploadedChatImage;
 import com.duckmoim.chat.exception.ChatErrorCode;
 import com.duckmoim.chat.infra.ChatMessageRepository;
 import com.duckmoim.chat.infra.ChatRoomRepository;
 import com.duckmoim.common.exception.BusinessException;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -89,24 +89,59 @@ class ChatImageViewServiceTest {
   /** 주소를 저장해 두지 않기 때문에 이 경로가 사진을 볼 수 있는 유일한 문이다 (계획서 8.2). */
   @DisplayName("방 멤버는 사진을 볼 수 있는 서명된 주소를 받는다.")
   @Test
-  void viewUrlOf_returnsSignedUrlForMember() {
+  void viewUrlsOf_returnsSignedUrlForMember() {
     Long messageId = messageWithImage();
 
-    SignedChatImageUrl signed = chatImageViewService.viewUrlOf(roomId, messageId, memberId);
+    List<ChatImageView> issued =
+        chatImageViewService.viewUrlsOf(roomId, List.of(messageId), memberId);
 
-    assertThat(signed.url()).isEqualTo(VIEW_URL);
-    assertThat(signed.remaining()).isPositive();
+    assertThat(issued).hasSize(1);
+    assertThat(issued.get(0).messageId()).isEqualTo(messageId);
+    assertThat(issued.get(0).signed().url()).isEqualTo(VIEW_URL);
+    assertThat(issued.get(0).signed().remaining()).isPositive();
+  }
+
+  /**
+   * <b>사진 수와 무관하게 요청 하나다</b> (PR #152 리뷰 ③).
+   *
+   * <p>한 장에 요청 하나였을 때 20장짜리 방을 여는 것이 20요청 · 60쿼리였다.
+   *
+   * <p><b>물어본 순서를 지킨다.</b> 저장소가 돌려주는 순서는 질의 계획에 달렸고, 같은 입력에 같은 출력인 편이 디버깅에서 싸다.
+   */
+  @DisplayName("여러 장을 한 번에 발급하고 물어본 순서를 지킨다.")
+  @Test
+  void viewUrlsOf_issuesManyInAskedOrder() {
+    Long first = messageWithImage();
+    Long second = messageWithImage();
+
+    List<ChatImageView> issued =
+        chatImageViewService.viewUrlsOf(roomId, List.of(second, first), memberId);
+
+    assertThat(issued).extracting(ChatImageView::messageId).containsExactly(second, first);
+  }
+
+  /** 같은 번호를 두 번 물어도 한 건이다. 화면이 messageId 로 맞추므로 중복은 붙일 자리가 없다. */
+  @DisplayName("같은 메시지 번호를 두 번 물어도 한 건만 나온다.")
+  @Test
+  void viewUrlsOf_dedupesAskedIds() {
+    Long messageId = messageWithImage();
+
+    List<ChatImageView> issued =
+        chatImageViewService.viewUrlsOf(roomId, List.of(messageId, messageId), memberId);
+
+    assertThat(issued).hasSize(1);
   }
 
   /** 올린 사람만 볼 수 있다면 사진을 보낼 이유가 없다 — 대화에 실린 사진은 그 방 사람들이 보라고 올린 것이다. */
   @DisplayName("보낸 사람이 아닌 방 멤버도 사진을 볼 수 있다.")
   @Test
-  void viewUrlOf_allowsOtherMembers() {
+  void viewUrlsOf_allowsOtherMembers() {
     Long messageId = messageWithImage();
 
-    SignedChatImageUrl signed = chatImageViewService.viewUrlOf(roomId, messageId, hostId);
+    List<ChatImageView> issued =
+        chatImageViewService.viewUrlsOf(roomId, List.of(messageId), hostId);
 
-    assertThat(signed.url()).isEqualTo(VIEW_URL);
+    assertThat(issued).singleElement().extracting(view -> view.signed().url()).isEqualTo(VIEW_URL);
   }
 
   /**
@@ -116,10 +151,11 @@ class ChatImageViewServiceTest {
    */
   @DisplayName("방 멤버가 아니면 서명이 발급되지 않는다.")
   @Test
-  void viewUrlOf_rejectsNonMember() {
+  void viewUrlsOf_rejectsNonMember() {
     Long messageId = messageWithImage();
 
-    assertThatThrownBy(() -> chatImageViewService.viewUrlOf(roomId, messageId, strangerId))
+    assertThatThrownBy(
+            () -> chatImageViewService.viewUrlsOf(roomId, List.of(messageId), strangerId))
         .isInstanceOf(BusinessException.class)
         .extracting("errorCode")
         .isEqualTo(ChatErrorCode.CHAT_ROOM_ACCESS_DENIED);
@@ -130,11 +166,11 @@ class ChatImageViewServiceTest {
   /** <b>검증 기준의 둘째 얼굴이다</b> (CH-18). 나가면 그 순간 멤버가 아니고, 이미 받아 둔 주소는 수명이 다하면 끊긴다. */
   @DisplayName("방을 나간 사람에게는 서명이 발급되지 않는다.")
   @Test
-  void viewUrlOf_rejectsLeftMember() {
+  void viewUrlsOf_rejectsLeftMember() {
     Long messageId = messageWithImage();
     chatRoomLeaveService.leave(roomId, leaverId);
 
-    assertThatThrownBy(() -> chatImageViewService.viewUrlOf(roomId, messageId, leaverId))
+    assertThatThrownBy(() -> chatImageViewService.viewUrlsOf(roomId, List.of(messageId), leaverId))
         .isInstanceOf(BusinessException.class)
         .extracting("errorCode")
         .isEqualTo(ChatErrorCode.CHAT_ROOM_ACCESS_DENIED);
@@ -142,10 +178,11 @@ class ChatImageViewServiceTest {
 
   @DisplayName("없는 방으로 물으면 404 다.")
   @Test
-  void viewUrlOf_rejectsMissingRoom() {
+  void viewUrlsOf_rejectsMissingRoom() {
     Long messageId = messageWithImage();
 
-    assertThatThrownBy(() -> chatImageViewService.viewUrlOf(404_404L, messageId, memberId))
+    assertThatThrownBy(
+            () -> chatImageViewService.viewUrlsOf(404_404L, List.of(messageId), memberId))
         .isInstanceOf(BusinessException.class)
         .extracting("errorCode")
         .isEqualTo(ChatErrorCode.CHAT_ROOM_NOT_FOUND);
@@ -155,70 +192,66 @@ class ChatImageViewServiceTest {
    * <b>목록에서만 사라지고 사진은 계속 보이는 상태를 막는다</b> (CH-12).
    *
    * <p>{@code imageId} 를 이미 받아 둔 클라이언트는 삭제 뒤에도 그 번호를 쥐고 있다 — 이 경로가 메시지 상태를 안 보면 지운 사진이 그대로 나간다.
+   *
+   * <p><b>함께 물은 멀쩡한 사진은 그대로 나간다.</b> 목록을 그리는 중에 남이 자기 사진을 지우는 것은 정상적인 일이고, 그때 요청 전체를 거절하면 화면이 사진 없이
+   * 뜬다.
    */
-  @DisplayName("지운 메시지의 사진에는 서명이 발급되지 않는다.")
+  @DisplayName("지운 메시지의 사진은 응답에서 빠지고 나머지는 나온다.")
   @Test
-  void viewUrlOf_rejectsDeletedMessage() {
-    Long messageId = messageWithImage();
-    chatMessageDeleteService.delete(roomId, messageId, memberId);
+  void viewUrlsOf_dropsDeletedMessage() {
+    Long deleted = messageWithImage();
+    Long alive = messageWithImage();
+    chatMessageDeleteService.delete(roomId, deleted, memberId);
 
-    assertThatThrownBy(() -> chatImageViewService.viewUrlOf(roomId, messageId, memberId))
-        .isInstanceOf(BusinessException.class)
-        .extracting("errorCode")
-        .isEqualTo(ChatErrorCode.CHAT_MESSAGE_NOT_FOUND);
+    List<ChatImageView> issued =
+        chatImageViewService.viewUrlsOf(roomId, List.of(deleted, alive), memberId);
+
+    assertThat(issued).extracting(ChatImageView::messageId).containsExactly(alive);
   }
 
   /** 블라인드는 운영이 가린 것이라 더더욱 보이면 안 된다 (AD-09). 삭제와 같은 판정 하나로 막힌다. */
-  @DisplayName("블라인드된 메시지의 사진에는 서명이 발급되지 않는다.")
+  @DisplayName("블라인드된 메시지의 사진은 응답에서 빠진다.")
   @Test
-  void viewUrlOf_rejectsBlindedMessage() {
+  void viewUrlsOf_dropsBlindedMessage() {
     Long messageId = messageWithImage();
     blind(messageId);
 
-    assertThatThrownBy(() -> chatImageViewService.viewUrlOf(roomId, messageId, memberId))
-        .isInstanceOf(BusinessException.class)
-        .extracting("errorCode")
-        .isEqualTo(ChatErrorCode.CHAT_MESSAGE_NOT_FOUND);
+    List<ChatImageView> issued =
+        chatImageViewService.viewUrlsOf(roomId, List.of(messageId), memberId);
+
+    assertThat(issued).isEmpty();
+    verify(storage, times(0)).presignView(anyString(), any());
   }
 
   /**
    * <b>내가 멤버인 방의 번호를 붙여 남의 방 사진을 보는 것을 막는다.</b>
    *
-   * <p>경로가 방 번호와 메시지 번호를 따로 주므로 대조하지 않으면 방 멤버 판정이 아무 일도 하지 않게 된다 — {@code ChatMessageDeleteService}
+   * <p>요청이 방 번호와 메시지 번호를 따로 주므로 대조하지 않으면 방 멤버 판정이 아무 일도 하지 않게 된다 — {@code ChatMessageDeleteService}
    * 가 같은 이유로 같은 대조를 한다.
    */
-  @DisplayName("다른 방의 메시지 번호로 물으면 404 다.")
+  @DisplayName("다른 방의 메시지 번호는 응답에서 빠진다.")
   @Test
-  void viewUrlOf_rejectsMessageFromAnotherRoom() {
+  void viewUrlsOf_dropsMessageFromAnotherRoom() {
     Long messageId = messageWithImage();
     long otherRoomId = otherRoomOf(strangerId);
 
-    assertThatThrownBy(() -> chatImageViewService.viewUrlOf(otherRoomId, messageId, strangerId))
-        .isInstanceOf(BusinessException.class)
-        .extracting("errorCode")
-        .isEqualTo(ChatErrorCode.CHAT_MESSAGE_NOT_FOUND);
+    List<ChatImageView> issued =
+        chatImageViewService.viewUrlsOf(otherRoomId, List.of(messageId), strangerId);
+
+    assertThat(issued).isEmpty();
   }
 
   /** 사진 없는 메시지와 없는 메시지가 같은 답이다 — 갈라서 답하면 그 번호가 존재한다는 사실이 새어 나간다. */
-  @DisplayName("사진이 없는 메시지로 물으면 404 다.")
+  @DisplayName("사진이 없는 메시지와 없는 메시지가 똑같이 빠진다.")
   @Test
-  void viewUrlOf_rejectsMessageWithoutImage() {
-    Long messageId =
+  void viewUrlsOf_dropsMessageWithoutImage() {
+    Long noImage =
         chatMessageSendService.send(roomId, memberId, newClientId(), "사진 없음", null).messageId();
 
-    assertThatThrownBy(() -> chatImageViewService.viewUrlOf(roomId, messageId, memberId))
-        .isInstanceOf(BusinessException.class)
-        .extracting("errorCode")
-        .isEqualTo(ChatErrorCode.CHAT_MESSAGE_NOT_FOUND);
-  }
+    List<ChatImageView> issued =
+        chatImageViewService.viewUrlsOf(roomId, List.of(noImage, 404_404L), memberId);
 
-  @DisplayName("없는 메시지 번호로 물으면 404 다.")
-  @Test
-  void viewUrlOf_rejectsMissingMessage() {
-    assertThatThrownBy(() -> chatImageViewService.viewUrlOf(roomId, 404_404L, memberId))
-        .isInstanceOf(BusinessException.class)
-        .extracting("errorCode")
-        .isEqualTo(ChatErrorCode.CHAT_MESSAGE_NOT_FOUND);
+    assertThat(issued).isEmpty();
   }
 
   /**
@@ -229,14 +262,16 @@ class ChatImageViewServiceTest {
    */
   @DisplayName("같은 사진을 여럿이 열어도 서명은 한 번만 만든다.")
   @Test
-  void viewUrlOf_signsOncePerObject() {
+  void viewUrlsOf_signsOncePerObject() {
     AtomicInteger signCount = new AtomicInteger();
     given(storage.presignView(anyString(), any()))
         .willAnswer(call -> VIEW_URL + "?sig=" + signCount.incrementAndGet());
     Long messageId = messageWithImage();
 
-    String first = chatImageViewService.viewUrlOf(roomId, messageId, memberId).url();
-    String second = chatImageViewService.viewUrlOf(roomId, messageId, hostId).url();
+    String first =
+        chatImageViewService.viewUrlsOf(roomId, List.of(messageId), memberId).get(0).signed().url();
+    String second =
+        chatImageViewService.viewUrlsOf(roomId, List.of(messageId), hostId).get(0).signed().url();
 
     assertThat(second).isEqualTo(first);
     assertThat(signCount.get()).isEqualTo(1);
