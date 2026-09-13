@@ -64,7 +64,8 @@ public class ChatImageService {
    * <p><b>여기가 검증 기준의 「허용 밖 형식·크기 400」이 나는 자리다.</b> 클라이언트가 선언한 값을 보고, 정책을 벗어나면 서명을 만들지 않는다 — 올리기 전에
    * 막는 것이 올린 뒤 버리는 것보다 싸다.
    *
-   * <p><b>선언은 거짓말일 수 있다.</b> 5MB 라 하고 50MB 를 올리면 이 검사는 통과한다. 그래서 {@link #confirm} 이 실제 값을 다시 본다.
+   * <p><b>선언한 크기를 서명에 묶는다</b> (PR #147 리뷰). 5MB 라 하고 50MB 를 올리면 서명이 어긋나 S3 가 거절한다 — 처음에는 이 선언을 검사에만
+   * 쓰고 흘려보내서 <b>확정 단계에서야, 이미 버킷에 들어온 뒤에</b> 400 이 났다. {@link #confirm} 의 실제 검사는 두 번째 층으로 남는다.
    *
    * <p><b>판정을 먼저 하고 행을 만든다.</b> 순서가 뒤집히면 형식이 틀린 요청마다 {@code PENDING} 행이 남아, 배치가 지울 것 없는 행을 계속 집는다.
    *
@@ -84,7 +85,9 @@ public class ChatImageService {
         chatImageRepository.save(ChatImage.pending(roomId, uploaderId, objectKey, contentType));
 
     return new ChatImageUpload(
-        image.getId(), storage.presignUpload(objectKey, contentType), presignTtl.toSeconds());
+        image.getId(),
+        storage.presignUpload(objectKey, contentType, contentLength),
+        presignTtl.toSeconds());
   }
 
   /**

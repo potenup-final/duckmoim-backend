@@ -32,7 +32,7 @@ public class StubChatImageStorage {
     return new ChatImageStorage() {
 
       @Override
-      public String presignUpload(String objectKey, String contentType) {
+      public String presignUpload(String objectKey, String contentType, long contentLength) {
         return "https://chat-image-storage-is-not-configured.invalid/" + objectKey;
       }
 

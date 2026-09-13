@@ -5,6 +5,7 @@ import static com.duckmoim.identity.UserFixture.aUser;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.BDDMockito.given;
 
@@ -79,7 +80,8 @@ class ChatImageServiceTest {
   @DisplayName("방 멤버는 서명된 업로드 주소를 받는다.")
   @Test
   void issueUpload_returnsPresignedUrl() {
-    given(storage.presignUpload(anyString(), anyString())).willReturn("https://s3.example/put");
+    given(storage.presignUpload(anyString(), anyString(), anyLong()))
+        .willReturn("https://s3.example/put");
 
     ChatImageUpload upload = chatImageService.issueUpload(roomId, memberId, JPEG, SMALL);
 
@@ -96,7 +98,8 @@ class ChatImageServiceTest {
   @DisplayName("발급 시점에 PENDING 행이 생긴다.")
   @Test
   void issueUpload_createsPendingRow() {
-    given(storage.presignUpload(anyString(), anyString())).willReturn("https://s3.example/put");
+    given(storage.presignUpload(anyString(), anyString(), anyLong()))
+        .willReturn("https://s3.example/put");
 
     ChatImageUpload upload = chatImageService.issueUpload(roomId, memberId, JPEG, SMALL);
 
@@ -110,7 +113,8 @@ class ChatImageServiceTest {
   @DisplayName("객체 키가 chat/ 접두어 아래에 만들어진다.")
   @Test
   void issueUpload_keepsKeyUnderChatPrefix() {
-    given(storage.presignUpload(anyString(), anyString())).willReturn("https://s3.example/put");
+    given(storage.presignUpload(anyString(), anyString(), anyLong()))
+        .willReturn("https://s3.example/put");
 
     ChatImageUpload upload = chatImageService.issueUpload(roomId, memberId, JPEG, SMALL);
 
@@ -368,7 +372,8 @@ class ChatImageServiceTest {
   }
 
   private Long issued() {
-    given(storage.presignUpload(anyString(), anyString())).willReturn("https://s3.example/put");
+    given(storage.presignUpload(anyString(), anyString(), anyLong()))
+        .willReturn("https://s3.example/put");
     return chatImageService.issueUpload(roomId, memberId, JPEG, SMALL).imageId();
   }
 

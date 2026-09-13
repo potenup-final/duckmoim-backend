@@ -31,10 +31,16 @@ public interface ChatImageStorage {
   /**
    * 그 키로 올릴 수 있는 서명된 주소를 만든다.
    *
-   * <p><b>{@code contentType} 을 서명에 묶는다.</b> 클라이언트가 다른 형식을 올리면 서명이 어긋나 저장소가 거절한다 — 발급 때의 선언 검사와 확정
-   * 때의 실제 검사 사이를 좁히는 층이다.
+   * <p><b>{@code contentType} 과 {@code contentLength} 를 둘 다 서명에 묶는다.</b> 선언과 다른 형식이나 크기로 올리면 서명이
+   * 어긋나 저장소가 거절한다 — 정확히 그 크기만 통과하므로 범위 제한보다 강하다.
+   *
+   * <p><b>크기를 묶는 것이 PR #147 리뷰에서 더해졌다.</b> 처음에는 형식만 묶었고 크기는 확정 단계가 실제 값으로 다시 보게 두었는데, 그때는 <b>이미 버킷에
+   * 들어온 뒤</b>다. 프로필 이미지에서 물려받은 판단이었지만 채팅은 발급마다 새 키가 생겨 <b>총량을 묶는 것이 없다</b> — 방 멤버 한 명이 「발급 → 대용량
+   * PUT」을 반복하면 24시간 동안 버킷에 원하는 만큼 쓴다.
+   *
+   * @param contentLength 클라이언트가 선언한 바이트 수. 브라우저는 {@code file.size} 를 이미 쥐고 있어 부담이 없다
    */
-  String presignUpload(String objectKey, String contentType);
+  String presignUpload(String objectKey, String contentType, long contentLength);
 
   /** 그 키로 올라간 것이 있으면 메타데이터를, 없으면 빈 값을 준다. 확정 단계의 판정 근거다. */
   Optional<UploadedChatImage> findUploaded(String objectKey);

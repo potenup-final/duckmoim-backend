@@ -57,15 +57,31 @@ public class S3ChatImageStorage implements ChatImageStorage {
   }
 
   /**
-   * <b>{@code contentType} 을 서명에 넣는다.</b> 다른 형식으로 올리면 서명이 어긋나 S3 가 거절한다.
+   * <b>{@code contentType} 과 {@code contentLength} 를 서명에 넣는다</b> (PR #147 리뷰).
    *
-   * <p>그 층에만 의존하지 않는다 — 확정 단계가 {@link #findUploaded} 로 <b>실제 값</b>을 다시 본다. 크기는 서명에 묶기 어려워서 실제 검사가
-   * 그쪽에 있다.
+   * <p>{@code PutObjectRequest#contentLength} 를 세우면 {@code Content-Length} 가 {@code
+   * X-Amz-SignedHeaders} 에 들어가, 선언과 다른 크기의 PUT 은 S3 가 {@code SignatureDoesNotMatch} 로 거절한다. <b>SDK
+   * 판본에 따라 이 헤더가 서명에서 빠진다는 보고가 있어</b> 실제 발급 URL 을 확인했다 ({@code awssdk 2.29.52}):
+   *
+   * <pre>
+   * contentLength 없음   X-Amz-SignedHeaders = content-type;host
+   * contentLength 있음   X-Amz-SignedHeaders = content-length;content-type;host
+   * </pre>
+   *
+   * <p>그 사실을 {@code S3ChatImageStorageTest} 가 붙들고 있다 — SDK 를 올려서 빠지면 빌드가 깨진다. 조용히 빠지면 크기 검사가 다시 「이미
+   * 들어온 뒤」로 밀린다.
+   *
+   * <p><b>확정 단계의 실제 검사는 그대로 둔다.</b> 서명이 막는 것은 PUT 이고, 확정은 S3 가 기록한 값을 한 번 더 본다 — 두 층이 서로 다른 것을 믿는다.
    */
   @Override
-  public String presignUpload(String objectKey, String contentType) {
+  public String presignUpload(String objectKey, String contentType, long contentLength) {
     PutObjectRequest put =
-        PutObjectRequest.builder().bucket(bucket).key(objectKey).contentType(contentType).build();
+        PutObjectRequest.builder()
+            .bucket(bucket)
+            .key(objectKey)
+            .contentType(contentType)
+            .contentLength(contentLength)
+            .build();
 
     return presigner
         .presignPutObject(
