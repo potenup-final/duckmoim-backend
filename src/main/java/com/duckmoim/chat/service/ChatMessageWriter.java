@@ -12,6 +12,7 @@ import com.duckmoim.companion.domain.CompanionPost;
 import com.duckmoim.companion.infra.CompanionPostRepository;
 import java.time.Clock;
 import lombok.RequiredArgsConstructor;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -84,6 +85,10 @@ public class ChatMessageWriter {
    * <p><b>넷이 같은 코드로 답한다</b> — 없는 번호 · 남의 번호 · 다른 방의 번호 · 확인 전. 갈라서 답하면 「그 번호의 사진이 존재하며 남이 이미 썼다」는
    * 사실을 알려준다 ({@code ChatErrorCode} 의 이미지 네 줄 각주).
    *
+   * <p><b>붙인 것을 그 자리에서 DB 로 내보낸다</b> (PR #147 리뷰). 고아 정리 배치가 같은 행을 {@code DELETING} 으로 못박을 수 있고, 둘은
+   * {@code ChatImage#version} 으로 갈린다. 배치가 먼저면 여기서 버전 충돌이 나고 <b>400 으로 끝난다</b> — 24시간을 넘긴 고아라 「확인을
+   * 마친 이미지만 보낼 수 있다」가 맞는 답이다. 커밋 시점까지 미루면 그 충돌이 메서드 밖에서 터져 500 이 된다.
+   *
    * <p><b>전송 순서가 「붙이고 저장」이다.</b> 반대로 하면 이미지가 틀렸을 때 이미 저장된 메시지를 되돌려야 하고, 같은 트랜잭션이라 롤백은 되지만 {@code
    * AUTO_INCREMENT} 번호 하나가 비어 커서가 건너뛴다.
    */
@@ -99,6 +104,14 @@ public class ChatMessageWriter {
             .orElseThrow(() -> new BusinessException(ChatErrorCode.CHAT_IMAGE_NOT_CONFIRMED));
 
     image.attach();
+
+    try {
+      // 여기서 내보낸다. 커밋까지 미루면 버전 충돌이 트랜잭션 밖에서 터져 500 이 된다.
+      chatImageRepository.saveAndFlush(image);
+    } catch (ObjectOptimisticLockingFailureException e) {
+      // 읽은 뒤에 고아 정리 배치가 이 사진을 DELETING 으로 못박았다 (PR #147 리뷰).
+      throw new BusinessException(ChatErrorCode.CHAT_IMAGE_NOT_CONFIRMED);
+    }
   }
 
   /**

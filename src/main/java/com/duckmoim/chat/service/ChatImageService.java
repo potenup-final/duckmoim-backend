@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -100,6 +101,10 @@ public class ChatImageService {
    *
    * <p><b>형식·크기만 갈라서 던진다.</b> 사용자가 고칠 수 있는 것이고, 무엇을 고쳐야 하는지가 다르다.
    *
+   * <p><b>고아 정리 배치와 같은 행을 다툴 수 있다</b> (PR #147 리뷰). 24시간 넘게 {@code PENDING} 으로 둔 사진을 하필 배치가 도는 순간에
+   * 확정하면, 배치가 {@code DELETING} 으로 못박은 행을 이 메서드가 {@code CONFIRMED} 로 덮을 뻔한다 — 그러면 배치가 객체를 지운 뒤에도 전송이
+   * 그 사진을 붙인다. {@code ChatImage#version} 이 그 덮어쓰기를 막고, 여기서는 400 으로 답한다.
+   *
    * <p><b>두 번 불러도 같은 결과다.</b> 확정 응답을 못 받은 클라이언트가 다시 부르는 것이 정상 경로다 ({@code ChatImage#confirm}).
    *
    * @throws BusinessException 없거나 남의 것이거나 저장소에 없으면 {@code CHAT_IMAGE_NOT_UPLOADED}, 실제 값이 정책을 벗어나면
@@ -118,6 +123,14 @@ public class ChatImageService {
     policy.validate(uploaded.contentType(), uploaded.contentLength());
 
     image.confirm(uploaded.contentType(), uploaded.contentLength());
+
+    try {
+      // 여기서 내보낸다. 커밋까지 미루면 버전 충돌이 트랜잭션 밖에서 터져 500 이 된다.
+      chatImageRepository.saveAndFlush(image);
+    } catch (ObjectOptimisticLockingFailureException e) {
+      // 읽은 뒤에 고아 정리 배치가 이 사진을 DELETING 으로 못박았다 (PR #147 리뷰).
+      throw new BusinessException(ChatErrorCode.CHAT_IMAGE_NOT_UPLOADED);
+    }
   }
 
   /**

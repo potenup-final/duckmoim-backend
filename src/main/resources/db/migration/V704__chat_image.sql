@@ -34,7 +34,7 @@ CREATE TABLE chat_image
     -- 남겨 두면 「확정 전에도 크기를 아는 것처럼」 보이기 때문이다.
     byte_size     BIGINT       NOT NULL DEFAULT 0,
 
-    -- PENDING → CONFIRMED → ATTACHED.
+    -- PENDING → CONFIRMED → ATTACHED. 배치가 집으면 DELETING 을 거쳐 사라진다.
     --
     -- **발급 시점에 행을 만드는 것이 이 표의 판단이다.** 고아가 두 종류라서다 —
     -- ① 올리고 확정 안 함 ② 확정했는데 전송 안 함. 확정 때 행을 만들면 ①은 DB 에 흔적이
@@ -42,6 +42,16 @@ CREATE TABLE chat_image
     --
     -- AU-08 은 발급 때 DB 를 안 건드린다. 그쪽은 지울 필요가 없어 추적할 이유가 없었다.
     status        VARCHAR(20)  NOT NULL,
+
+    -- 낙관적 잠금 (PR #147 리뷰).
+    --
+    -- 이 행을 바꾸는 쪽이 셋이다 — 확정 · 전송 · 고아 정리 배치. 셋 다 읽고 판정하고 쓰는
+    -- 모양이라, 읽은 뒤에 남이 커밋하면 낡은 판정으로 덮어쓴다. 특히 배치가 DELETING 으로
+    -- 못박은 행을 전송이 ATTACHED 로 덮으면, 배치가 그 사진의 S3 객체를 지운다.
+    --
+    -- 아래 chat_message.image_id 에 FK 를 걸지 않은 자리의 대체물이다. 「배치가 ATTACHED 를
+    -- 건드리지 않는다」는 규칙이 동시성에서도 성립하게 한다.
+    version       BIGINT       NOT NULL DEFAULT 0,
 
     created_at    DATETIME(6)  NOT NULL,
     updated_at    DATETIME(6)  NOT NULL,

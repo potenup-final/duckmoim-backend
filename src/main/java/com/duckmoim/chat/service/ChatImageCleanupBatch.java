@@ -1,5 +1,6 @@
 package com.duckmoim.chat.service;
 
+import com.duckmoim.chat.domain.ChatImageStorage;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -39,17 +40,20 @@ public class ChatImageCleanupBatch {
   private static final int MAX_CHUNKS = 50;
 
   private final ChatImageCleanupService chatImageCleanupService;
+  private final ChatImageStorage storage;
   private final Clock clock;
   private final Duration retention;
   private final int batchSize;
 
   public ChatImageCleanupBatch(
       ChatImageCleanupService chatImageCleanupService,
+      ChatImageStorage storage,
       Clock clock,
       @Value("${duckmoim.chat.image.orphan-retention}") Duration retention,
       @Value("${duckmoim.chat.image.orphan-batch-size}") int batchSize) {
 
     this.chatImageCleanupService = chatImageCleanupService;
+    this.storage = storage;
     this.clock = clock;
     this.retention = retention;
     this.batchSize = batchSize;
@@ -89,9 +93,11 @@ public class ChatImageCleanupBatch {
     int deleted = 0;
 
     for (int chunks = 0; chunks < MAX_CHUNKS; chunks++) {
-      ChatImageCleanup chunk = chatImageCleanupService.deleteChunk(thresholdInUtc, batchSize);
+      ClaimedChatImages chunk = chatImageCleanupService.claimChunk(thresholdInUtc, batchSize);
+      int deletedInChunk = deleteClaimed(chunk);
+
       picked += chunk.picked();
-      deleted += chunk.deleted();
+      deleted += deletedInChunk;
 
       // 집은 수로 끊는다. 지운 수로 끊으면 저장소 삭제가 실패한 주기에 아직 남은 고아를
       // 두고 배치가 끝난다.
@@ -99,9 +105,9 @@ public class ChatImageCleanupBatch {
         return new ChatImageCleanup(picked, deleted);
       }
 
-      // 한 청크가 가득 찼는데 하나도 못 지웠으면 저장소가 막힌 것이다. 계속 돌면 같은
-      // 행을 MAX_CHUNKS 번 다시 집는다.
-      if (chunk.deleted() == 0) {
+      // 한 청크가 가득 찼는데 하나도 못 지웠으면 저장소가 막힌 것이다. 계속 돌면 DELETING
+      // 으로 남은 같은 행을 MAX_CHUNKS 번 다시 집는다.
+      if (deletedInChunk == 0) {
         log.warn(
             "[ChatImageCleanupBatch.deleteUntilDrained] 집었으나 하나도 지우지 못했다 — 저장소 권한을 확인한다."
                 + " picked={}",
@@ -111,6 +117,29 @@ public class ChatImageCleanupBatch {
     }
 
     return new ChatImageCleanup(picked, deleted);
+  }
+
+  /**
+   * 못박힌 사진의 객체를 지우고, 지워진 것만 행을 지운다.
+   *
+   * <p><b>트랜잭션 밖이다.</b> {@code claimChunk} 가 커밋된 뒤라, 여기서 무엇이 실패해도 「이미 붙은 사진의 객체를 지우는」 일은 생기지 않는다 —
+   * 못박힌 행은 확정도 전송도 받지 않는다.
+   *
+   * <p><b>S3 가 실패하면 행을 남긴다.</b> 행을 지우면 객체 키를 되찾을 길이 없다. {@code DELETING} 으로 남은 행은 다음 주기가 다시 집는다.
+   */
+  private int deleteClaimed(ClaimedChatImages chunk) {
+    int deleted = 0;
+
+    for (ClaimedChatImages.ClaimedChatImage image : chunk.claimed()) {
+      if (!storage.delete(image.objectKey())) {
+        continue;
+      }
+      if (chatImageCleanupService.removeClaimed(image.imageId())) {
+        deleted++;
+      }
+    }
+
+    return deleted;
   }
 
   /** 저장된 {@code created_at} 이 UTC 라 기준 시각도 UTC 여야 한다 ({@code BaseEntity}). */

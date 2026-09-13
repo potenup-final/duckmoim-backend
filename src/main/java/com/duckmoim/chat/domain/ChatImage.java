@@ -11,6 +11,7 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.persistence.Version;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -63,6 +64,30 @@ public class ChatImage extends BaseEntity {
   @Column(name = "status", nullable = false, length = 20)
   private ChatImageStatus status;
 
+  /**
+   * 낙관적 잠금 (PR #147 리뷰).
+   *
+   * <p><b>이 행을 바꾸는 쪽이 셋이고 서로 모른다</b> — 확정 · 전송 · 고아 정리 배치. 셋 다 「읽고 → 메모리에서 판정하고 → 쓴다」 모양이라, 읽은 뒤에
+   * 남이 커밋하면 <b>낡은 판정으로 덮어쓴다.</b>
+   *
+   * <pre>
+   * 전송  findById(7) → CONFIRMED (v0)
+   * 배치                     DELETING 으로 못박음 (v1) → COMMIT
+   * 전송  attach() → UPDATE … WHERE version = 0 → 0행 → 실패   ✅
+   *       (버전이 없으면 ATTACHED 가 DELETING 을 덮고, 배치가 그 사진의 객체를 지운다)
+   * </pre>
+   *
+   * <p><b>이것만으로는 부족하다.</b> 배치가 S3 를 먼저 지우고 행을 나중에 지우면, 행 삭제가 버전 충돌로 롤백돼도 <b>객체는 이미 없다</b> — S3 삭제는
+   * 롤백되지 않는다. 그래서 배치는 {@code DELETING} 을 <b>먼저 커밋한 뒤에</b> 객체를 지운다 ({@link
+   * ChatImageStatus#DELETING}).
+   *
+   * <p><b>FK 를 걸지 않은 자리의 대체물이다.</b> {@code V704} 가 {@code chat_message.image_id} 에 FK 를 걸지 않으면서
+   * 「배치가 ATTACHED 를 건드리지 않는다는 규칙이 정합성을 지킨다」고 적었는데, 그 규칙이 동시성에서도 성립하게 하는 것이 이 열이다.
+   */
+  @Version
+  @Column(name = "version", nullable = false)
+  private long version;
+
   private ChatImage(Long roomId, Long uploaderId, String objectKey, String contentType) {
     this.roomId = roomId;
     this.uploaderId = uploaderId;
@@ -92,11 +117,11 @@ public class ChatImage extends BaseEntity {
    *
    * <p><b>두 번 확정해도 같은 결과다.</b> 클라이언트가 확정 요청을 재시도하는 것이 정상 경로다 — 응답을 못 받았을 때 다시 부른다.
    *
-   * @throws BusinessException 이미 메시지에 실렸으면 {@code CHAT_IMAGE_NOT_UPLOADED} — 그 시점에는 바꿀 것이 없고, 「없다」로
-   *     답해 존재를 알려주지 않는다
+   * @throws BusinessException 이미 메시지에 실렸거나 배치가 지우기로 못박았으면 {@code CHAT_IMAGE_NOT_UPLOADED} — 그 시점에는
+   *     바꿀 것이 없고, 「없다」로 답해 존재를 알려주지 않는다
    */
   public void confirm(String actualContentType, long actualByteSize) {
-    if (status == ChatImageStatus.ATTACHED) {
+    if (status == ChatImageStatus.ATTACHED || status == ChatImageStatus.DELETING) {
       throw new BusinessException(ChatErrorCode.CHAT_IMAGE_NOT_UPLOADED);
     }
 
@@ -126,10 +151,5 @@ public class ChatImage extends BaseEntity {
   /** 그 방에 그 사람이 올린 것인가. 확정과 전송이 같은 질문을 한다. */
   public boolean isUploadedBy(Long roomId, Long uploaderId) {
     return this.roomId.equals(roomId) && this.uploaderId.equals(uploaderId);
-  }
-
-  /** 배치가 지워도 되는가 (CH-17). 메시지에 실린 것은 건드리지 않는다. */
-  public boolean isOrphan() {
-    return status != ChatImageStatus.ATTACHED;
   }
 }
