@@ -10,8 +10,8 @@ import java.time.ZoneOffset;
 /**
  * 방 목록 한 줄 (CH-05).
  *
- * <p><b>{@code lastMessage} · {@code unreadCount} 가 없다.</b> {@code Message}(CH-07)와 안 읽음 커서(CH-13)가
- * 아직 없어 채울 값이 없다.
+ * <p><b>{@code lastMessage} 는 아직 없다.</b> {@code unreadCount} 는 CH-13 이 더했다 — 무엇을 세는지는 {@code
+ * ChatRoomSummary} 에 적었다.
  *
  * @param memberCount 지금 방에 있는 인원. 모집글 정원(`capacity`)과 무관하다 — CH-03 이 「모집글의 정원은 상한으로 쓰지 않는다」로 둘을
  *     분리했다

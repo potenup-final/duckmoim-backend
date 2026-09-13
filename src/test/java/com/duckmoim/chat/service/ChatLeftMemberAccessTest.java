@@ -17,6 +17,7 @@ import com.duckmoim.safety.domain.ReportReason;
 import com.duckmoim.safety.domain.ReportTargetType;
 import com.duckmoim.safety.service.ReportCommand;
 import com.duckmoim.safety.service.ReportCommandService;
+import java.util.List;
 import java.util.UUID;
 import org.assertj.core.api.ThrowableAssert.ThrowingCallable;
 import org.junit.jupiter.api.BeforeEach;
@@ -51,6 +52,7 @@ class ChatLeftMemberAccessTest {
   @Autowired private ChatMessageSendService chatMessageSendService;
   @Autowired private ChatRoomReadService chatRoomReadService;
   @Autowired private ChatImageService chatImageService;
+  @Autowired private ChatImageViewService chatImageViewService;
   @Autowired private ReportCommandService reportCommandService;
   @Autowired private ChatRoomRepository chatRoomRepository;
   @Autowired private ChatMessageRepository chatMessageRepository;
@@ -123,10 +125,21 @@ class ChatLeftMemberAccessTest {
     assertDenied(() -> chatImageService.issueUpload(roomId, leftId, "image/jpeg", 1024L));
   }
 
+  /**
+   * 사진 열람 서명 (CH-15).
+   *
+   * <p><b>이 브랜치가 갈라진 뒤에 생긴 입구다</b> (#152 · PR 리뷰). 목록이 한 곳에 모인 이유가 정확히 이 경우라 — 입구가 늘면 여기에 줄이 는다.
+   */
+  @DisplayName("나간 사람은 사진 열람 서명을 받을 수 없다.")
+  @Test
+  void viewUrls() {
+    assertDenied(() -> chatImageViewService.viewUrlsOf(roomId, List.of(messageId), leftId));
+  }
+
   @DisplayName("나간 사람도 그 방의 메시지를 신고할 수 있다.")
   @Test
   void report() {
-    // 닫는 문 여섯 개 사이에 열린 문 하나가 있다는 것이 이 요구사항의 모양이다 (CH-21)
+    // 닫는 문 일곱 개 사이에 열린 문 하나가 있다는 것이 이 요구사항의 모양이다 (CH-21)
     assertThatCode(
             () ->
                 reportCommandService.report(
