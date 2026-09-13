@@ -19,6 +19,7 @@ import java.time.LocalDateTime;
  * <p><b>탈퇴한 사람도 걸러내지 않는다.</b> {@link #display} 가 {@code AuthorDisplay}(AU-11)로 자리표시자를 만든다.
  *
  * @param roomId 팬아웃 채널을 고르는 값이다 (CH-10). 목록 조회는 이미 방을 알고 있어 쓰지 않는다
+ * @param imageId 함께 보낸 사진 (CH-14). 없으면 {@code null} 이다
  * @param status 지운 메시지인지 (CH-12). 본문 키를 뺄지가 이 값으로 갈린다
  * @param senderStatus 익명화 판정의 입력이다. {@code nickname == null} 로 대신하지 않는다
  */
@@ -31,6 +32,7 @@ public record AuthoredMessage(
     LocalDateTime lastSeenAt,
     SignupStatus senderStatus,
     String content,
+    Long imageId,
     MessageStatus status,
     LocalDateTime createdAt) {
 
@@ -54,8 +56,10 @@ public record AuthoredMessage(
    * 것을 읽어 <b>그 사이 탈퇴한 사람을 만난다.</b> 목록 조회({@code ChatMessageQueryService})가 이미 {@link #display} 로 같은
    * 판정을 하고 있어, 여기서 빼면 실시간 경로로만 실명이 남는다.
    *
-   * <p><b>지운 메시지의 본문을 싣지 않는다</b> (CH-12). 응답을 그리는 자리가 한 번 더 끊지만 (<i>{@code
-   * MessageItemResponse#from}</i>) <b>본문이 Redis 를 지나가지 않는 편이 낫다</b> — 팬아웃 payload 는 이 프로세스 밖으로 나간다.
+   * <p><b>지운 메시지의 본문과 사진을 싣지 않는다</b> (CH-12 · PR #147 리뷰). 본문만 끊으면 {@code imageId} 가 새서 {@code
+   * CH-15} 가 붙는 순간 지운·가린 사진이 서명 URL 로 다시 열린다 — 목록 조회({@code ChatMessageQueryService#view})와 같은
+   * 판단이다. 응답을 그리는 자리가 한 번 더 끊지만 (<i>{@code MessageItemResponse#from}</i>) <b>본문이 Redis 를 지나가지 않는 편이
+   * 낫다</b> — 팬아웃 payload 는 이 프로세스 밖으로 나간다.
    */
   public MessageEvent toEvent(Clock clock) {
     AuthorDisplay sender = display(clock);
@@ -67,6 +71,7 @@ public record AuthoredMessage(
         sender.nickname(),
         sender.profileImageUrl(),
         isVisible() ? content : null,
+        isVisible() ? imageId : null,
         status,
         createdAt);
   }

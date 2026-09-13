@@ -199,6 +199,7 @@ class ChatStreamOpenFailureTest {
         "덕후1",
         null,
         "말",
+        null,
         MessageStatus.ACTIVE,
         LocalDateTime.of(2026, 10, 2, 11, 10));
   }

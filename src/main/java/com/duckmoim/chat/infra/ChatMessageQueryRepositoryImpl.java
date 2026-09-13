@@ -20,7 +20,7 @@ public class ChatMessageQueryRepositoryImpl implements ChatMessageQueryRepositor
       """
       SELECT new com.duckmoim.chat.infra.AuthoredMessage(
                  m.id, m.roomId, m.senderId, u.nickname, u.profileImageUrl, u.lastSeenAt, u.status,
-                 m.content, m.status, m.createdAt)
+                 m.content, m.imageId, m.status, m.createdAt)
         FROM Message m
         JOIN User u ON u.id = m.senderId
        WHERE m.roomId = :roomId

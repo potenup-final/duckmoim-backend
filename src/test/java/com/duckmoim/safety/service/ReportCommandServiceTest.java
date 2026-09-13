@@ -79,7 +79,7 @@ class ReportCommandServiceTest {
     messageId =
         chatMessageRepository
             .saveAndFlush(
-                Message.send(roomId, TARGET_USER_ID, UUID.randomUUID().toString(), "문제의 말"))
+                Message.send(roomId, TARGET_USER_ID, UUID.randomUUID().toString(), "문제의 말", null))
             .getId();
   }
 

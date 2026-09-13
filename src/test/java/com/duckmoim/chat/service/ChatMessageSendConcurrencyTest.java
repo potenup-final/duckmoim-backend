@@ -110,7 +110,7 @@ class ChatMessageSendConcurrencyTest {
                 start.await();
                 messageIds.add(
                     chatMessageSendService
-                        .send(roomId, MEMBER_ID, clientMessageId, "동시에 누른 말")
+                        .send(roomId, MEMBER_ID, clientMessageId, "동시에 누른 말", null)
                         .messageId());
               } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();

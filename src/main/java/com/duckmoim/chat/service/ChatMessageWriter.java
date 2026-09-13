@@ -1,9 +1,11 @@
 package com.duckmoim.chat.service;
 
+import com.duckmoim.chat.domain.ChatImage;
 import com.duckmoim.chat.domain.ChatRoom;
 import com.duckmoim.chat.domain.ChatRoomMember;
 import com.duckmoim.chat.domain.Message;
 import com.duckmoim.chat.exception.ChatErrorCode;
+import com.duckmoim.chat.infra.ChatImageRepository;
 import com.duckmoim.chat.infra.ChatMessageRepository;
 import com.duckmoim.chat.infra.ChatRoomRepository;
 import com.duckmoim.common.exception.BusinessException;
@@ -14,6 +16,7 @@ import java.time.Clock;
 import java.util.List;
 import java.util.Set;
 import lombok.RequiredArgsConstructor;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -36,6 +39,7 @@ public class ChatMessageWriter {
 
   private final ChatRoomRepository chatRoomRepository;
   private final ChatMessageRepository chatMessageRepository;
+  private final ChatImageRepository chatImageRepository;
   private final CompanionPostRepository companionPostRepository;
   private final NotificationOutboxPublisher notificationOutboxPublisher;
   private final Clock clock;
@@ -47,6 +51,9 @@ public class ChatMessageWriter {
    * 메서드가 반환된 뒤 커밋에서 터지고, 부르는 쪽은 예외의 종류만 보고 「어느 제약이 걸렸는지」를 알 수 없다. {@code
    * ChatRoomInviteService#invite} 가 같은 이유로 같은 것을 한다.
    *
+   * <p><b>이미지가 있으면 같은 트랜잭션에서 {@code ATTACHED} 로 바꾼다</b> (CH-14). 이 클래스가 두 표를 쓰게 된 자리다 — 메시지가 커밋되고
+   * 이미지가 그대로 {@code CONFIRMED} 로 남으면 <b>고아 정리 배치가 실려 있는 사진을 지운다.</b> 같은 트랜잭션이어야 그 창이 없다.
+   *
    * <p><b>알림 발행이 이 트랜잭션 안이다</b> (NT-01 · I-25). {@code NotificationOutboxPublisher} 가 {@code
    * MANDATORY} 라 밖에서 부르면 아예 실패한다 — 메시지만 저장되고 알림이 없는 상태를 기계가 막는다.
    *
@@ -57,7 +64,13 @@ public class ChatMessageWriter {
    */
   @Transactional
   public SentMessage write(
-      Long roomId, Long senderId, String clientMessageId, String content, Set<Long> viewers) {
+      Long roomId,
+      Long senderId,
+      String clientMessageId,
+      String content,
+      Long imageId,
+      Set<Long> viewers) {
+
     ChatRoom room =
         chatRoomRepository
             .findById(roomId)
@@ -68,14 +81,54 @@ public class ChatMessageWriter {
     }
 
     requireWritable(room);
+    attachImageIfPresent(roomId, senderId, imageId);
 
     Message message =
-        chatMessageRepository.save(Message.send(roomId, senderId, clientMessageId, content));
+        chatMessageRepository.save(
+            Message.send(roomId, senderId, clientMessageId, content, imageId));
     chatMessageRepository.flush();
 
     publishNotifications(room, message, senderId, viewers);
 
     return SentMessage.from(message);
+  }
+
+  /**
+   * 사진을 이 메시지에 못박는다 (CH-14).
+   *
+   * <p><b>여기가 검증 기준 「업로드 확인 전 메시지 전송 시 400」이 나는 자리다.</b> 판정은 {@code ChatImage#attach} 가 쥐고, 여기서는 「그
+   * 방에 그 사람이 올린 것인가」까지만 본다.
+   *
+   * <p><b>넷이 같은 코드로 답한다</b> — 없는 번호 · 남의 번호 · 다른 방의 번호 · 확인 전. 갈라서 답하면 「그 번호의 사진이 존재하며 남이 이미 썼다」는
+   * 사실을 알려준다 ({@code ChatErrorCode} 의 이미지 네 줄 각주).
+   *
+   * <p><b>붙인 것을 그 자리에서 DB 로 내보낸다</b> (PR #147 리뷰). 고아 정리 배치가 같은 행을 {@code DELETING} 으로 못박을 수 있고, 둘은
+   * {@code ChatImage#version} 으로 갈린다. 배치가 먼저면 여기서 버전 충돌이 나고 <b>400 으로 끝난다</b> — 24시간을 넘긴 고아라 「확인을
+   * 마친 이미지만 보낼 수 있다」가 맞는 답이다. 커밋 시점까지 미루면 그 충돌이 메서드 밖에서 터져 500 이 된다.
+   *
+   * <p><b>전송 순서가 「붙이고 저장」이다.</b> 반대로 하면 이미지가 틀렸을 때 이미 저장된 메시지를 되돌려야 하고, 같은 트랜잭션이라 롤백은 되지만 {@code
+   * AUTO_INCREMENT} 번호 하나가 비어 커서가 건너뛴다.
+   */
+  private void attachImageIfPresent(Long roomId, Long senderId, Long imageId) {
+    if (imageId == null) {
+      return;
+    }
+
+    ChatImage image =
+        chatImageRepository
+            .findById(imageId)
+            .filter(found -> found.isUploadedBy(roomId, senderId))
+            .orElseThrow(() -> new BusinessException(ChatErrorCode.CHAT_IMAGE_NOT_CONFIRMED));
+
+    image.attach();
+
+    try {
+      // 여기서 내보낸다. 커밋까지 미루면 버전 충돌이 트랜잭션 밖에서 터져 500 이 된다.
+      chatImageRepository.saveAndFlush(image);
+    } catch (ObjectOptimisticLockingFailureException e) {
+      // 읽은 뒤에 고아 정리 배치가 이 사진을 DELETING 으로 못박았다 (PR #147 리뷰).
+      throw new BusinessException(ChatErrorCode.CHAT_IMAGE_NOT_CONFIRMED);
+    }
   }
 
   /**

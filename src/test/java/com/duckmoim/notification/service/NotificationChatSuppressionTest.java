@@ -101,7 +101,7 @@ class NotificationChatSuppressionTest {
   @Test
   void send_notifiesOtherMembers() {
     // when
-    chatMessageSendService.send(roomId, hostId, newClientId(), "8시에 3번 출구에서 봬요");
+    chatMessageSendService.send(roomId, hostId, newClientId(), "8시에 3번 출구에서 봬요", null);
 
     // then — 보낸 사람을 뺀 둘이다
     assertThat(recipients()).containsExactlyInAnyOrder(memberId, otherId);
@@ -119,7 +119,7 @@ class NotificationChatSuppressionTest {
     chatStreamService.open(roomId, memberId, new SilentSession(), null);
 
     // when
-    chatMessageSendService.send(roomId, hostId, newClientId(), "보고 있는 사람은 빠진다");
+    chatMessageSendService.send(roomId, hostId, newClientId(), "보고 있는 사람은 빠진다", null);
 
     // then
     assertThat(recipients()).containsExactly(otherId);
@@ -139,7 +139,7 @@ class NotificationChatSuppressionTest {
     assertThat(chatStreamService.connectionCount(roomId)).isZero();
 
     // when
-    chatMessageSendService.send(roomId, hostId, newClientId(), "green 에 붙은 사람도 빠진다");
+    chatMessageSendService.send(roomId, hostId, newClientId(), "green 에 붙은 사람도 빠진다", null);
 
     // then
     assertThat(recipients()).containsExactly(otherId);
@@ -150,7 +150,7 @@ class NotificationChatSuppressionTest {
   @Test
   void send_skipsSender() {
     // when
-    chatMessageSendService.send(roomId, hostId, newClientId(), "내 말은 내가 안다");
+    chatMessageSendService.send(roomId, hostId, newClientId(), "내 말은 내가 안다", null);
 
     // then
     assertThat(recipients()).doesNotContain(hostId);
@@ -165,7 +165,7 @@ class NotificationChatSuppressionTest {
     clearOutbox();
 
     // when
-    chatMessageSendService.send(roomId, hostId, newClientId(), "나간 사람은 빠진다");
+    chatMessageSendService.send(roomId, hostId, newClientId(), "나간 사람은 빠진다", null);
 
     // then
     assertThat(recipients()).containsExactly(otherId);
@@ -192,7 +192,7 @@ class NotificationChatSuppressionTest {
     release.run();
 
     // when
-    chatMessageSendService.send(roomId, hostId, newClientId(), "닫았으면 다시 받는다");
+    chatMessageSendService.send(roomId, hostId, newClientId(), "닫았으면 다시 받는다", null);
 
     // then
     assertThat(recipients()).containsExactlyInAnyOrder(memberId, otherId);
@@ -208,10 +208,10 @@ class NotificationChatSuppressionTest {
   void send_publishesOnceOnRetry() {
     // given
     String clientMessageId = newClientId();
-    chatMessageSendService.send(roomId, hostId, clientMessageId, "응답을 못 받았다");
+    chatMessageSendService.send(roomId, hostId, clientMessageId, "응답을 못 받았다", null);
 
     // when
-    chatMessageSendService.send(roomId, hostId, clientMessageId, "응답을 못 받았다");
+    chatMessageSendService.send(roomId, hostId, clientMessageId, "응답을 못 받았다", null);
 
     // then
     assertThat(recipients()).containsExactlyInAnyOrder(memberId, otherId);
@@ -222,7 +222,7 @@ class NotificationChatSuppressionTest {
   void send_targetsRoomAndMessage() {
     // when
     long messageId =
-        chatMessageSendService.send(roomId, hostId, newClientId(), "어디로 갈지").messageId();
+        chatMessageSendService.send(roomId, hostId, newClientId(), "어디로 갈지", null).messageId();
 
     // then — V806 이 만든 칸이다
     assertThat(outboxRows())
