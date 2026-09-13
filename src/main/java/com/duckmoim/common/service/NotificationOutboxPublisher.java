@@ -3,7 +3,11 @@ package com.duckmoim.common.service;
 import com.duckmoim.common.domain.NotificationKind;
 import com.duckmoim.common.domain.NotificationOutbox;
 import com.duckmoim.common.domain.NotificationTarget;
+import com.duckmoim.common.infra.NotificationMuteRepository;
 import com.duckmoim.common.infra.NotificationOutboxRepository;
+import java.util.Collection;
+import java.util.LinkedHashSet;
+import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
@@ -27,6 +31,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class NotificationOutboxPublisher {
 
   private final NotificationOutboxRepository notificationOutboxRepository;
+  private final NotificationMuteRepository notificationMuteRepository;
 
   /**
    * 내 모집글에 댓글이 달렸다 (NT-06).
@@ -59,38 +64,62 @@ public class NotificationOutboxPublisher {
   }
 
   /**
-   * 채팅방에 새 메시지가 있다 (NT-06 · NT-07).
+   * 채팅방에 새 메시지가 있다 (NT-06 · NT-07 · NT-11).
    *
-   * <p><b>한 사람씩 부른다.</b> 수신자가 여럿이라 목록을 받는 편이 짧아 보이지만, 그러면 「누구를 뺄지」의 규칙이 여기와 부르는 쪽 둘로 갈린다 — 자기 자신은
-   * 아래가 빼고 <b>지금 보고 있는 사람은 부르는 쪽이 뺀다</b> (NT-07). 한쪽만 보고 고치면 다른 쪽이 조용히 남는다.
+   * <p><b>한 사람씩이 아니라 목록으로 받는다.</b> 수신 설정이 붙으면서 사람마다 한 번씩 물어보는 비용이 실제로 생겼다 — 6명 방의 메시지 한 건이 조회 다섯이
+   * 되고, 그 자리는 <b>메시지 전송 트랜잭션 안</b>이다. 목록으로 받으면 한 번에 묻는다.
    *
-   * <p><b>보고 있는 사람을 여기서 못 거른다.</b> 「보고 있다」는 채팅의 사실이고, {@code common} 이 Chat 을 참조하면 의존이 거꾸로 흐른다
-   * (도메인-모델링.md 「2. 바운디드 컨텍스트」). 수신자를 넣는 쪽이 정한다는 이 클래스의 규칙이 그대로 적용되는 자리다.
+   * <p><b>그래도 「누구를 뺄지」는 이 클래스가 쥔다.</b> 자기 자신도 끈 사람도 여기서 빠진다 — 규칙이 부르는 쪽으로 새면 넣는 쪽이 둘이라 한쪽이 빠뜨린다.
    *
-   * @param recipientId 알림을 받는 사람. 방 멤버 중 보낸 사람과 보고 있는 사람을 뺀 나머지다
+   * <p><b>보고 있는 사람만은 부르는 쪽이 뺀다</b> (NT-07). 「보고 있다」는 채팅의 사실이고, {@code common} 이 Chat 을 참조하면 의존이 거꾸로
+   * 흐른다 (도메인-모델링.md 「2. 바운디드 컨텍스트」).
+   *
+   * @param recipientIds 방의 현재 멤버에서 <b>지금 보고 있는 사람</b>을 뺀 나머지. 중복이 있어도 한 건만 쌓인다
    * @param senderId 메시지를 보낸 사람
    */
   @Transactional(propagation = Propagation.MANDATORY)
-  public void roomMessaged(Long recipientId, Long senderId, Long roomId, Long messageId) {
-    publish(
-        NotificationKind.ROOM_MESSAGED,
-        recipientId,
-        senderId,
-        NotificationTarget.ofRoomMessage(roomId, messageId));
+  public void roomMessaged(
+      Collection<Long> recipientIds, Long senderId, Long roomId, Long messageId) {
+
+    Set<Long> receiving = new LinkedHashSet<>(recipientIds);
+    receiving.remove(senderId);
+
+    if (receiving.isEmpty()) {
+      return;
+    }
+
+    receiving.removeAll(
+        notificationMuteRepository.findMutedUserIds(NotificationKind.ROOM_MESSAGED, receiving));
+
+    NotificationTarget target = NotificationTarget.ofRoomMessage(roomId, messageId);
+    receiving.forEach(
+        recipientId ->
+            notificationOutboxRepository.save(
+                NotificationOutbox.of(NotificationKind.ROOM_MESSAGED, recipientId, target)));
   }
 
   /**
-   * <b>자기 행동으로 자기에게 알림을 만들지 않는다.</b> 명세에 없어 STAR-118 에서 정했다 — NT-06 이 알림을 넣은 이유로 든 것이 「방장이 댓글을 알
-   * 방법이 없다」 인데, 자기가 쓴 댓글은 이미 알고 있다.
+   * 댓글 알림 한 건을 쌓는다. <b>안 쌓는 경우가 둘이다.</b>
    *
-   * <p>판정을 여기 두는 이유는 넣는 쪽이 둘이기 때문이다. 채팅 메시지가 붙으면서 실제로 둘이 됐고, 규칙을 양쪽에 두었으면 한쪽이 빠뜨렸을 것이다 — 채팅은 수신자가
-   * 여럿이라 보낸 사람이 목록에 그냥 들어 있다.
+   * <pre>
+   * 자기 자신   자기가 쓴 댓글은 이미 알고 있다 (STAR-118)
+   * 끈 종류     NT-11. 만들어 두고 거르는 것이 아니라 아예 안 만든다
+   * </pre>
+   *
+   * <p><b>자기 자신을 빼는 판정이 여기 있는 이유는 넣는 쪽이 둘이기 때문이다.</b> 채팅 메시지가 붙으면서 실제로 둘이 됐고, 규칙을 양쪽에 두었으면 한쪽이 빠뜨렸을
+   * 것이다 — 채팅은 수신자가 여럿이라 보낸 사람이 목록에 그냥 들어 있다.
+   *
+   * <p><b>끈 종류를 여기서 끊는 것은 NT-11 이 그렇게 정했기 때문이다.</b> 만들어 두고 목록에서 거르면 안 읽은 수(NT-10)가 화면과 어긋나고 30일
+   * 만료(NT-11a)가 지울 것이 쌓인다.
    */
   private void publish(
       NotificationKind kind, Long recipientId, Long actorId, NotificationTarget target) {
 
-    // 수신자가 없는 것과 자기 자신인 것을 섞지 않는다. null 은 아래 엔티티가 거른다.
-    if (recipientId != null && recipientId.equals(actorId)) {
+    // 수신자가 없는 것은 섞지 않는다. null 은 아래 엔티티가 거른다 — 여기서 조용히 넘기면
+    // 「수신자를 넣는 쪽이 정한다」를 어긴 호출이 아무 신호도 없이 사라진다.
+    if (recipientId != null
+        && (recipientId.equals(actorId)
+            || notificationMuteRepository.existsByUserIdAndKind(recipientId, kind))) {
       return;
     }
 

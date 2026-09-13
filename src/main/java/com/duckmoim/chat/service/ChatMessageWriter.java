@@ -13,6 +13,7 @@ import com.duckmoim.common.service.NotificationOutboxPublisher;
 import com.duckmoim.companion.domain.CompanionPost;
 import com.duckmoim.companion.infra.CompanionPostRepository;
 import java.time.Clock;
+import java.util.List;
 import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
@@ -133,23 +134,25 @@ public class ChatMessageWriter {
   /**
    * 방의 다른 멤버에게 알림을 쌓는다 (NT-06 · NT-07).
    *
-   * <p><b>여기서 빼는 것은 보고 있는 사람뿐이다.</b> 보낸 사람은 {@code NotificationOutboxPublisher} 가 뺀다 — 그 규칙은 댓글 알림과
-   * 공유하는 것이라 한 곳에 있어야 한다.
+   * <p><b>여기서 빼는 것은 보고 있는 사람뿐이다.</b> 보낸 사람과 그 종류를 끈 사람은 {@code NotificationOutboxPublisher} 가 뺀다 —
+   * 둘 다 댓글 알림과 공유하는 규칙이라 한 곳에 있어야 한다.
    *
    * <p><b>나간 사람은 {@code currentMembers} 가 거른다</b> (CH-18). 퇴장 행은 남지만 멤버가 아니다.
+   *
+   * <p><b>목록째로 넘긴다.</b> 한 사람씩 부르면 수신 설정 조회가 사람 수만큼 돌고 (NT-11), 그 자리가 이 트랜잭션 안이다.
    *
    * <p><b>저장 뒤에 부른다.</b> {@code flush} 가 지나야 메시지 번호가 정해지고, 알림은 그 번호를 가리켜야 한다 (V806).
    */
   private void publishNotifications(
       ChatRoom room, Message message, Long senderId, Set<Long> viewers) {
 
-    room.currentMembers().stream()
-        .map(ChatRoomMember::getUserId)
-        .filter(userId -> !viewers.contains(userId))
-        .forEach(
-            userId ->
-                notificationOutboxPublisher.roomMessaged(
-                    userId, senderId, room.getId(), message.getId()));
+    List<Long> recipientIds =
+        room.currentMembers().stream()
+            .map(ChatRoomMember::getUserId)
+            .filter(userId -> !viewers.contains(userId))
+            .toList();
+
+    notificationOutboxPublisher.roomMessaged(recipientIds, senderId, room.getId(), message.getId());
   }
 
   /**
