@@ -54,8 +54,29 @@ public class ChatMessageController {
    *
    * <p>무한이 아닌 이유는 죽은 연결을 언젠가는 걷어내야 해서다. 끊긴 뒤를 잇는 것은 {@code CH-11}(STAR-114)이고, 브라우저의 {@code
    * EventSource} 는 끊기면 스스로 다시 붙는다.
+   *
+   * <p><b>30분에서 5분으로 줄였다</b> (NT-07 · PR #145 리뷰). 이 값이 <b>「보고 있다」가 틀린 채로 남는 시간의 상한</b>이기 때문이다.
+   *
+   * <p>폰 화면이 꺼지거나 지하철에 들어가면 TCP 가 <b>반쯤 열린 채로</b> 남는다. 그때 keep-alive 쓰기는 송신 버퍼에 들어가 <b>성공으로
+   * 반환하므로</b> 서버는 그 연결이 죽은 줄 모르고, 접속 집합에 계속 「보는 중」으로 적는다. 그 사이 그 방에 온 메시지는 {@code
+   * ChatMessageWriter} 가 수신자에서 빼버려 <b>알림 행이 아예 안 생긴다</b> — 나중에 메울 배치도 없다.
+   *
+   * <pre>
+   * 전  최대 30분 (또는 TCP 재전송 소진 ~15분)  동안 알림이 통째로 사라진다
+   * 후  5분 + 신선도 90초  =  최대 6분 30초
+   * </pre>
+   *
+   * <p><b>단순히 상한을 낮추는 것이 아니라 판정 근거가 바뀐다.</b> 타임아웃은 TCP 상태와 무관하게 벽시계로 도므로 반쯤 열린 연결도 반드시 걷히고, 다시 붙으려면
+   * <b>핸드셰이크를 새로 맺어야</b> {@code ChatStreamService#open} 이 돌아 접속 집합에 다시 찍힌다 — 그 왕복이 곧 클라이언트가 살아 있다는
+   * 증거다. SSE 는 단방향이라 이것 말고는 증거가 없다.
+   *
+   * <p><b>재연결 비용을 치를 수 있게 된 것은 {@code CH-11} 덕이다.</b> 그전이면 5분마다 유실 창을 여는 셈이라 알림 하나 살리려고 메시지를 잃는
+   * 거래였다. 지금은 {@code Last-Event-ID} 로 빈 구간이 되돌아오고, 드는 것은 재연결마다 멤버 판정 한 번과 재전송 조회 한 번이다.
+   *
+   * <p><b>남는 창 6분 30초는 이 값으로는 못 없앤다.</b> 클라이언트가 「이 방 보는 중」을 주기적으로 찍어 주는 문이 있어야 하고, 그것은 프론트 변경이 딸려
+   * 별도 티켓이다 ({@code RedisChatPresence} 에 같은 각주가 있다).
    */
-  private static final long STREAM_TIMEOUT_MILLIS = 30 * 60 * 1000L;
+  private static final long STREAM_TIMEOUT_MILLIS = 5 * 60 * 1000L;
 
   private final ChatMessageSendService chatMessageSendService;
   private final ChatMessageQueryService chatMessageQueryService;
@@ -133,7 +154,7 @@ public class ChatMessageController {
    * <p><b>응답이 끝나지 않는 요청이다.</b> {@code text/event-stream} 으로 열어 두고 사건이 생길 때마다 한 덩어리씩 흘려보낸다 — {@code
    * SseEmitter} 를 반환하면 스프링이 그 요청을 비동기로 돌려둔다.
    *
-   * <p><b>타임아웃을 30분으로 둔다.</b> 무한으로 두면 죽은 연결이 영원히 남고, 너무 짧으면 재연결이 잦아진다. 끊긴 뒤 빠진 것을 메우는 일은 {@code
+   * <p><b>타임아웃을 5분으로 둔다.</b> 무한으로 두면 죽은 연결이 영원히 남고, 너무 짧으면 재연결이 잦아진다. 끊긴 뒤 빠진 것을 메우는 일은 {@code
    * CH-11}(STAR-114) 몫이라, 여기서는 <b>끊기는 것 자체를 정상으로 다룬다</b> — 브라우저의 {@code EventSource} 가 알아서 다시 붙는다.
    *
    * <p><b>ALB 의 유휴 타임아웃(기본 60초)보다 짧게 무언가를 보내야 한다.</b> 대화가 없는 방은 한 시간도 조용한데, 그러면 ALB 가 먼저 끊는다. 연결 직후
