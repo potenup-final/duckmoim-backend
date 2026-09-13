@@ -41,6 +41,9 @@ public class ChatRoomQueryRepositoryImpl implements ChatRoomQueryRepository {
    *
    * <p><b>{@code CLOSED} 를 함께 본다.</b> {@code closedAt} 이 찬 글은 정의상 마감된 글이라 상태 조건이 결과를 바꾸지는 않지만, 인덱스의
    * 선두 컬럼이라 빼면 범위 스캔이 안 된다.
+   *
+   * <p><b>커서로 이어 읽는다</b> (PR #158 리뷰). {@code r.id > :afterRoomId} 가 없으면 청크마다 처음부터 다시 훑는데, 그러면 파기하지
+   * 못한 방이 <b>매 청크의 맨 앞자리를 계속 차지한다.</b> 커서가 있으면 성공했든 실패했든 지나간 자리로는 돌아가지 않는다.
    */
   private static final String SELECT_PURGEABLE_ROOM_ID =
       """
@@ -50,6 +53,7 @@ public class ChatRoomQueryRepositoryImpl implements ChatRoomQueryRepository {
        WHERE p.status = com.duckmoim.companion.domain.PostStatus.CLOSED
          AND p.closedAt < :cutoffInUtc
          AND r.purgedAt IS NULL
+         AND r.id > :afterRoomId
        ORDER BY r.id ASC
       """;
 
@@ -79,10 +83,11 @@ public class ChatRoomQueryRepositoryImpl implements ChatRoomQueryRepository {
   }
 
   @Override
-  public List<Long> findPurgeableRoomIds(LocalDateTime cutoffInUtc, int limit) {
+  public List<Long> findPurgeableRoomIds(LocalDateTime cutoffInUtc, long afterRoomId, int limit) {
     return entityManager
         .createQuery(SELECT_PURGEABLE_ROOM_ID, Long.class)
         .setParameter("cutoffInUtc", cutoffInUtc)
+        .setParameter("afterRoomId", afterRoomId)
         .setMaxResults(limit)
         .getResultList();
   }

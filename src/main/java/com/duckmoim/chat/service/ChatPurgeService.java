@@ -47,16 +47,20 @@ public class ChatPurgeService {
   private final ChatImageRepository chatImageRepository;
 
   /**
-   * 보관 기간이 지난 방을 오래된 것부터 상한만큼 집는다.
+   * 보관 기간이 지난 방을 커서 뒤에서부터 상한만큼 집는다.
    *
    * <p><b>경계 시각을 받는다.</b> {@code Clock} 을 여기서 읽지 않는 것은 「지난 방」과 「안 지난 방」의 경계가 검증 대상이라서다 — 시각을 인자로 두면
    * 검사가 실행 시각에 결과를 맡기지 않는다 ({@code NotificationExpiryService} 와 같은 판단이다).
    *
+   * <p><b>커서도 받는다</b> (PR #158 리뷰). 파기하지 못한 방이 다음 청크의 맨 앞자리를 계속 차지하는 것을 막는다 — 자세한 것은 {@code
+   * ChatRoomQueryRepository#findPurgeableRoomIds} 에 있다.
+   *
    * @param cutoffInUtc 이 시각보다 <b>앞서</b> 마감된 모집글의 방이 대상이다. 경계에 정확히 걸친 것은 남는다
+   * @param afterRoomId 이 번호보다 <b>큰</b> 방만 집는다. 회차의 첫 청크는 {@code 0} 이다
    */
   @Transactional(readOnly = true)
-  public List<Long> findPurgeableRooms(LocalDateTime cutoffInUtc, int limit) {
-    return chatRoomRepository.findPurgeableRoomIds(cutoffInUtc, limit);
+  public List<Long> findPurgeableRooms(LocalDateTime cutoffInUtc, long afterRoomId, int limit) {
+    return chatRoomRepository.findPurgeableRoomIds(cutoffInUtc, afterRoomId, limit);
   }
 
   /**

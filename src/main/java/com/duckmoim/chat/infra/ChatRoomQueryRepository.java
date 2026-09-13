@@ -45,11 +45,14 @@ public interface ChatRoomQueryRepository {
    * <p><b>방 번호만 준다.</b> 뒤따르는 일이 이미지 못박기 · S3 삭제 · 메시지 삭제라 엔티티가 필요한 자리는 마지막 하나뿐이고, 그것도 다른 트랜잭션이다 —
    * 여기서 애그리게이트를 통째로 끌어오면 멤버까지 따라온다.
    *
-   * <p><b>오래된 것부터 준다.</b> 한 주기가 상한만큼만 집으므로 순서가 없으면 같은 묶음을 반복해 집고 옛 방이 남는다. 두 인스턴스가 같은 순서로 훑는다는 뜻이기도
-   * 하다 (ADR 0009 — 잠그지 않는 대신 순서를 맞춘다).
+   * <p><b>번호 순으로 이어 읽는다.</b> 두 인스턴스가 같은 순서로 훑는다는 뜻이기도 하다 (ADR 0009 — 잠그지 않는 대신 순서를 맞춘다).
+   *
+   * <p><b>커서를 받는 이유는 파기하지 못한 방 때문이다</b> (PR #158 리뷰). 그 방은 표시가 붙지 않아 조건에 그대로 남고, 커서가 없으면 <b>다음 청크
+   * 조회에서도 맨 앞자리를 차지한다.</b> 그런 방이 상한만큼 쌓이면 청크가 통째로 그것들로 채워져 뒤에 줄 선 정상 방은 차례가 오지 않는다.
    *
    * @param cutoffInUtc 이 시각보다 <b>앞서</b> 마감된 모집글이 대상이다. 경계에 정확히 걸친 것은 남는다
+   * @param afterRoomId 이 번호보다 <b>큰</b> 방만 준다. 처음부터 읽으려면 {@code 0} 이다
    * @param limit 한 청크가 집을 최대 방 수
    */
-  List<Long> findPurgeableRoomIds(LocalDateTime cutoffInUtc, int limit);
+  List<Long> findPurgeableRoomIds(LocalDateTime cutoffInUtc, long afterRoomId, int limit);
 }

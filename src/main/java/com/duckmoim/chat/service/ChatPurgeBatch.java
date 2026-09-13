@@ -6,9 +6,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -42,9 +40,8 @@ public class ChatPurgeBatch {
   /**
    * 한 주기가 돌릴 최대 청크 수.
    *
-   * <p>없어도 끝난다 — 기준 시각을 처음에 한 번 읽어 고정하므로 대상 집합이 늘지 않고, 파기한 방은 {@code purged_at} 이 차 다음 조회에서 빠진다.
-   * <b>그럼에도 두는 것은 그 전제가 깨진 날을 위해서다</b>: 저장소 삭제가 계속 실패하면 그 방이 표시되지 않아 같은 청크를 <b>무한히 다시 집는다</b>
-   * ({@code ChatImageCleanupBatch} 와 같은 위험이다).
+   * <p><b>이제 무한 루프를 막는 장치가 아니다</b> (PR #158 리뷰). 커서가 성공·실패와 무관하게 전진해 같은 방을 두 번 만나지 않으므로, 없어도 조회가
+   * 비면서 끝난다. 남은 뜻은 <b>한 회차의 작업량 상한</b> 하나다 — 이 값 × {@code batchSize} 를 넘는 방은 다음 주기가 집고, 그때 경고를 남긴다.
    */
   private static final int MAX_CHUNKS = 50;
 
@@ -114,42 +111,65 @@ public class ChatPurgeBatch {
           total.messages(),
           total.images(),
           cutoffInUtc);
+
+      warnIfNothingPurged(total);
     } catch (Exception exception) {
       log.error("[ChatPurgeBatch.purgeExpiredRooms] 보관 기간이 지난 방의 파기에 실패했다.", exception);
     }
   }
 
+  /**
+   * 집었는데 한 방도 파기하지 못했으면 저장소를 의심한다.
+   *
+   * <p><b>판정을 회차 끝으로 미룬다</b> (PR #158 리뷰). 전에는 청크 안에서 보고 그 자리에서 배치를 끝냈는데, 그러면 앞쪽 방의 실패가 뒤쪽 방의 차례를
+   * 빼앗는다. 여기서 보면 <b>진행을 막지 않으면서</b> 인스턴스 역할에 {@code s3:DeleteObject} 가 없을 때의 증상은 그대로 보인다.
+   */
+  private void warnIfNothingPurged(ChatPurge total) {
+    if (total.picked() == 0 || total.purged() > 0) {
+      return;
+    }
+
+    log.warn(
+        "[ChatPurgeBatch.warnIfNothingPurged] 집은 방을 한 곳도 파기하지 못했다 — 저장소 권한을 확인한다. picked={}",
+        total.picked());
+  }
+
+  /**
+   * 커서를 들고 앞으로만 나아간다 (PR #158 리뷰).
+   *
+   * <p><b>파기하지 못한 방을 건너뛰는 것이 이 커서의 일이다.</b> 그 방은 표시가 붙지 않아 조건에 그대로 남고, 커서가 없으면 다음 청크 조회에서도 맨 앞자리를
+   * 차지한다 — 그런 방이 상한만큼 쌓이면 청크가 통째로 그것들로 채워져 <b>뒤에 줄 선 정상 방은 차례가 오지 않는다.</b> 성공했든 실패했든 마지막으로 시도한 번호를
+   * 커서로 넘기면 그 구조가 사라진다.
+   *
+   * <p><b>건너뛴 방을 잃지는 않는다.</b> 파기 표시가 없으니 다음 주기의 대상에 그대로 남는다 — 하루 늦어질 뿐이다.
+   */
   private ChatPurge purgeUntilDrained(LocalDateTime cutoffInUtc) {
     ChatPurge total = ChatPurge.empty();
 
-    // 이번 회차에 파기를 끝내지 못한 방. 표시가 안 붙어 다음 청크 조회에 그대로 다시
-    // 나오는데, 같은 회차에서 다시 집어도 저장소는 방금 실패한 그대로다.
-    Set<Long> failed = new HashSet<>();
+    // 방 번호는 1부터라 0 이 「처음부터」다.
+    long afterRoomId = 0;
 
     for (int chunks = 0; chunks < MAX_CHUNKS; chunks++) {
-      List<Long> picked = chatPurgeService.findPurgeableRooms(cutoffInUtc, batchSize);
-      List<Long> roomIds = picked.stream().filter(roomId -> !failed.contains(roomId)).toList();
+      List<Long> roomIds = chatPurgeService.findPurgeableRooms(cutoffInUtc, afterRoomId, batchSize);
 
-      // 집은 것이 전부 이번 회차에 실패한 방이면 더 할 일이 없다. 저장소가 막힌 상태라
-      // 계속 돌아도 같은 방을 MAX_CHUNKS 번 다시 만난다.
       if (roomIds.isEmpty()) {
-        log.warn(
-            "[ChatPurgeBatch.purgeUntilDrained] 집은 방을 한 곳도 파기하지 못했다 — 저장소 권한을 확인한다." + " picked={}",
-            picked.size());
         return total;
       }
 
-      total = total.plus(purgeChunk(roomIds, failed));
+      total = total.plus(purgeChunk(roomIds));
+
+      // 성공·실패와 무관하게 전진한다. 오름차순이라 마지막 번호가 이번 청크의 끝이다.
+      afterRoomId = roomIds.get(roomIds.size() - 1);
 
       // 집은 수로 끊는다. 파기한 수로 끊으면 저장소 삭제가 실패한 주기에 아직 남은 방을
       // 두고 배치가 끝난다.
-      if (picked.size() < batchSize) {
+      if (roomIds.size() < batchSize) {
         return total;
       }
     }
 
     // 상한에 걸려 나간다. 남은 것이 있는데 조용히 끝나면 「어제 다 지웠다」로 읽힌다
-    // ({@code NotificationExpiryBatch} 가 같은 자리에 같은 경고를 둔다).
+    // (NotificationExpiryBatch 가 같은 자리에 같은 경고를 둔다).
     log.warn(
         "[ChatPurgeBatch.purgeUntilDrained] 청크 상한에 걸렸다 — 남은 방은 다음 주기가 집는다. purged={}",
         total.purged());
@@ -157,16 +177,11 @@ public class ChatPurgeBatch {
     return total;
   }
 
-  private ChatPurge purgeChunk(List<Long> roomIds, Set<Long> failed) {
+  private ChatPurge purgeChunk(List<Long> roomIds) {
     ChatPurge chunk = ChatPurge.empty();
 
     for (Long roomId : roomIds) {
-      ChatPurge room = purgeOne(roomId);
-      chunk = chunk.plus(room);
-
-      if (room.purged() == 0) {
-        failed.add(roomId);
-      }
+      chunk = chunk.plus(purgeOne(roomId));
     }
 
     return chunk;

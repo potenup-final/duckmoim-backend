@@ -55,6 +55,9 @@ class ChatPurgeServiceTest {
   /** 경계 검사용 고정 시각. 조회에 직접 넣는 값이라 시계와 무관하다. */
   private static final LocalDateTime CUTOFF = LocalDateTime.of(2026, 6, 1, 0, 0);
 
+  /** 커서 없이 처음부터. 방 번호가 1부터라 0 이 그 뜻이다. */
+  private static final long FROM_START = 0;
+
   private static final LocalDateTime MEET_AT_UTC = LocalDateTime.of(2026, 1, 1, 9, 0);
 
   @Autowired private ChatPurgeBatch chatPurgeBatch;
@@ -185,7 +188,7 @@ class ChatPurgeServiceTest {
   void findPurgeableRooms_keepsRoomClosedExactlyAtCutoff() {
     long roomId = roomClosedAt(CUTOFF);
 
-    assertThat(chatPurgeService.findPurgeableRooms(CUTOFF, 100)).doesNotContain(roomId);
+    assertThat(chatPurgeService.findPurgeableRooms(CUTOFF, FROM_START, 100)).doesNotContain(roomId);
   }
 
   /** 상한을 넘게 집으면 한 주기가 저장소 호출을 무한정 한다. */
@@ -196,7 +199,23 @@ class ChatPurgeServiceTest {
     roomClosedAt(CUTOFF.minusDays(2));
     roomClosedAt(CUTOFF.minusDays(3));
 
-    assertThat(chatPurgeService.findPurgeableRooms(CUTOFF, 2)).hasSize(2);
+    assertThat(chatPurgeService.findPurgeableRooms(CUTOFF, FROM_START, 2)).hasSize(2);
+  }
+
+  /**
+   * 커서가 지나간 자리로 돌아가지 않는다 (PR #158 리뷰).
+   *
+   * <p>이것이 없으면 파기하지 못한 방이 <b>매 청크의 맨 앞자리를 계속 차지해</b> 뒤에 줄 선 방의 차례가 오지 않는다.
+   */
+  @DisplayName("커서를 주면 그 번호보다 큰 방만 집는다.")
+  @Test
+  void findPurgeableRooms_startsAfterCursor() {
+    long first = roomClosedAt(CUTOFF.minusDays(1));
+    long second = roomClosedAt(CUTOFF.minusDays(2));
+
+    assertThat(chatPurgeService.findPurgeableRooms(CUTOFF, first, 100))
+        .contains(second)
+        .doesNotContain(first);
   }
 
   // ── 저장소 실패 ────────────────────────────────────────────────────────────
@@ -219,6 +238,32 @@ class ChatPurgeServiceTest {
     assertThat(statusOf(imageId)).isEqualTo("DELETING");
     assertThat(purgedAtOf(roomId)).isNull();
     assertThat(messageCountOf(roomId)).isZero();
+  }
+
+  /**
+   * <b>앞 방의 실패가 뒤 방의 차례를 빼앗지 않는다</b> (PR #158 리뷰).
+   *
+   * <p>파기하지 못한 방은 표시가 붙지 않아 조건에 그대로 남는다. 커서가 없으면 그 방이 다음 조회의 맨 앞자리를 계속 차지하고, 그런 방이 청크 상한만큼 쌓이면 뒤에 줄
+   * 선 정상 방은 영영 처리되지 않는다.
+   *
+   * <p><b>목을 키별로 갈라 세운다.</b> 앞 방의 사진만 실패시켜야 「앞이 막혀도 뒤가 간다」를 볼 수 있다.
+   */
+  @DisplayName("앞 방의 저장소 삭제가 실패해도 뒤 방은 같은 회차에 파기된다.")
+  @Test
+  void batch_purgesRoomBehindFailedRoom() {
+    long blocked = expiredRoom();
+    String blockedKey = insertImageKey(blocked);
+    long following = expiredRoom();
+    insertMessage(following, MessageStatus.ACTIVE);
+
+    given(storage.delete(anyString())).willReturn(true);
+    given(storage.delete(blockedKey)).willReturn(false);
+
+    chatPurgeBatch.purgeExpiredRooms();
+
+    assertThat(purgedAtOf(blocked)).isNull();
+    assertThat(purgedAtOf(following)).isNotNull();
+    assertThat(messageCountOf(following)).isZero();
   }
 
   /** 앞 주기가 못 지운 것을 다음 주기가 이어받는다. 그 방이 대상 목록에 남아 있어야 성립한다. */
@@ -282,8 +327,19 @@ class ChatPurgeServiceTest {
         status.name());
   }
 
-  private long insertImage(long roomId, ChatImageStatus status) {
+  /** 방에 실린 사진 하나를 넣고 객체 키를 준다. 저장소 목을 키별로 갈라 세울 때 쓴다. */
+  private String insertImageKey(long roomId) {
     String objectKey = "chat/" + roomId + "/" + UUID.randomUUID() + ".jpg";
+    insertImage(roomId, ChatImageStatus.ATTACHED, objectKey);
+
+    return objectKey;
+  }
+
+  private long insertImage(long roomId, ChatImageStatus status) {
+    return insertImage(roomId, status, "chat/" + roomId + "/" + UUID.randomUUID() + ".jpg");
+  }
+
+  private long insertImage(long roomId, ChatImageStatus status, String objectKey) {
     jdbcTemplate.update(
         """
         INSERT INTO chat_image (room_id, uploader_id, object_key, content_type, byte_size, status,
