@@ -54,7 +54,9 @@ public class ChatImageController {
       summary = "채팅 이미지 업로드 서명 발급",
       description =
           "방 멤버만 발급받을 수 있다. 허용 밖 형식·크기는 400 이다. "
-              + "돌려받은 uploadUrl 로 브라우저가 직접 PUT 하고, 그 뒤 확정을 부른다.")
+              + "돌려받은 uploadUrl 로 브라우저가 직접 PUT 하고, 그 뒤 확정을 부른다. "
+              + "PUT 에는 Content-Type 과 If-None-Match: * 헤더를 함께 보낸다 — 이 주소로는 한 번만 올릴 수 있고, "
+              + "같은 주소로 다시 올리면 412 다 (이미 올라간 것이니 확정으로 넘어간다).")
   @PostMapping
   public ChatImageUploadResponse issue(
       @PathVariable Long roomId,

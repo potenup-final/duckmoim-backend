@@ -2,13 +2,20 @@ package com.duckmoim.chat.infra;
 
 import com.duckmoim.chat.domain.ChatImage;
 import com.duckmoim.chat.domain.ChatImageStatus;
+import com.duckmoim.chat.domain.ExifStatus;
+import jakarta.persistence.LockModeType;
+import jakarta.persistence.QueryHint;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 import org.springframework.data.domain.Limit;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.jpa.repository.QueryHints;
 import org.springframework.data.repository.query.Param;
 
 /** 채팅 이미지 저장소 (CH-14 · CH-17). */
@@ -81,4 +88,103 @@ public interface ChatImageRepository extends JpaRepository<ChatImage, Long> {
          AND i.status = com.duckmoim.chat.domain.ChatImageStatus.DELETING
       """)
   int deleteClaimed(@Param("id") Long id);
+
+  // ── EXIF 워커 (CH-16) ────────────────────────────────────────────────────
+  //
+  // ⚠️ 아래는 전부 버전을 올리지 않는다. 워커는 확정 직후, 사용자가 보내는 바로 그 몇 초
+  // 사이에 돈다 — 버전을 올리면 전송의 attach 가 버전 충돌로 400 을 맞는다. 워커가 쓰는 열
+  // (exif_*)과 전송·정리가 쓰는 열이 겹치지 않고, ChatImage 가 @DynamicUpdate 라 서로 덮지
+  // 않는다.
+
+  /**
+   * EXIF 를 벗길 사진을 잠그고 읽는다 (CH-16 · ADR 0008).
+   *
+   * <p><b>{@code FOR UPDATE SKIP LOCKED} 다.</b> 인스턴스가 둘이라 워커도 둘이고, 사진 한 장이 내려받기 · 재작성 · 업로드라 헛일 비용이
+   * 알림보다 훨씬 크다. 남이 잠근 행은 건너뛴다.
+   *
+   * <p><b>수명주기가 {@code CONFIRMED} · {@code ATTACHED} 인 것만 집는다.</b> {@code PENDING} 은 저장소에 올라왔는지조차
+   * 모르고, {@code DELETING} 은 고아 정리가 지우는 중이다.
+   *
+   * <p><b>{@code PESSIMISTIC_WRITE} 는 버전을 올리지 않는다</b> ({@code PESSIMISTIC_FORCE_INCREMENT} 와 다르다).
+   * 잠그기만 한다.
+   */
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @QueryHints(@QueryHint(name = "jakarta.persistence.lock.timeout", value = "-2"))
+  @Query(
+      """
+      SELECT i FROM ChatImage i
+       WHERE i.exifStatus = com.duckmoim.chat.domain.ExifStatus.PENDING
+         AND i.status IN (com.duckmoim.chat.domain.ChatImageStatus.CONFIRMED,
+                          com.duckmoim.chat.domain.ChatImageStatus.ATTACHED)
+         AND (i.exifNextAttemptAt IS NULL OR i.exifNextAttemptAt <= :nowInUtc)
+       ORDER BY i.id ASC
+      """)
+  List<ChatImage> findExifProcessableForUpdate(
+      @Param("nowInUtc") LocalDateTime nowInUtc, Pageable pageable);
+
+  /**
+   * 집은 행에 리스를 적는다. 잠금은 트랜잭션이 끝나면 풀리지만 처리는 그 뒤에 일어나므로, 풀린 뒤에도 남는 표시가 필요하다 (ADR 0008).
+   *
+   * <p>리스는 시각이라 워커가 죽어도 저절로 풀린다 — 「처리 중」 상태를 두면 거기서 빼내는 장치를 따로 만들어야 한다.
+   */
+  @Modifying(clearAutomatically = true, flushAutomatically = true)
+  @Query(
+      """
+      UPDATE ChatImage i
+         SET i.exifNextAttemptAt = :leaseUntil
+       WHERE i.id IN :ids
+         AND i.exifStatus = com.duckmoim.chat.domain.ExifStatus.PENDING
+      """)
+  int leaseExif(@Param("ids") Collection<Long> ids, @Param("leaseUntil") LocalDateTime leaseUntil);
+
+  /**
+   * 벗겼다고 적는다.
+   *
+   * <p><b>그 사이 고아 정리가 못박았으면 적지 않는다</b> — 수명주기 조건이 그것을 거른다. 지워질 행에 {@code STRIPPED} 가 적혀도 해는 없지만, 행
+   * 수로 「이번에 적었나」를 판정하려면 조건이 정확해야 한다.
+   *
+   * @return 적었으면 1
+   */
+  @Modifying(clearAutomatically = true, flushAutomatically = true)
+  @Query(
+      """
+      UPDATE ChatImage i
+         SET i.exifStatus = com.duckmoim.chat.domain.ExifStatus.STRIPPED,
+             i.exifNextAttemptAt = NULL
+       WHERE i.id = :id
+         AND i.exifStatus = com.duckmoim.chat.domain.ExifStatus.PENDING
+         AND i.status IN (com.duckmoim.chat.domain.ChatImageStatus.CONFIRMED,
+                          com.duckmoim.chat.domain.ChatImageStatus.ATTACHED)
+      """)
+  int markExifStripped(@Param("id") Long id);
+
+  /** 아직 벗기지 않은 행의 실패 횟수. 백오프 간격을 고르는 입력이다. */
+  @Query(
+      """
+      SELECT i.exifAttempts FROM ChatImage i
+       WHERE i.id = :id
+         AND i.exifStatus = com.duckmoim.chat.domain.ExifStatus.PENDING
+      """)
+  Optional<Integer> findPendingExifAttempts(@Param("id") Long id);
+
+  /**
+   * 실패를 적는다. 재시도가 남았으면 {@code PENDING} 그대로 다음 시각을, 다 썼으면 {@code FAILED} 를 적는다.
+   *
+   * @return 적었으면 1
+   */
+  @Modifying(clearAutomatically = true, flushAutomatically = true)
+  @Query(
+      """
+      UPDATE ChatImage i
+         SET i.exifAttempts = :attempts,
+             i.exifStatus = :exifStatus,
+             i.exifNextAttemptAt = :nextAttemptAt
+       WHERE i.id = :id
+         AND i.exifStatus = com.duckmoim.chat.domain.ExifStatus.PENDING
+      """)
+  int recordExifAttempt(
+      @Param("id") Long id,
+      @Param("attempts") int attempts,
+      @Param("exifStatus") ExifStatus exifStatus,
+      @Param("nextAttemptAt") LocalDateTime nextAttemptAt);
 }

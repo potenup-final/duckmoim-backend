@@ -1,5 +1,6 @@
 package com.duckmoim.identity.infra;
 
+import java.time.Duration;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.context.annotation.Bean;
@@ -33,9 +34,26 @@ import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 @ConditionalOnExpression("'${duckmoim.s3.bucket:}' != '' or '${duckmoim.s3.chat-bucket:}' != ''")
 public class S3Config {
 
+  /**
+   * S3 호출에 시간 상한을 건다 (CH-16 리뷰).
+   *
+   * <p><b>없으면 끝이 없다.</b> SDK 기본값에는 호출 전체의 상한이 없고 실패하면 재시도까지 한다 — S3 가 느린 날 이 클라이언트를 부른 스레드가 그대로
+   * 물린다. 프로필 이미지의 확정은 톰캣 스레드이고, 채팅 이미지 워커는 한 회차에 수백 번을 부른다.
+   *
+   * <p><b>시도 한 번과 호출 전체를 따로 건다.</b> 시도 상한만 있으면 재시도가 그 시간을 곱으로 늘리고, 전체 상한만 있으면 한 번 느린 시도가 재시도 기회를 다
+   * 먹는다.
+   */
   @Bean
-  public S3Client s3Client(@Value("${duckmoim.s3.region}") String region) {
-    return S3Client.builder().region(Region.of(region)).build();
+  public S3Client s3Client(
+      @Value("${duckmoim.s3.region}") String region,
+      @Value("${duckmoim.s3.api-call-attempt-timeout}") Duration attemptTimeout,
+      @Value("${duckmoim.s3.api-call-timeout}") Duration callTimeout) {
+
+    return S3Client.builder()
+        .region(Region.of(region))
+        .overrideConfiguration(
+            config -> config.apiCallAttemptTimeout(attemptTimeout).apiCallTimeout(callTimeout))
+        .build();
   }
 
   @Bean

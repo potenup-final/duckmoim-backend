@@ -57,4 +57,25 @@ public interface ChatImageStorage {
    * @return 지웠거나 이미 없으면 {@code true}. 실패했으면 {@code false} — 부르는 쪽이 행을 남긴다
    */
   boolean delete(String objectKey);
+
+  /**
+   * 객체를 내려받는다 (CH-16).
+   *
+   * <p><b>없으면 빈 값이다.</b> 고아 정리가 먼저 지웠을 수 있고 그것은 정상이다. <b>그 밖의 실패(네트워크 · 권한)는 던진다</b> — 부르는 쪽이 재시도로
+   * 다룬다. 「없음」과 섞으면 일시 장애를 영구 실패로 오인한다.
+   */
+  Optional<StoredChatImage> download(String objectKey);
+
+  /**
+   * 내려받은 뒤로 바뀌지 않았을 때만 덮어쓴다 (CH-16).
+   *
+   * <p><b>조건 없이 쓰면 행 없는 객체를 되살린다.</b> EXIF 워커가 내려받고 벗기는 사이에 고아 정리가 행과 객체를 지우면, 조건 없는 PUT 은 그 키에 객체를
+   * <b>새로 만든다</b> — CH-17 이 없애려던 바로 그 쓰레기다. {@code If-Match: etag} 로 조건을 걸어 그 사이 사라졌거나 바뀐 객체에는 쓰지
+   * 않는다.
+   *
+   * <p>그 밖의 실패(네트워크 · 권한)는 던진다. 재시도로 다룬다.
+   *
+   * @return 썼으면 {@code true}. 사라졌거나 바뀌었으면 {@code false} — 재시도해도 소용없는 쪽이다
+   */
+  boolean overwriteIfUnchanged(String objectKey, byte[] bytes, String contentType, String etag);
 }
