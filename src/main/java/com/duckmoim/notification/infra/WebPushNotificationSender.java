@@ -284,8 +284,10 @@ public class WebPushNotificationSender implements NotificationPushSender {
    * <p><b>문구가 없다.</b> 알림함 항목과 같은 모양을 보내고 Service Worker 가 조립한다 — 서버가 문구를 쥐면 문안 한 줄 고치는 데 배포가 필요해진다
    * (API-설계.md 「2-10. 알림 (Notification) · 2차」).
    *
-   * <p><b>{@code url} 이 이 서버가 프론트 라우트를 아는 유일한 자리다.</b> 클릭했을 때 갈 곳이 필요한데 그 경로는 프론트가 정한다. 라우트가 바뀌면
-   * 여기도 바뀌어야 하므로, 넓히지 않고 이 파일 안에만 둔다.
+   * <p><b>주소를 담지 않는다.</b> 한때 {@code url} 을 넣었는데, Service Worker 가 그 값을 쓰지 않고 <b>자기가 경로를 만들고 있었다</b>
+   * (PR #157 · 프론트 확인). 아무도 안 읽는 값이 남아 있으면 틀려도 아무도 모른다.
+   *
+   * <p><b>그래서 이 서버는 프론트 라우트를 모른다.</b> 주소 모양이 바뀌어도 서버를 고치고 배포할 일이 없다 — 화면의 일은 화면이 정한다.
    */
   private String encode(NotificationDelivery delivery) {
     NotificationTarget target = delivery.target();
@@ -297,7 +299,6 @@ public class WebPushNotificationSender implements NotificationPushSender {
     payload.put("commentId", target.commentId());
     payload.put("roomId", target.roomId());
     payload.put("messageId", target.messageId());
-    payload.put("url", urlOf(delivery.kind(), target));
     payload.put("tag", tagOf(delivery.kind(), target));
 
     try {
@@ -307,13 +308,6 @@ public class WebPushNotificationSender implements NotificationPushSender {
       // 것이고, 재시도로 풀릴 일이 아니다.
       throw new PermanentPushException("푸시 본문을 만들 수 없다.", e);
     }
-  }
-
-  /** 알림을 눌렀을 때 갈 곳. 프론트 라우트다. */
-  private static String urlOf(NotificationKind kind, NotificationTarget target) {
-    return kind == NotificationKind.ROOM_MESSAGED
-        ? "/chat-rooms/" + target.roomId()
-        : "/posts/" + target.postId() + "#comment-" + target.commentId();
   }
 
   /**
