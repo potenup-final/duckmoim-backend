@@ -7,6 +7,8 @@ import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.redis.core.RedisOperations;
+import org.springframework.data.redis.core.SessionCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ZSetOperations.TypedTuple;
 import org.springframework.stereotype.Component;
@@ -83,6 +85,23 @@ public class RedisChatPresence implements ChatPresence {
    *
    * <p><b>걷어내는 것을 읽는 쪽이 아니라 여기서 한다.</b> 읽기는 메시지 전송마다 도는 길이라 쓰기를 섞지 않는다. 갱신은 30초에 한 번이라 그 일을 얹기에
    * 알맞다.
+   *
+   * <p><b>명령 셋을 파이프라인 하나로 보낸다</b> (PR #145 리뷰). 따로 보내면 왕복이 셋이고 {@code spring.data.redis.timeout:
+   * 1s} 가 명령마다 걸려 방 하나가 최악 3초인데, 부르는 쪽이 30초마다 방 전체를 도는 주기 작업이라 그 3초가 방 수만큼 곱해진다.
+   *
+   * <p><b>{@code SessionCallback} 이어야 한다. {@code RedisCallback} 은 조용히 안 묶인다.</b> 파이프라인이 성립하려면 안쪽
+   * 명령들이 <b>같은 커넥션</b>을 타야 하는데, 커넥션을 스레드에 묶어 주는 것은 이 변형뿐이다 (바이트코드 확인 — {@code
+   * executePipelined(SessionCallback)} 은 {@code bindConnection} 을 부르고 {@code
+   * executePipelined(RedisCallback)} 은 {@code doGetConnection} 만 부른다). 뒤엣것을 쓰면 안쪽 호출이 <b>각자 새 커넥션으로
+   * 즉시 실행되고 빈 파이프라인만 오간다</b> — 왕복이 셋에서 넷으로 늘 뿐 에러도 경고도 없다.
+   *
+   * <p>그 대가로 이 안에서는 {@code redisTemplate} 을 그대로 쓴다. 묶인 커넥션은 스레드에 걸려 있어 같은 팩터리를 쓰는 호출이 알아서 그것을 집는다.
+   *
+   * <p><b>콜백 안에서는 반환값을 읽지 않는다.</b> 파이프라인은 명령을 모아 두었다가 한 번에 보내므로 그 안의 {@code opsForZSet()} 호출은 전부
+   * {@code null} 을 돌려준다 — 여기서 그 값을 쓰면 <b>NPE 가 되고, 그것도 이 {@code catch} 가 삼켜 조용해진다.</b> 던지기만 한다.
+   *
+   * <p>순서는 그대로 지켜진다. 파이프라인은 보내는 방식만 바꾸고 <b>서버가 받아 실행하는 순서는 적은 순서</b>다 — 낡은 점수를 걷어내는 것이 방금 올린 점수보다
+   * 먼저 돌면 안 된다.
    */
   @Override
   public void refresh(long roomId, Set<Long> userIds) {
@@ -94,11 +113,19 @@ public class RedisChatPresence implements ChatPresence {
       String key = keyOf(roomId);
       double now = nowInSeconds();
 
-      redisTemplate.opsForZSet().add(key, tuplesOf(userIds, now));
-      redisTemplate.opsForZSet().removeRangeByScore(key, 0, freshSince(now));
+      redisTemplate.executePipelined(
+          new SessionCallback<Object>() {
+            @Override
+            public <K, V> Object execute(RedisOperations<K, V> operations) {
+              redisTemplate.opsForZSet().add(key, tuplesOf(userIds, now));
+              redisTemplate.opsForZSet().removeRangeByScore(key, 0, freshSince(now));
 
-      // 아무도 갱신하지 않으면 키가 통째로 사라진다. 갱신이 도는 동안은 계속 밀린다.
-      redisTemplate.expire(key, staleAfter);
+              // 아무도 갱신하지 않으면 키가 통째로 사라진다. 갱신이 도는 동안은 계속 밀린다.
+              redisTemplate.expire(key, staleAfter);
+
+              return null;
+            }
+          });
     } catch (RuntimeException e) {
       log.warn(
           "[RedisChatPresence.refresh] 접속 갱신 실패 — 알림 억제만 건너뛴다. roomId={} cause={}",

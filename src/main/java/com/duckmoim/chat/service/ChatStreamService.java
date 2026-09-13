@@ -287,12 +287,28 @@ public class ChatStreamService {
    *
    * <p>그러면 <b>조용한 방의 멀쩡한 연결이 60초마다 끊기고 재연결한다</b> — 하트비트를 넣은 이유가 그대로 무너진다. 이 실패는 예외가 아니라 「반환하지 않는
    * 것」이라 {@code catch} 로도 안 잡히고 로그에도 안 남는다.
+   *
+   * <p><b>접속 갱신도 같은 풀로 넘긴다</b> (NT-07 · PR #145 리뷰). 세션 쓰기만 빼고 이쪽을 이 스레드에 두면 위 논거가 반만 적용된 상태가 된다 —
+   * {@code refresh} 한 번이 Redis 명령 셋이고 명령마다 {@code spring.data.redis.timeout: 1s} 라 방 하나가 최악 3초다.
+   *
+   * <pre>
+   * 방 20개 × 3초  =  한 바퀴 60초
+   *    ① fixedDelay 라 다음 주기가 안 잡히고, 뒤쪽 방은 beat 가 제출조차 안 된다 → ALB 유휴 60초
+   *    ② taskScheduler 풀이 2인데 그중 하나를 60초 물고 있다 → 10초 주기인 알림 워커가 밀린다
+   * </pre>
+   *
+   * <p><b>방 단위로 하나씩 넘긴다.</b> 명령 단위로 쪼개면 {@code zAdd} 보다 낡은 점수 걷어내기가 먼저 돌아 <b>방금 올린 점수를 지운다.</b>
+   *
+   * <p><b>넘기기 전에 명단을 뜬다.</b> {@code room} 은 살아 있는 목록이라 그대로 넘기면 풀에서 읽는 시점의 명단이 되는데, 갱신하려는 것은 <b>이
+   * 주기에 붙어 있던 사람</b>이다.
    */
   public void heartbeat() {
     connections.forEach(
         (roomId, room) -> {
           room.forEach(connection -> heartbeatExecutor.beat(connection.session()));
-          chatPresence.refresh(roomId, viewerIdsOf(room));
+
+          Set<Long> viewers = viewerIdsOf(room);
+          heartbeatExecutor.submit(() -> chatPresence.refresh(roomId, viewers));
         });
   }
 
