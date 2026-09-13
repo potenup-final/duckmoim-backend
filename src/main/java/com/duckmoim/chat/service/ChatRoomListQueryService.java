@@ -34,6 +34,7 @@ public class ChatRoomListQueryService {
         summary.postId(),
         summary.postTitle(),
         summary.meetAt(),
-        summary.memberCount());
+        summary.memberCount(),
+        summary.unreadCount());
   }
 }

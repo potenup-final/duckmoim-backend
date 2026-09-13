@@ -1,6 +1,7 @@
 package com.duckmoim.chat.presentation;
 
 import com.duckmoim.chat.service.ChatRoomSummaryView;
+import io.swagger.v3.oas.annotations.media.Schema;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
@@ -16,13 +17,23 @@ import java.time.ZoneOffset;
  *     분리했다
  */
 public record ChatRoomSummaryResponse(
-    Long roomId, Long postId, String postTitle, OffsetDateTime meetAt, long memberCount) {
+    Long roomId,
+    Long postId,
+    String postTitle,
+    OffsetDateTime meetAt,
+    long memberCount,
+    @Schema(description = "안 읽은 메시지 수. 내가 보낸 것은 빼고 센다", example = "3") long unreadCount) {
 
   private static final ZoneId KST = ZoneId.of("Asia/Seoul");
 
   static ChatRoomSummaryResponse from(ChatRoomSummaryView view) {
     return new ChatRoomSummaryResponse(
-        view.roomId(), view.postId(), view.postTitle(), toKst(view.meetAt()), view.memberCount());
+        view.roomId(),
+        view.postId(),
+        view.postTitle(),
+        toKst(view.meetAt()),
+        view.memberCount(),
+        view.unreadCount());
   }
 
   private static OffsetDateTime toKst(LocalDateTime storedInUtc) {

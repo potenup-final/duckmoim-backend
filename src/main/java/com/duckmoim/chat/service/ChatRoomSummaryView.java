@@ -9,4 +9,9 @@ import java.time.LocalDateTime;
  * 있다 (아키텍처 컨벤션 「레이어 의존성」).
  */
 public record ChatRoomSummaryView(
-    Long roomId, Long postId, String postTitle, LocalDateTime meetAt, long memberCount) {}
+    Long roomId,
+    Long postId,
+    String postTitle,
+    LocalDateTime meetAt,
+    long memberCount,
+    long unreadCount) {}

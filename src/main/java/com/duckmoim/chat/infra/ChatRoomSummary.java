@@ -14,4 +14,9 @@ import java.time.LocalDateTime;
  *     분리했고, 「멤버가 방장뿐인 방도 목록에 있다」검증 기준도 실제 인원(1)을 세는 것을 전제로 한다
  */
 public record ChatRoomSummary(
-    Long roomId, Long postId, String postTitle, LocalDateTime meetAt, long memberCount) {}
+    Long roomId,
+    Long postId,
+    String postTitle,
+    LocalDateTime meetAt,
+    long memberCount,
+    long unreadCount) {}
