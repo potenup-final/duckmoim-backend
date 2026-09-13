@@ -10,7 +10,7 @@ import org.springframework.stereotype.Component;
 /**
  * 채팅 이미지 작업을 도는 전용 스레드 (CH-16 · CH-17 리뷰).
  *
- * <p><b>배치 스케줄러({@code taskScheduler})에서 돌리지 않는다.</b> 그쪽은 풀이 2인데 {@code @Scheduled} 가 일곱이고, 그중 하나가
+ * <p><b>배치 스케줄러({@code taskScheduler})에서 돌리지 않는다.</b> 그쪽은 풀이 2인데 {@code @Scheduled} 가 여덟이고, 그중 하나가
  * SSE 하트비트다. 지금까지의 배치는 DB 만 짧게 썼지만 이미지 작업은 <b>한 장마다 S3 에서 최대 10MB 를 받고 올린다.</b>
  *
  * <pre>
