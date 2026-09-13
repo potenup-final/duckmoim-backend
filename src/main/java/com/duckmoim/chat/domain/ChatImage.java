@@ -12,9 +12,11 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import jakarta.persistence.Version;
+import java.time.LocalDateTime;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import org.hibernate.annotations.DynamicUpdate;
 
 /**
  * 방에 올린 사진 한 장 (CH-14 · CH-17).
@@ -28,11 +30,23 @@ import lombok.NoArgsConstructor;
  * <p><b>그래서 {@code roomId} 와 {@code uploaderId} 를 직접 들고 있다.</b> 확정과 전송이 「이 방의 멤버인가」 · 「올린 사람이 맞는가」를
  * 물어야 하고, 메시지가 아직 없으므로 그쪽으로 물어볼 수 없다.
  *
+ * <p><b>{@code @DynamicUpdate} 인 이유 — 이 행을 쓰는 주체가 셋이고 각자 다른 열을 쓴다</b> (CH-16).
+ *
+ * <pre>
+ * 확정 · 전송         status · content_type · byte_size · version
+ * 고아 정리 배치       status · version                   (벌크 UPDATE)
+ * EXIF 워커           exif_status · exif_attempts · exif_next_attempt_at             (벌크 UPDATE)
+ * </pre>
+ *
+ * <p>기본 동작(모든 열을 다시 쓰기)이면 전송의 {@link #attach} 가 <b>읽어 둔 낡은 {@code exif_status = PENDING} 을 통째로
+ * 되써서</b> 워커가 방금 쓴 {@code STRIPPED} 를 지운다. 바뀐 열만 쓰면 셋이 서로를 덮지 않는다.
+ *
  * <p><b>공개 주소를 만들 수 없는 것이 의도다.</b> {@code CH-15} 가 「공개 주소를 쓰지 않는다」로 정했고 그것은 별 티켓이라, 이 엔티티는 키까지만 알고
  * 주소를 만드는 메서드를 갖지 않는다 — {@code User#profileImageUrl} 이 주소를 저장하는 것과 갈리는 자리다 (계획서 8.2).
  */
 @Entity
 @Table(name = "chat_image")
+@DynamicUpdate
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class ChatImage extends BaseEntity {
@@ -88,6 +102,25 @@ public class ChatImage extends BaseEntity {
   @Column(name = "version", nullable = false)
   private long version;
 
+  /**
+   * EXIF 를 벗겼는가 (CH-16).
+   *
+   * <p><b>이 엔티티의 메서드는 이 칸을 바꾸지 않는다.</b> EXIF 워커만 바꾸고, 그것도 버전을 올리지 않는 조건부 UPDATE 로 한다 ({@code
+   * ChatImageRepository}) — 워커는 확정 직후, 사용자가 보내는 바로 그 몇 초 사이에 돌기 때문에 버전을 올리면 <b>정상 전송이 버전 충돌로 400 을
+   * 맞는다.</b>
+   */
+  @Enumerated(EnumType.STRING)
+  @Column(name = "exif_status", nullable = false, length = 20)
+  private ExifStatus exifStatus;
+
+  /** EXIF 제거 실패 횟수. 선점은 시도가 아니라 올리지 않는다 (ADR 0008). */
+  @Column(name = "exif_attempts", nullable = false)
+  private int exifAttempts;
+
+  /** 이 시각 전에는 워커가 집지 않는다. 백오프와 선점 리스가 같은 칸을 쓴다. */
+  @Column(name = "exif_next_attempt_at")
+  private LocalDateTime exifNextAttemptAt;
+
   private ChatImage(Long roomId, Long uploaderId, String objectKey, String contentType) {
     this.roomId = roomId;
     this.uploaderId = uploaderId;
@@ -95,6 +128,7 @@ public class ChatImage extends BaseEntity {
     this.contentType = contentType;
     this.byteSize = 0L;
     this.status = ChatImageStatus.PENDING;
+    this.exifStatus = ExifStatus.PENDING;
   }
 
   /**
@@ -146,6 +180,18 @@ public class ChatImage extends BaseEntity {
     }
 
     this.status = ChatImageStatus.ATTACHED;
+  }
+
+  /**
+   * 보여줘도 되는가 — EXIF 쪽 절반 (CH-16 · CH-15 와의 계약).
+   *
+   * <p><b>서명 URL 을 발급하는 쪽(CH-15)이 이 값이 참일 때만 발급해야 한다.</b> 전송은 이 값을 기다리지 않고 사진을 싣는다 — 대신 보여주는 쪽이
+   * 기다린다. {@code PENDING} 은 「처리 중」이고 {@code FAILED} 는 영구히 거짓이다.
+   *
+   * <p>방 멤버 판정 · 첨부 여부 같은 나머지 조건은 CH-15 의 몫이라 여기 섞지 않는다.
+   */
+  public boolean isExifStripped() {
+    return exifStatus == ExifStatus.STRIPPED;
   }
 
   /** 그 방에 그 사람이 올린 것인가. 확정과 전송이 같은 질문을 한다. */
