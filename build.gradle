@@ -60,6 +60,32 @@ dependencies {
 
 	// jjwt 는 API 와 구현이 분리돼 있다. 컴파일은 api 에만 붙이고 impl·jackson 은
 	// 런타임에만 있으면 된다 — 구현체를 직접 import 하지 못하게 막는 배치다.
+	// 웹 푸시 (NT-13). VAPID 서명(ECDSA P-256)과 본문 암호화(AES128GCM)를 직접 짜는 것은
+	// 범위 밖이라 라이브러리를 쓴다.
+	//
+	// **com.interaso:webpush 를 먼저 골랐다가 물렸다.** 의존성이 셋뿐이라 매력적이었는데,
+	// VAPID 개인키를 부호 있는 정수로 읽어서 **첫 바이트의 최상위 비트가 선 키를 전부 거절한다.**
+	// npx 가 만든 키 여섯 중 둘이 그랬다 — 대략 절반이다. 실물로 확인했다.
+	//
+	// 이쪽은 같은 키 여섯을 다 읽는다. 대가는 딸려 오는 것이 많다는 점이다 — Netty 4.1.60(2021)
+	// 과 async-http-client 2.12.4 가 들어오고, Boot 의 BOM 이 Netty 를 훨씬 높은 판본으로 올린다.
+	// 그 조합이 도는지는 우리 검사가 보증한다 (WebPushSigningTest).
+	implementation 'nl.martijndwars:web-push:5.1.2'
+
+	// **web-push 가 compileOnly 로 선언해서 해석 트리에 안 잡힌다.** 없으면 컴파일은 되고
+	// 런타임에 NoClassDefFoundError 가 난다 — 그 라이브러리의 키 파싱과 암호화가 전부 이 위에
+	// 올라가 있다. 프로바이더 등록도 필요하고, 그것은 WebPushConfig 가 한다.
+	implementation 'org.bouncycastle:bcprov-jdk18on:1.78.1'
+	implementation 'org.bouncycastle:bcpkix-jdk18on:1.78.1'
+
+	// **web-push 의 send() 반환 타입이 이 안에 있는데 런타임 스코프로만 온다.** 명시하지 않으면
+	// 「package org.apache.http does not exist」로 컴파일이 막힌다. 판본은 그 라이브러리가
+	// 끌고 오는 것과 같게 맞춘다 — 둘이 갈리면 컴파일은 되고 런타임에 NoSuchMethodError 가 난다.
+	implementation 'org.apache.httpcomponents:httpclient:4.5.13'
+
+	// send() 의 throws 절에 JoseException 이 있어 같은 이유로 컴파일 클래스패스에 필요하다.
+	implementation 'org.bitbucket.b_c:jose4j:0.7.9'
+
 	implementation 'io.jsonwebtoken:jjwt-api:0.12.6'
 	runtimeOnly 'io.jsonwebtoken:jjwt-impl:0.12.6'
 	runtimeOnly 'io.jsonwebtoken:jjwt-jackson:0.12.6'

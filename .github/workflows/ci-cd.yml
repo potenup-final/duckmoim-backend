@@ -2,9 +2,9 @@ name: CI/CD
 
 on:
   push:
-    branches: [main, develop]
+    branches: [ main, develop ]
   pull_request:
-    branches: [main, develop]
+    branches: [ main, develop ]
   workflow_dispatch:
 
 concurrency:
@@ -200,6 +200,9 @@ jobs:
       # 않으므로(JWT_SECRET · INGEST_KEY · KAKAO_CLIENT_ID) 하나라도 빠지면 조용히
       # 넘어가는 것이 아니라 컨테이너가 기동에서 죽고 헬스체크 20회가 다 타임아웃한다.
       # Secrets 에 값을 넣는 것만으로는 전달되지 않는다 — 이름을 여기에도 적어야 한다.
+      # VAPID 셋도 필수가 아니다 (STAR-132). 비면 NoOpNotificationPushSender 가 떠서
+      # 웹 푸시만 꺼지고 인앱 알림함·배지·수신 설정은 그대로 돈다 — 위 REDIS 와 같은 판단이다.
+
       - name: 환경 파일 전송
         env:
           DB_URL: ${{ secrets.DB_URL }}
@@ -215,6 +218,9 @@ jobs:
           S3_CHAT_BUCKET: ${{ secrets.S3_CHAT_BUCKET }}
           REDIS_HOST: ${{ secrets.REDIS_HOST }}
           REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
+          VAPID_PUBLIC_KEY: ${{ secrets.VAPID_PUBLIC_KEY }}
+          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+          VAPID_SUBJECT: ${{ secrets.VAPID_SUBJECT }}
         run: |
           # 빈 시크릿을 여기서 끊는다. 없는 시크릿은 GitHub 이 빈 문자열로 렌더하는데,
           # 그러면 --env-file 에 "KAKAO_CLIENT_ID=" 가 실려 스프링이 「있는데 빈 값」으로
@@ -265,6 +271,9 @@ jobs:
             "S3_CHAT_BUCKET=$S3_CHAT_BUCKET" \
             "REDIS_HOST=$REDIS_HOST" \
             "REDIS_PASSWORD=$REDIS_PASSWORD" \
+            "VAPID_PUBLIC_KEY=$VAPID_PUBLIC_KEY" \
+            "VAPID_PRIVATE_KEY=$VAPID_PRIVATE_KEY" \
+            "VAPID_SUBJECT=$VAPID_SUBJECT" \
             | ssh -i ~/.ssh/deploy.pem "$EC2_USER@$DEPLOY_HOST" \
                 'umask 077; cat > ~/duckmoim.env'
 
