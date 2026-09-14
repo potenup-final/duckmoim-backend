@@ -39,6 +39,20 @@ spring:
       hibernate:
         format_sql: false
 
+  # 운영 Redis 는 컨테이너 기본 포트 6379 로 떠 있다 (EC2-2 의 duckmoim-redis,
+  # 172.31.38.192:6379). application.yml 의 기본값 6380 은 로컬 compose 가 개발자 PC 의
+  # Redis 와 안 부딪히려고 민 포트라 운영에는 맞지 않는다.
+  #
+  # **그 기본값을 운영이 그대로 타고 있었다.** ci-cd.yml 이 REDIS_HOST · REDIS_PASSWORD 만
+  # 넘기고 REDIS_PORT 는 넘기지 않아서, 앱이 172.31.38.192:6380 으로 붙으려다 거절당했다.
+  # 전송은 발행 실패를 삼켜 멀쩡해 보였고, 구독 실패를 던지는 스트림만 열자마자 500 이
+  # 됐다 (STAR-139). 테스트는 Testcontainers 가 임의 포트를 넣어 이 기본값을 한 번도 안 탔다.
+  #
+  # 배포 설정을 늘리지 않고 여기서 기본값만 운영에 맞춘다. REDIS_PORT 를 넘기면 그 값이 이긴다.
+  data:
+    redis:
+      port: ${REDIS_PORT:6379}
+
 # 기본값을 두지 않는다. JWT_SECRET 이 없으면 기동이 실패해야 한다 —
 # 조용히 개발용 열쇠로 뜨면 발급한 토큰을 누구나 위조할 수 있다.
 duckmoim:
