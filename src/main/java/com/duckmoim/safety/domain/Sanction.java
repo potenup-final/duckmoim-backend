@@ -30,8 +30,18 @@ import lombok.NoArgsConstructor;
  * <p><b>해제해도 행을 지우지 않는다.</b> {@code releasedAt} 이 찍힐 뿐이다. {@code DELETE} 라는 것은 「{@code NONE} 을 POST
  * 하지 않는다」는 뜻이지 기록을 버린다는 뜻이 아니고, 같은 유저가 몇 번 제재받았는지는 백오피스가 판단에 쓰는 재료다.
  *
- * <p><b>만료를 저장하지 않는다.</b> 지금 유효한지는 {@link #isActiveAt} 이 매번 판정한다 — 배치가 없고, {@code I-11}(댓글 수)이
+ * <p><b>만료 여부를 저장하지 않는다.</b> 지금 유효한지는 {@link #isActiveAt} 이 매번 판정한다 — 배치가 없고, {@code I-11}(댓글 수)이
  * <i>"저장하지 않고 조회 시 센다"</i> 로 같은 판단을 했다. 저장하면 「푼 적 없는데 만료된」 상태를 누가 언제 갱신하는지가 새로 필요해진다.
+ *
+ * <p><b>만료 「시각」은 적어 둔다</b> (AD-10 · V500). 위 줄과 부딪히지 않는다 — 그 결정이 막은 것은 갱신이 필요한 상태값이고, {@code
+ * expiresAt} 은 생성 시각에 종류 · 발효 · 기간으로 정해져 <b>다시 바뀌지 않는다.</b> 배치는 여전히 없고 「지금 유효한가」는 그대로 조회 시점에 판정한다.
+ *
+ * <p>적어 두는 이유는 제재 중인 회원 목록이 <b>좁힐 {@code userId} 가 없기</b> 때문이다. 회원 하나를 읽는 경로는 후보 몇 건을 읽어 도메인이 걸렀지만,
+ * 전 회원을 만료 임박순으로 커서 페이징하려면 활성 판정과 정렬 키가 둘 다 SQL 이어야 한다. 메모리에서 거르면 한 페이지가 요청한 크기보다 작아져 {@code
+ * hasNext} 와 {@code nextCursor} 가 어긋난다.
+ *
+ * <p><b>그 대신 규칙은 한 곳에만 남는다.</b> {@link #isActiveAt} 도 이 값을 보므로 「{@code WARNED} 는 1년」이 여기 한 줄이다 —
+ * SQL 에 {@code CASE} 로 적었다면 같은 규칙이 두 벌이 됐다.
  */
 @Entity
 @Table(name = "sanction")
@@ -64,6 +74,15 @@ public class Sanction extends BaseEntity {
   @Column(name = "until")
   private LocalDateTime until;
 
+  /**
+   * 스스로 풀리는 시각. 비어 있으면 스스로 풀리지 않는다 ({@code AGE_HOLD} · {@code BANNED}).
+   *
+   * <p>{@link #until} 과 같아 보이지만 다른 값이다 — 그쪽은 관리자가 입력한 값이라 {@code SUSPENDED} 에만 있고, 이쪽은 계산한 값이라
+   * {@code WARNED} 에도 있다 (조치일 + 1년).
+   */
+  @Column(name = "expires_at")
+  private LocalDateTime expiresAt;
+
   @Column(name = "released_at")
   private LocalDateTime releasedAt;
 
@@ -75,6 +94,30 @@ public class Sanction extends BaseEntity {
     this.reason = reason;
     this.issuedAt = issuedAt;
     this.until = until;
+    this.expiresAt = expiryOf(kind, issuedAt, until);
+  }
+
+  /**
+   * 이 제재가 스스로 풀리는 시각. 해소가 없으면 null 이다.
+   *
+   * <p>도메인-모델링.md 「6. 라이프사이클」의 제재 축 표 그대로다.
+   *
+   * <ul>
+   *   <li>{@code SUSPENDED} — 관리자가 준 {@code until}
+   *   <li>{@code WARNED} — 조치일로부터 1년
+   *   <li>{@code AGE_HOLD} · {@code BANNED} — 없다. 관리자가 풀거나 (AGE_HOLD 는 본인이 답하거나) 그대로다
+   * </ul>
+   *
+   * <p><b>생성자에서만 부른다.</b> 값이 뒤에 바뀌면 그 순간 「누가 언제 갱신하나」가 생기고, 그것이 V38 이 만료 저장을 피한 이유였다.
+   */
+  private static LocalDateTime expiryOf(
+      SanctionKind kind, LocalDateTime issuedAt, LocalDateTime until) {
+
+    return switch (kind) {
+      case SUSPENDED -> until;
+      case WARNED -> issuedAt.plusYears(WARNED_YEARS);
+      case AGE_HOLD, BANNED -> null;
+    };
   }
 
   /**
@@ -118,24 +161,17 @@ public class Sanction extends BaseEntity {
   /**
    * 이 시각에 유효한 제재인가.
    *
-   * <p>풀렸으면 아니고, 기간이 지났으면 아니다.
+   * <p>풀렸으면 아니고, 기간이 지났으면 아니다. 종류마다 언제 지나는지는 {@link #expiryOf} 가 정한다 — 이 판정이 그 값을 읽기만 하므로 규칙이 한 곳에
+   * 있다.
    *
-   * <ul>
-   *   <li>{@code SUSPENDED} — {@code until} 이 지나면 스스로 풀린다
-   *   <li>{@code WARNED} — 조치일로부터 1년
-   *   <li>{@code AGE_HOLD} · {@code BANNED} — 스스로 풀리지 않는다. 관리자가 풀거나 (AGE_HOLD 는 본인이 답하거나) 그대로다
-   * </ul>
+   * <p><b>저장된 값이지만 판정은 저장하지 않는다.</b> {@code expiresAt} 은 안 바뀌고 「지금」만 흐른다.
    */
   public boolean isActiveAt(LocalDateTime now) {
     if (releasedAt != null) {
       return false;
     }
 
-    return switch (kind) {
-      case SUSPENDED -> now.isBefore(until);
-      case WARNED -> now.isBefore(issuedAt.plusYears(WARNED_YEARS));
-      case AGE_HOLD, BANNED -> true;
-    };
+    return expiresAt == null || now.isBefore(expiresAt);
   }
 
   /** 이 제재가 지금 쓰기를 막는가 (I-14). 유효하지 않으면 막지 않는다. */

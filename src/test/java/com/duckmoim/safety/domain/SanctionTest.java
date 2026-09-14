@@ -133,6 +133,53 @@ class SanctionTest {
     assertThat(sanction.isActiveAt(ISSUED_AT.plusYears(100))).isTrue();
   }
 
+  /**
+   * AD-10 이 이 값으로 목록을 거르고 정렬한다. 판정({@code isActiveAt})과 갈리면 목록에 만료된 제재가 남거나 유효한 제재가 빠진다.
+   *
+   * <p>그래서 「지나기 직전 · 지난 순간」 둘을 저장값으로 찍어 본다 — 두 코드가 같은 시각을 경계로 쓰는지가 여기서 드러난다.
+   */
+  @DisplayName("저장된 만료 시각과 유효 판정이 어긋나지 않는다.")
+  @ParameterizedTest(name = "{0}")
+  @EnumSource(SanctionKind.class)
+  void expiresAt_matchesIsActiveAt(SanctionKind kind) {
+    Sanction sanction =
+        Sanction.of(
+            USER_ID,
+            kind,
+            "사유",
+            ISSUED_AT,
+            kind == SanctionKind.SUSPENDED ? ISSUED_AT.plusDays(3) : null);
+
+    LocalDateTime expiresAt = sanction.getExpiresAt();
+    if (expiresAt == null) {
+      assertThat(sanction.isActiveAt(ISSUED_AT.plusYears(100))).isTrue();
+      return;
+    }
+
+    assertThat(sanction.isActiveAt(expiresAt.minusNanos(1000))).isTrue();
+    assertThat(sanction.isActiveAt(expiresAt)).isFalse();
+  }
+
+  @DisplayName("만료 시각은 기간 정지가 until 이고 경고가 조치일로부터 1년이다.")
+  @Test
+  void expiresAt() {
+    Sanction suspended =
+        Sanction.of(USER_ID, SanctionKind.SUSPENDED, "사유", ISSUED_AT, ISSUED_AT.plusDays(3));
+
+    assertThat(suspended.getExpiresAt()).isEqualTo(ISSUED_AT.plusDays(3));
+    assertThat(warned().getExpiresAt()).isEqualTo(ISSUED_AT.plusYears(1));
+  }
+
+  /** 스스로 풀리지 않는 제재는 비교할 값이 없다. 그 둘이 목록 뒤로 가는 근거이기도 하다 (AD-10). */
+  @DisplayName("나이 확인과 영구 정지는 만료 시각이 없다.")
+  @ParameterizedTest(name = "{0}")
+  @EnumSource(
+      value = SanctionKind.class,
+      names = {"AGE_HOLD", "BANNED"})
+  void expiresAt_neverExpires(SanctionKind kind) {
+    assertThat(Sanction.of(USER_ID, kind, "사유", ISSUED_AT, null).getExpiresAt()).isNull();
+  }
+
   /** I-14 가 걸린 자리다. 도메인 6장 제재 축 표의 「쓰기」 열 그대로다. */
   @DisplayName("경고만 쓰기를 막지 않는다.")
   @ParameterizedTest(name = "{0}")
