@@ -12,10 +12,14 @@ import org.springframework.data.jpa.repository.JpaRepository;
  *
  * <p>그래서 이 메서드는 <b>후보</b>를 준다. 그중 지금 유효한 것을 고르는 일은 service 가 도메인에 맡긴다.
  *
+ * <p><b>백오피스 목록(AD-10)만 다르다.</b> 그쪽은 좁힐 {@code userId} 가 없어 활성 판정이 SQL 이어야 한다 ({@link
+ * SanctionQueryRepository}). 필터가 선택이고 커서의 정렬 축이 둘이라 파생 쿼리 메서드로도 감당할 수 없어 커스텀 프래그먼트로 빼고 여기서 함께 상속한다
+ * — service 에는 여전히 저장소 하나만 주입된다.
+ *
  * <p><b>여러 건을 돌려주는 이유.</b> 활성 제재는 한 유저에 최대 하나라는 것이 이 티켓의 판단이지만 (도메인 6장 상태 축이 {@code NONE} 에서만
  * 출발한다), 그것은 <b>거는 쪽이 지키는 규칙</b>이지 표가 보장하는 것이 아니다. 읽는 쪽이 하나를 가정하면 규칙이 깨진 날 조용히 한 건만 보고 지나간다.
  */
-public interface SanctionRepository extends JpaRepository<Sanction, Long> {
+public interface SanctionRepository extends JpaRepository<Sanction, Long>, SanctionQueryRepository {
 
   /**
    * 아직 풀리지 않은 제재를 최근 순으로 읽는다.
