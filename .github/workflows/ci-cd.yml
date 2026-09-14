@@ -314,15 +314,27 @@ jobs:
       # DB 에 못 붙는 버전도 이 게이트를 통과했다 — 배포는 초록불인데 전환 직후 모든
       # 요청이 500 이 되고, 아래 스모크 테스트의 자동 롤백도 발동하지 않는다.
       # 뒤의 것은 DataSource 커넥션을 실제로 얻어 보고 실패하면 503 을 낸다.
+      #
+      # 러너에서 공인 IP 의 8080 을 부르지 않는다. 러너 IP 는 실행마다 바뀌어 그러려면
+      # duckmoim-sg 의 8080 을 인터넷 전체에 열어야 하고, 그 문으로 롤백용 옛 버전에
+      # 누구나 리스너를 거치지 않고 닿는다. 앞 스텝들이 이미 쓰는 SSH 로 들어가
+      # localhost 로 묻는다 — 인스턴스 밖으로 나가지 않아 보안 그룹을 지나지 않는다.
       - name: 유휴 서버 헬스체크
         run: |
+          if ssh -i ~/.ssh/deploy.pem "$EC2_USER@$DEPLOY_HOST" 'bash -s' <<'REMOTE'
           for i in $(seq 1 20); do
-            if curl -fsS "http://$DEPLOY_HOST:8080/actuator/health" | grep -q '"status":"UP"'; then
-              echo "$DEPLOY_COLOR 기동 확인 — ${i}회차에서 UP"
+            if curl -fsS http://localhost:8080/actuator/health | grep -q '"status":"UP"'; then
+              echo "${i}회차에서 UP"
               exit 0
             fi
             sleep 3
           done
+          exit 1
+          REMOTE
+          then
+            echo "$DEPLOY_COLOR 기동 확인"
+            exit 0
+          fi
           echo "::error::60초 안에 UP 이 되지 않았다. 리스너를 전환하지 않는다"
           ssh -i ~/.ssh/deploy.pem "$EC2_USER@$DEPLOY_HOST" \
             "docker logs --tail 50 duckmoim-app" || true
