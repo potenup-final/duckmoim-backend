@@ -198,6 +198,7 @@ class EndpointGradeTest {
           new Endpoint(HttpMethod.POST, "/api/v1/admin/comments/1/blind", Grade.ADMIN),
           new Endpoint(HttpMethod.POST, "/api/v1/admin/users/9/sanctions", Grade.ADMIN),
           new Endpoint(HttpMethod.DELETE, "/api/v1/admin/users/9/sanctions/1", Grade.ADMIN),
+          new Endpoint(HttpMethod.GET, "/api/v1/admin/sanctions", Grade.ADMIN),
           new Endpoint(HttpMethod.GET, "/api/v1/admin/audit-logs", Grade.ADMIN),
           // 없는 방·신고 번호다. 있는 것을 찌르면 service 가 먼저 답해서 이 줄이 등급이
           // 아니라 본문을 보게 된다
