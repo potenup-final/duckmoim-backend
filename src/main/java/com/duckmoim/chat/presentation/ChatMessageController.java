@@ -199,8 +199,17 @@ public class ChatMessageController {
     // 셋 다 걸어야 한다. 정상 종료(complete)·타임아웃·오류는 서로 다른 콜백이고,
     // 하나라도 빠지면 그 경로로 끝난 연결이 목록에 남아 방마다 쌓인다.
     emitter.onCompletion(release);
-    emitter.onTimeout(release);
     emitter.onError(error -> release.run());
+
+    // 타임아웃은 우리가 정한 정상 종료다 (STAR-148). 여기서 닫지 않으면 스프링이
+    // AsyncRequestTimeoutException 을 던지고, 그것이 GlobalExceptionHandler 의 캐치올에
+    // 떨어져 5분마다 연결 수만큼 500 과 ERROR 스택이 남는다. 닫으면 onCompletion 이 한 번
+    // 더 돌지만 release 는 두 번 불러도 안전하다 (remove 가 없는 연결을 조용히 넘긴다).
+    emitter.onTimeout(
+        () -> {
+          release.run();
+          emitter.complete();
+        });
 
     return emitter;
   }

@@ -12,6 +12,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
@@ -116,6 +117,22 @@ public class GlobalExceptionHandler {
   public ResponseEntity<ErrorResponse> handleMediaTypeNotSupported(
       HttpMediaTypeNotSupportedException e) {
     return respond(e, CommonErrorCode.UNSUPPORTED_MEDIA_TYPE);
+  }
+
+  /**
+   * 클라이언트가 먼저 떠난 비동기 응답이다 — 탭을 닫은 SSE 스트림처럼 (CH-10 · STAR-148).
+   *
+   * <p><b>쓸 곳이 없으니 아무것도 쓰지 않는다.</b> 나열하지 않으면 캐치올로 떨어져 <b>이미 떠난 사람에게 500 을 쓰려 하고</b>, 5xx 라 ERROR
+   * 스택이 연결이 끊길 때마다 쌓인다. 끊긴 연결은 정상 경로라 장애 신호로 세지 않는다.
+   *
+   * <p>스프링의 기본 처리기({@code DefaultHandlerExceptionResolver})도 이 예외에 아무것도 쓰지 않는다 — 캐치올이 그 앞을 가로채고
+   * 있었다.
+   */
+  @ExceptionHandler(AsyncRequestNotUsableException.class)
+  public void handleDisconnectedClient(AsyncRequestNotUsableException e) {
+    log.debug(
+        "[GlobalExceptionHandler.handleDisconnectedClient] 클라이언트가 먼저 끊었다. cause={}",
+        e.getClass().getSimpleName());
   }
 
   @ExceptionHandler(Exception.class)
