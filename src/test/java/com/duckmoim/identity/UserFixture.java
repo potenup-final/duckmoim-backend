@@ -22,8 +22,9 @@ public final class UserFixture {
   private static final String INSERT =
       """
       INSERT INTO user (kakao_user_id, nickname, birth_year, bio, profile_image_url, status,
-                        last_seen_at, tokens_invalidated_at, created_at, updated_at)
-      VALUES (?, ?, 1998, ?, ?, ?, ?, ?, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6))
+                        last_seen_at, tokens_invalidated_at, withdrawn_at, purged_at,
+                        created_at, updated_at)
+      VALUES (?, ?, 1998, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6))
       """;
 
   private final long sequence = SEQUENCE.getAndIncrement();
@@ -35,6 +36,8 @@ public final class UserFixture {
   private String profileImageUrl;
   private LocalDateTime lastSeenAt;
   private LocalDateTime tokensInvalidatedAt;
+  private LocalDateTime withdrawnAt;
+  private LocalDateTime purgedAt;
 
   private UserFixture() {}
 
@@ -86,6 +89,23 @@ public final class UserFixture {
     return this;
   }
 
+  /** 탈퇴 시각을 지정한다. {@code status(WITHDRAWN)} 과 짝으로 쓴다 — 상태만 주면 언제였는지가 비어 있다. */
+  public UserFixture withdrawnAt(LocalDateTime withdrawnAt) {
+    this.withdrawnAt = withdrawnAt;
+    return this;
+  }
+
+  /**
+   * 이미 파기된 계정을 만든다 (AD-05).
+   *
+   * <p><b>회원번호는 그대로 둔다.</b> 진짜 파기는 그 값도 비우지만, 여기서 비우면 {@link #insert} 가 넣은 행을 회원번호로 다시 찾지 못한다. 파기
+   * 여부의 판정은 {@code purged_at} 하나가 지므로 검증에는 영향이 없다.
+   */
+  public UserFixture purgedAt(LocalDateTime purgedAt) {
+    this.purgedAt = purgedAt;
+    return this;
+  }
+
   /** 넣은 행의 id 를 준다. 토큰의 {@code sub} 가 그 값이어야 해서 돌려준다. */
   public long insert(JdbcTemplate jdbc) {
     long inserted = kakaoUserId == null ? sequence : kakaoUserId;
@@ -98,7 +118,9 @@ public final class UserFixture {
         profileImageUrl,
         status.name(),
         lastSeenAt,
-        tokensInvalidatedAt);
+        tokensInvalidatedAt,
+        withdrawnAt,
+        purgedAt);
 
     return jdbc.queryForObject("SELECT id FROM user WHERE kakao_user_id = ?", Long.class, inserted);
   }

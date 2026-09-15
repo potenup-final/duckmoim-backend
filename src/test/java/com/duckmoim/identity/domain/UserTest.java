@@ -31,6 +31,7 @@ class UserTest {
 
   private static final LocalDateTime LOGOUT = LocalDateTime.of(2026, 9, 7, 12, 0, 0);
   private static final LocalDateTime WITHDRAWN_AT = LocalDateTime.of(2026, 9, 9, 3, 0, 0);
+  private static final LocalDateTime PURGED_AT = LocalDateTime.of(2026, 9, 15, 1, 0, 0);
 
   @Autowired private UserRepository userRepository;
   @Autowired private JdbcTemplate jdbcTemplate;
@@ -182,6 +183,95 @@ class UserTest {
     assertThatThrownBy(() -> user.withdraw(WITHDRAWN_AT))
         .isInstanceOf(BusinessException.class)
         .hasFieldOrPropertyWithValue("errorCode", UserErrorCode.USER_NOT_FOUND);
+  }
+
+  /**
+   * AD-05 「남기는 행위 다섯 — … 계정 파기」의 전이다.
+   *
+   * <p><b>탈퇴가 남겨 둔 것을 마저 비운다.</b> {@code withdraw} 는 작성자 블록에 나가는 둘만 비우고 <i>"파기 범위는 처리방침이 정할 일"</i>
+   * 이라며 나머지를 남겨 두었다.
+   */
+  @Test
+  @DisplayName("파기하면 개인정보 컬럼이 비워진다.")
+  void purge_clearsPersonalData() {
+    User user =
+        load(aUser().profile("남는 소개", "/avatar/mine.webp").lastSeenAt(LOGOUT).insert(jdbcTemplate));
+
+    user.purge(PURGED_AT);
+
+    assertThat(user.getKakaoUserId()).isNull();
+    assertThat(user.getBio()).isNull();
+    assertThat(user.getBirthYear()).isNull();
+    assertThat(user.getLastSeenAt()).isNull();
+    assertThat(user.getNickname()).isNull();
+    assertThat(user.getProfileImageUrl()).isNull();
+  }
+
+  /** 판정을 {@code purgedAt} 이 진다. {@code status} 는 그냥 탈퇴한 계정과 값이 같아 구별하지 못한다. */
+  @Test
+  @DisplayName("파기하면 파기 시각이 남는다.")
+  void purge_recordsPurgedAt() {
+    User user = load(aUser().insert(jdbcTemplate));
+
+    user.purge(PURGED_AT);
+
+    assertThat(user.isPurged()).isTrue();
+    assertThat(user.getPurgedAt()).isEqualTo(PURGED_AT);
+  }
+
+  /**
+   * <b>{@link AuthorDisplay#of} 가 {@code status == WITHDRAWN} 하나로 자리표시자를 판정한다.</b> 파기만 하고 상태를 두면
+   * 닉네임이 비어 있는 채로 작성자 블록에 나간다.
+   */
+  @Test
+  @DisplayName("탈퇴하지 않은 계정을 파기하면 탈퇴 상태가 된다.")
+  void purge_withdrawsFirst() {
+    User user = load(aUser().insert(jdbcTemplate));
+
+    user.purge(PURGED_AT);
+
+    assertThat(user.isWithdrawn()).isTrue();
+    assertThat(user.getWithdrawnAt()).isEqualTo(PURGED_AT);
+  }
+
+  /** 탈퇴가 언제였는지는 그 자체로 기록이다. 파기가 덮으면 그 사실이 사라진다. */
+  @Test
+  @DisplayName("이미 탈퇴한 계정을 파기해도 탈퇴 시각은 그대로다.")
+  void purge_keepsWithdrawnAt() {
+    User user =
+        load(aUser().status(SignupStatus.WITHDRAWN).withdrawnAt(WITHDRAWN_AT).insert(jdbcTemplate));
+
+    user.purge(PURGED_AT);
+
+    assertThat(user.getWithdrawnAt()).isEqualTo(WITHDRAWN_AT);
+    assertThat(user.getPurgedAt()).isEqualTo(PURGED_AT);
+  }
+
+  /**
+   * <b>{@code withdraw} 와 갈리는 자리다.</b> 그쪽은 가입을 마친 계정만 받는데, 가입 정보를 입력하지 않은 계정도 카카오 회원번호를 갖고 있어 지울
+   * 개인정보가 있다.
+   */
+  @Test
+  @DisplayName("가입을 마치지 않은 계정도 파기할 수 있다.")
+  void purge_signupIncomplete() {
+    User user = load(aUser().status(SignupStatus.PENDING_SIGNUP_INFO).insert(jdbcTemplate));
+
+    user.purge(PURGED_AT);
+
+    assertThat(user.isPurged()).isTrue();
+    assertThat(user.isWithdrawn()).isTrue();
+    assertThat(user.getKakaoUserId()).isNull();
+  }
+
+  /** 감사 로그는 고칠 수 없다 (I-13). 두 번 부르면 일어난 일은 하나인데 장부에 두 줄이 남는다. */
+  @Test
+  @DisplayName("이미 파기된 계정은 다시 파기할 수 없다.")
+  void purge_alreadyPurged() {
+    User user = load(aUser().purgedAt(PURGED_AT).insert(jdbcTemplate));
+
+    assertThatThrownBy(() -> user.purge(PURGED_AT))
+        .isInstanceOf(BusinessException.class)
+        .hasFieldOrPropertyWithValue("errorCode", UserErrorCode.USER_ALREADY_PURGED);
   }
 
   @Test
