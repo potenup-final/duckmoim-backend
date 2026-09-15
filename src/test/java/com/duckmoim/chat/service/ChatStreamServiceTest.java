@@ -68,6 +68,7 @@ class ChatStreamServiceTest {
   @Autowired private ChatMessageSendService chatMessageSendService;
   @Autowired private ChatRoomLeaveService chatRoomLeaveService;
   @Autowired private ChatMessageDeleteService chatMessageDeleteService;
+  @Autowired private AdminMessageBlindService adminMessageBlindService;
   @Autowired private ChatRoomRepository chatRoomRepository;
   @Autowired private ChatFanout chatFanout;
   @Autowired private ChatFanoutCodec chatFanoutCodec;
@@ -588,6 +589,112 @@ class ChatStreamServiceTest {
     assertThat(staying.received().get(0).content()).isEqualTo("진짜 말풍선");
   }
 
+  // ── 상태 변경 전파 (STAR-147) ────────────────────────────────────────────────
+
+  /**
+   * <b>다른 인스턴스가 지운 메시지가 이 인스턴스의 연결에 닿는다</b> (CH-10 · CH-12).
+   *
+   * <p>퇴장 전파와 같은 방식이다 — 통로에 직접 발행하는 것이 「다른 인스턴스가 삭제를 처리했다」와 같은 상황이다.
+   */
+  @DisplayName("다른 인스턴스에서 바뀐 메시지 상태가 이 인스턴스의 연결에 도착한다.")
+  @Test
+  void dispatch_deliversChangedMessageFromAnotherInstance() {
+    RecordingSession session = new RecordingSession();
+    chatStreamService.open(roomId, memberId, session, null);
+    MessageEvent deleted = eventOf(send("지울 말"), MessageStatus.DELETED);
+    session.awaitFirst();
+
+    chatFanout.publish(roomId, chatFanoutCodec.encodeMessageChanged(deleted));
+
+    session.awaitFirstChanged();
+    assertThat(session.changed())
+        .singleElement()
+        .satisfies(
+            event -> {
+              assertThat(event.messageId()).isEqualTo(deleted.messageId());
+              assertThat(event.status()).isEqualTo(MessageStatus.DELETED);
+            });
+  }
+
+  /** 상태 변경이 새 말풍선으로 새면 지운 메시지가 화면에 한 줄 더 생긴다. */
+  @DisplayName("상태 변경은 새 메시지로 밀리지 않는다.")
+  @Test
+  void dispatch_doesNotPushChangeAsNewMessage() {
+    RecordingSession session = new RecordingSession();
+    chatStreamService.open(roomId, memberId, session, null);
+    MessageEvent deleted = eventOf(send("지울 말"), MessageStatus.DELETED);
+    session.awaitFirst();
+
+    chatFanout.publish(roomId, chatFanoutCodec.encodeMessageChanged(deleted));
+
+    session.awaitFirstChanged();
+    assertThat(session.received()).hasSize(1);
+  }
+
+  /**
+   * <b>이 검사가 QA-EYE-04 다</b> (CH-12 · CH-10).
+   *
+   * <p>고치기 전에는 삭제가 DB 에만 적혀, 방을 열어 둔 멤버의 연결에 아무것도 오지 않았다. 삭제 서비스를 그대로 불러 <b>저장 → 커밋 → Redis 한 바퀴 →
+   * 연결</b>을 모두 지난다.
+   */
+  @DisplayName("메시지를 지우면 방을 보고 있는 멤버에게 본문 없는 DELETED 사건이 간다.")
+  @Test
+  void delete_reachesViewingMember() {
+    RecordingSession session = new RecordingSession();
+    chatStreamService.open(roomId, memberId, session, null);
+    long messageId = send("지울 말");
+    session.awaitFirst();
+
+    chatMessageDeleteService.delete(roomId, messageId, hostId);
+
+    session.awaitFirstChanged();
+    assertThat(session.changed())
+        .singleElement()
+        .satisfies(
+            event -> {
+              assertThat(event.messageId()).isEqualTo(messageId);
+              assertThat(event.status()).isEqualTo(MessageStatus.DELETED);
+              assertThat(event.content()).isNull();
+            });
+  }
+
+  /**
+   * AD-09 의 검증 기준 「블라인드 후 본문 미노출」이 실시간 경로에서도 성립하는지 본다. 신고된 말이 화면에 남으면 가린 의미가 없다.
+   *
+   * <p><b>감사 로그를 손으로 지운다.</b> 이 클래스는 롤백하지 않아 블라인드가 남긴 한 줄이 공용 DB 에 커밋되고, 감사 로그 개수를 세는 남의 검사 ({@code
+   * SanctionCommandServiceTest} 등)가 그 줄을 함께 센다.
+   */
+  @DisplayName("관리자가 메시지를 가리면 방을 보고 있는 멤버에게 본문 없는 BLINDED 사건이 간다.")
+  @Test
+  void blind_reachesViewingMember() {
+    RecordingSession session = new RecordingSession();
+    chatStreamService.open(roomId, memberId, session, null);
+    long messageId = send("가려질 말");
+    session.awaitFirst();
+
+    try {
+      adminMessageBlindService.blind(messageId, hostId);
+
+      session.awaitFirstChanged();
+      assertThat(session.changed())
+          .singleElement()
+          .satisfies(
+              event -> {
+                assertThat(event.messageId()).isEqualTo(messageId);
+                assertThat(event.status()).isEqualTo(MessageStatus.BLINDED);
+                assertThat(event.content()).isNull();
+              });
+    } finally {
+      jdbcTemplate.update(
+          "DELETE FROM audit_log WHERE kind = 'MESSAGE_BLIND' AND target_id = ?", messageId);
+    }
+  }
+
+  private MessageEvent eventOf(long messageId, MessageStatus status) {
+    return new MessageEvent(
+        messageId, roomId, hostId, "방장", null, null, null, status, LocalDateTime.now());
+  }
+
   private String newClientId() {
     return UUID.randomUUID().toString();
   }
@@ -601,6 +708,11 @@ class ChatStreamServiceTest {
 
     @Override
     public void send(MessageEvent event) {
+      // 이 검사는 하트비트만 본다.
+    }
+
+    @Override
+    public void sendChanged(MessageEvent event) {
       // 이 검사는 하트비트만 본다.
     }
 
@@ -632,6 +744,7 @@ class ChatStreamServiceTest {
   private static final class RecordingSession implements ChatStreamSession {
 
     private final List<MessageEvent> received = new CopyOnWriteArrayList<>();
+    private final List<MessageEvent> changed = new CopyOnWriteArrayList<>();
     private final List<Long> gaps = new CopyOnWriteArrayList<>();
     private final java.util.concurrent.atomic.AtomicInteger beatCount =
         new java.util.concurrent.atomic.AtomicInteger();
@@ -640,6 +753,11 @@ class ChatStreamServiceTest {
     @Override
     public void send(MessageEvent event) {
       received.add(event);
+    }
+
+    @Override
+    public void sendChanged(MessageEvent event) {
+      changed.add(event);
     }
 
     @Override
@@ -662,8 +780,17 @@ class ChatStreamServiceTest {
       Awaitility.await().atMost(5, TimeUnit.SECONDS).until(() -> !received.isEmpty());
     }
 
+    /** 상태 변경도 팬아웃을 한 바퀴 돌아 비동기로 온다. */
+    void awaitFirstChanged() {
+      Awaitility.await().atMost(5, TimeUnit.SECONDS).until(() -> !changed.isEmpty());
+    }
+
     List<MessageEvent> received() {
       return received;
+    }
+
+    List<MessageEvent> changed() {
+      return changed;
     }
 
     List<Long> gaps() {

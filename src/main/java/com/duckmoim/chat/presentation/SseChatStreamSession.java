@@ -75,6 +75,27 @@ public class SseChatStreamSession implements ChatStreamSession {
   }
 
   /**
+   * 상태가 바뀐 메시지를 선로에 쓴다 (CH-12 · AD-09).
+   *
+   * <p><b>{@code id:} 줄을 싣지 않는다.</b> 브라우저는 마지막으로 받은 {@code id} 를 재연결 위치로 쓰는데, 지운 메시지는 옛 번호다 — 실으면
+   * 위치가 뒤로 밀린다. {@code id} 가 없으면 직전 말풍선의 번호가 그대로 남는다 ({@link #sendGap} 과 같다).
+   *
+   * <p><b>사건 이름은 {@code message} 그대로다.</b> {@code data} 가 목록의 한 줄과 같은 모양이라 클라이언트는 같은 번호의 줄을 새 상태로
+   * 갈아끼우면 끝난다. 본문과 사진은 {@link MessageItemResponse#from(MessageEvent)} 이 이미 뺀다.
+   */
+  @Override
+  public void sendChanged(MessageEvent event) {
+    try {
+      emitter.send(SseEmitter.event().name("message").data(MessageItemResponse.from(event)));
+    } catch (IOException | IllegalStateException e) {
+      log.debug(
+          "[SseChatStreamSession.sendChanged] 끊긴 연결에 밀었다 messageId={} cause={}",
+          event.messageId(),
+          e.getClass().getSimpleName());
+    }
+  }
+
+  /**
    * 따라잡으라는 신호를 보낸다 (CH-11).
    *
    * <p><b>{@code id:} 줄을 싣지 않는다.</b> 실으면 브라우저가 다음 재연결에 그 값을 {@code Last-Event-ID} 로 보내고, 그 순간 빠진

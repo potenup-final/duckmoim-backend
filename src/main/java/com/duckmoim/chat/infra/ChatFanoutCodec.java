@@ -37,6 +37,16 @@ public class ChatFanoutCodec {
     }
   }
 
+  /** 상태가 바뀐 메시지를 싣는다 (CH-12 · AD-09). 실패하면 {@code null} 이고 부르는 쪽이 발행을 건너뛴다. */
+  public String encodeMessageChanged(MessageEvent event) {
+    try {
+      return objectMapper.writeValueAsString(ChatFanoutEvent.messageChanged(event));
+    } catch (JsonProcessingException e) {
+      log.warn("[ChatFanoutCodec.encodeMessageChanged] 팬아웃 직렬화 실패 messageId={}", event.messageId());
+      return null;
+    }
+  }
+
   /**
    * 퇴장을 싣는다 (CH-04 · PR #138 리뷰).
    *
