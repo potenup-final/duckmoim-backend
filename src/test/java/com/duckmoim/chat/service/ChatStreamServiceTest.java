@@ -630,6 +630,33 @@ class ChatStreamServiceTest {
     assertThat(session.received()).hasSize(1);
   }
 
+  /**
+   * <b>이 검사가 QA-EYE-04 다</b> (CH-12 · CH-10).
+   *
+   * <p>고치기 전에는 삭제가 DB 에만 적혀, 방을 열어 둔 멤버의 연결에 아무것도 오지 않았다. 삭제 서비스를 그대로 불러 <b>저장 → 커밋 → Redis 한 바퀴 →
+   * 연결</b>을 모두 지난다.
+   */
+  @DisplayName("메시지를 지우면 방을 보고 있는 멤버에게 본문 없는 DELETED 사건이 간다.")
+  @Test
+  void delete_reachesViewingMember() {
+    RecordingSession session = new RecordingSession();
+    chatStreamService.open(roomId, memberId, session, null);
+    long messageId = send("지울 말");
+    session.awaitFirst();
+
+    chatMessageDeleteService.delete(roomId, messageId, hostId);
+
+    session.awaitFirstChanged();
+    assertThat(session.changed())
+        .singleElement()
+        .satisfies(
+            event -> {
+              assertThat(event.messageId()).isEqualTo(messageId);
+              assertThat(event.status()).isEqualTo(MessageStatus.DELETED);
+              assertThat(event.content()).isNull();
+            });
+  }
+
   private MessageEvent eventOf(long messageId, MessageStatus status) {
     return new MessageEvent(
         messageId, roomId, hostId, "방장", null, null, null, status, LocalDateTime.now());
