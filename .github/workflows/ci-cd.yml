@@ -278,7 +278,8 @@ jobs:
                 'umask 077; cat > ~/duckmoim.env'
 
       # EC2 는 인스턴스 IAM 역할로 ECR 에 인증한다. ECR 자격증명은 서버에 두지 않는다.
-      # 이 서버는 지금 트래픽을 안 받는 쪽이라, 컨테이너를 멈춰도 사용자에게 영향이 없다.
+      # 이 서버는 지금 트래픽을 안 받는 쪽이라, 컨테이너를 멈춰도 사용자에게 영향이 없다 —
+      # 단, 직전 배포부터 열려 있던 SSE 연결은 예외다 (application.yml 의 server.shutdown 각주).
       - name: 컨테이너 교체
         run: |
           ssh -i ~/.ssh/deploy.pem "$EC2_USER@$DEPLOY_HOST" \
@@ -290,7 +291,10 @@ jobs:
           aws ecr get-login-password --region "$AWS_REGION" \
             | docker login --username AWS --password-stdin "${IMAGE%%/*}"
           docker pull "$IMAGE"
-          docker stop duckmoim-app 2>/dev/null || true
+          # -t 25 는 application.yml 의 spring.lifecycle.timeout-per-shutdown-phase(20s)보다
+          # 넉넉해야 한다. 짧으면 스프링이 스트림을 정리하는 도중 도커가 먼저 SIGKILL 을
+          # 보내 graceful 설정이 무의미해진다. 기본값(10초)은 그 유예보다 짧아 불충분했다.
+          docker stop -t 25 duckmoim-app 2>/dev/null || true
           docker rm   duckmoim-app 2>/dev/null || true
           # 루트 볼륨이 8GB 다. 기본 json-file 드라이버는 상한이 없어
           # 오래 돌수록 컨테이너 로그가 디스크를 먹는다. 30MB 로 묶는다.
