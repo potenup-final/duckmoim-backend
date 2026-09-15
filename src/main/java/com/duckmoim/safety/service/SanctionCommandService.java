@@ -6,12 +6,14 @@ import com.duckmoim.common.exception.BusinessException;
 import com.duckmoim.identity.exception.UserErrorCode;
 import com.duckmoim.identity.infra.UserRepository;
 import com.duckmoim.safety.domain.Sanction;
+import com.duckmoim.safety.domain.UserSanctioned;
 import com.duckmoim.safety.exception.SanctionErrorCode;
 import com.duckmoim.safety.infra.SanctionRepository;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -34,6 +36,7 @@ public class SanctionCommandService {
   private final SanctionQueryService sanctionQueryService;
   private final UserRepository userRepository;
   private final AuditLogRecorder auditLogRecorder;
+  private final ApplicationEventPublisher events;
   private final Clock clock;
 
   /**
@@ -69,6 +72,10 @@ public class SanctionCommandService {
 
     auditLogRecorder.record(
         command.adminUserId(), AuditKind.SANCTION, command.userId(), detailOf(command));
+
+    // 제재했다는 사실만 알린다 (STAR-148). 무엇을 막을지는 듣는 쪽이 정한다 — 지금은 채팅이
+    // 비공개 읽기가 막힌 회원의 열린 스트림을 커밋 뒤에 끊는다 (UserSanctioned 의 구독 규약).
+    events.publishEvent(new UserSanctioned(command.userId()));
 
     return saved.getId();
   }

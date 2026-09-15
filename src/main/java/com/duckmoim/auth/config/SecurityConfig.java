@@ -9,6 +9,7 @@ import com.duckmoim.auth.presentation.IngestKeyFilter;
 import com.duckmoim.auth.presentation.RestAccessDeniedHandler;
 import com.duckmoim.auth.presentation.RestAuthenticationEntryPoint;
 import com.duckmoim.auth.service.AuthenticationService;
+import jakarta.servlet.DispatcherType;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -164,6 +165,20 @@ public class SecurityConfig {
             session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
         .authorizeHttpRequests(
             registry -> {
+              // 컨테이너가 안에서 다시 태우는 디스패치는 인가를 다시 보지 않는다 (STAR-148).
+              //
+              // SSE 가 끝나면(타임아웃 · 클라이언트 종료) 스프링이 응답을 마무리하려고 같은
+              // 요청을 ASYNC 로 한 번 더 태운다. 그때 AuthenticationFilter 는 OncePerRequestFilter
+              // 라 돌지 않고, 인가 필터만 돌아 익명으로 보고 거절한다 — 응답은 이미 나간 뒤라
+              // 「response already committed」 ERROR 스택이 스트림 하나 끝날 때마다 쌓였다.
+              //
+              // 열어도 새는 곳이 없다. 이 둘은 밖에서 보낼 수 있는 요청이 아니라, 이미 이 줄
+              // 아래의 규칙을 통과한 REQUEST 가 이어지는 것이다. 거절된 요청은 진입점이 401 을
+              // 직접 쓰고 끝내 ERROR 디스패치가 생기지 않는다 (D-13 이 그대로다).
+              registry
+                  .dispatcherTypeMatchers(DispatcherType.ASYNC, DispatcherType.ERROR)
+                  .permitAll();
+
               registry.requestMatchers(INFRA).permitAll();
 
               // local 에서만 등록한다. 다른 프로파일에서는 어느 규칙에도 안 걸려

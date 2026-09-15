@@ -1,5 +1,6 @@
 package com.duckmoim.chat.presentation;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
@@ -7,6 +8,7 @@ import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.never;
 import static org.mockito.BDDMockito.then;
 import static org.mockito.BDDMockito.willThrow;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.asyncDispatch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -32,6 +34,9 @@ import com.duckmoim.chat.service.SentMessage;
 import com.duckmoim.common.exception.BusinessException;
 import com.duckmoim.common.exception.CommonErrorCode;
 import com.duckmoim.identity.domain.AuthorDisplay;
+import jakarta.servlet.AsyncEvent;
+import jakarta.servlet.AsyncListener;
+import java.io.IOException;
 import java.time.LocalDateTime;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
@@ -42,8 +47,10 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.mock.web.MockAsyncContext;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
 /**
@@ -304,6 +311,76 @@ class ChatMessageControllerTest {
         .andExpect(request().asyncStarted());
 
     then(chatStreamService).should().open(eq(ROOM_ID), eq(SENDER_ID), any(), isNull());
+  }
+
+  /**
+   * <b>5분 타임아웃은 정상 종료다</b> (CH-10 · STAR-148).
+   *
+   * <p>고치기 전에는 끝날 때마다 두 줄의 ERROR 스택이 남았다. 타임아웃이 {@code AsyncRequestTimeoutException} 으로 캐치올에 떨어져
+   * 500 이 됐고, 끝을 마무리하는 async 디스패치를 인가 필터가 익명으로 보고 거절했다.
+   *
+   * <pre>
+   * 서블릿 컨테이너  5분 경과 → onTimeout
+   * 스프링           async 디스패치로 응답을 마무리  ← 여기서 인가 필터가 다시 돈다
+   * </pre>
+   *
+   * <p><b>컨테이너가 하는 일을 손으로 한다.</b> 비동기 컨텍스트의 리스너에 타임아웃을 알린 뒤 그 디스패치를 그대로 태운다.
+   */
+  @DisplayName("스트림이 타임아웃으로 끝나도 인가 거절이나 500 없이 닫힌다.")
+  @Test
+  void stream_closesQuietlyOnTimeout() throws Exception {
+    given(chatStreamService.open(any(), any(), any(), any())).willReturn(() -> {});
+    MvcResult opened =
+        mockMvc
+            .perform(
+                get("/api/v1/chat-rooms/{roomId}/messages/stream", ROOM_ID).headers(authHeaders()))
+            .andExpect(request().asyncStarted())
+            .andReturn();
+
+    timeOut(opened);
+
+    mockMvc.perform(asyncDispatch(opened)).andExpect(status().isOk());
+  }
+
+  /**
+   * <b>클라이언트가 먼저 끊는 것도 정상 종료다</b> (CH-10 · STAR-148).
+   *
+   * <p>탭을 닫거나 지하철에 들어가면 서버는 다음에 쓸 때 그 사실을 안다. 스프링이 그것을 {@code AsyncRequestNotUsableException} 으로
+   * 올리는데, 고치기 전에는 캐치올에 떨어져 <b>이미 떠난 사람에게 500 을 쓰려 하며</b> ERROR 스택을 남겼다 — 로컬 재현에서 보안 거절을 고친 뒤에도 남은 한
+   * 줄이다.
+   */
+  @DisplayName("클라이언트가 먼저 끊어도 500 없이 닫힌다.")
+  @Test
+  void stream_closesQuietlyWhenClientLeaves() throws Exception {
+    given(chatStreamService.open(any(), any(), any(), any())).willReturn(() -> {});
+    MvcResult opened =
+        mockMvc
+            .perform(
+                get("/api/v1/chat-rooms/{roomId}/messages/stream", ROOM_ID).headers(authHeaders()))
+            .andExpect(request().asyncStarted())
+            .andReturn();
+
+    clientLeaves(opened);
+
+    MvcResult closed = mockMvc.perform(asyncDispatch(opened)).andReturn();
+    assertThat(closed.getResponse().getStatus()).isNotEqualTo(500);
+  }
+
+  /** 서블릿 컨테이너가 끊긴 클라이언트를 발견했을 때 하는 일 — 리스너들에 오류를 알린다. */
+  private static void clientLeaves(MvcResult opened) throws Exception {
+    MockAsyncContext async = (MockAsyncContext) opened.getRequest().getAsyncContext();
+    IOException brokenPipe = new IOException("Broken pipe");
+    for (AsyncListener listener : async.getListeners()) {
+      listener.onError(new AsyncEvent(async, brokenPipe));
+    }
+  }
+
+  /** 서블릿 컨테이너가 타임아웃에 하는 일 — 비동기 컨텍스트의 리스너들에 알린다. */
+  private static void timeOut(MvcResult opened) throws Exception {
+    MockAsyncContext async = (MockAsyncContext) opened.getRequest().getAsyncContext();
+    for (AsyncListener listener : async.getListeners()) {
+      listener.onTimeout(new AsyncEvent(async));
+    }
   }
 
   /**
