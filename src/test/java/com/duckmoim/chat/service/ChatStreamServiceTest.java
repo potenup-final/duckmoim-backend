@@ -68,6 +68,7 @@ class ChatStreamServiceTest {
   @Autowired private ChatMessageSendService chatMessageSendService;
   @Autowired private ChatRoomLeaveService chatRoomLeaveService;
   @Autowired private ChatMessageDeleteService chatMessageDeleteService;
+  @Autowired private AdminMessageBlindService adminMessageBlindService;
   @Autowired private ChatRoomRepository chatRoomRepository;
   @Autowired private ChatFanout chatFanout;
   @Autowired private ChatFanoutCodec chatFanoutCodec;
@@ -655,6 +656,38 @@ class ChatStreamServiceTest {
               assertThat(event.status()).isEqualTo(MessageStatus.DELETED);
               assertThat(event.content()).isNull();
             });
+  }
+
+  /**
+   * AD-09 의 검증 기준 「블라인드 후 본문 미노출」이 실시간 경로에서도 성립하는지 본다. 신고된 말이 화면에 남으면 가린 의미가 없다.
+   *
+   * <p><b>감사 로그를 손으로 지운다.</b> 이 클래스는 롤백하지 않아 블라인드가 남긴 한 줄이 공용 DB 에 커밋되고, 감사 로그 개수를 세는 남의 검사 ({@code
+   * SanctionCommandServiceTest} 등)가 그 줄을 함께 센다.
+   */
+  @DisplayName("관리자가 메시지를 가리면 방을 보고 있는 멤버에게 본문 없는 BLINDED 사건이 간다.")
+  @Test
+  void blind_reachesViewingMember() {
+    RecordingSession session = new RecordingSession();
+    chatStreamService.open(roomId, memberId, session, null);
+    long messageId = send("가려질 말");
+    session.awaitFirst();
+
+    try {
+      adminMessageBlindService.blind(messageId, hostId);
+
+      session.awaitFirstChanged();
+      assertThat(session.changed())
+          .singleElement()
+          .satisfies(
+              event -> {
+                assertThat(event.messageId()).isEqualTo(messageId);
+                assertThat(event.status()).isEqualTo(MessageStatus.BLINDED);
+                assertThat(event.content()).isNull();
+              });
+    } finally {
+      jdbcTemplate.update(
+          "DELETE FROM audit_log WHERE kind = 'MESSAGE_BLIND' AND target_id = ?", messageId);
+    }
   }
 
   private MessageEvent eventOf(long messageId, MessageStatus status) {

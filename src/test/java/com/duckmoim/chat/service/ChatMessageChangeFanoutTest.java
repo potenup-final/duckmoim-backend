@@ -35,7 +35,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.QueryTimeoutException;
 
 /**
- * 삭제가 방에 알리는 자리 (STAR-147 · CH-12).
+ * 삭제 · 블라인드가 방에 알리는 자리 (STAR-147 · CH-12 · AD-09).
  *
  * <p><b>순서와 실패를 본다.</b> 사건이 Redis 를 돌아 연결에 닿는지는 {@code ChatStreamServiceTest} 가 실물 Redis 로 본다 —
  * 여기서는 「거절된 변경은 알리지 않는다」 · 「알리기가 터져도 변경은 성공이다」 두 규칙이다.
@@ -50,15 +50,18 @@ class ChatMessageChangeFanoutTest {
   private static final long ROOM_ID = 3L;
   private static final long SENDER_ID = 7L;
   private static final long MESSAGE_ID = 101L;
+  private static final long ADMIN_ID = 1L;
   private static final String PAYLOAD = "{}";
 
   @Mock private ChatMessageRepository chatMessageRepository;
   @Mock private ChatFanoutCodec chatFanoutCodec;
   @Mock private ChatFanout chatFanout;
   @Mock private ChatMessageDeleteWriter chatMessageDeleteWriter;
+  @Mock private AdminMessageBlindWriter adminMessageBlindWriter;
 
   private ChatMessageChangeFanout chatMessageChangeFanout;
   private ChatMessageDeleteService chatMessageDeleteService;
+  private AdminMessageBlindService adminMessageBlindService;
 
   @BeforeEach
   void setUp() {
@@ -67,6 +70,8 @@ class ChatMessageChangeFanoutTest {
         new ChatMessageChangeFanout(chatMessageRepository, chatFanoutCodec, chatFanout, clock);
     chatMessageDeleteService =
         new ChatMessageDeleteService(chatMessageDeleteWriter, chatMessageChangeFanout);
+    adminMessageBlindService =
+        new AdminMessageBlindService(adminMessageBlindWriter, chatMessageChangeFanout);
   }
 
   /** 알리는 줄이 없던 것이 QA-EYE-04 의 원인이었다. */
@@ -92,6 +97,30 @@ class ChatMessageChangeFanoutTest {
         .isInstanceOf(BusinessException.class)
         .extracting("errorCode")
         .isEqualTo(ChatErrorCode.CHAT_MESSAGE_NOT_FOUND);
+    then(chatFanout).should(never()).publish(anyLong(), anyString());
+  }
+
+  @DisplayName("관리자가 메시지를 가리면 그 방에 상태 변경을 알린다.")
+  @Test
+  void blind_publishesChange() {
+    givenAuthored(MessageStatus.BLINDED);
+
+    adminMessageBlindService.blind(MESSAGE_ID, ADMIN_ID);
+
+    then(chatFanout).should().publish(ROOM_ID, PAYLOAD);
+  }
+
+  @DisplayName("블라인드가 거절되면 알리지 않는다.")
+  @Test
+  void blind_doesNotPublishWhenRejected() {
+    willThrow(new BusinessException(ChatErrorCode.CHAT_MESSAGE_NOT_ACTIVE))
+        .given(adminMessageBlindWriter)
+        .blind(MESSAGE_ID, ADMIN_ID);
+
+    assertThatThrownBy(() -> adminMessageBlindService.blind(MESSAGE_ID, ADMIN_ID))
+        .isInstanceOf(BusinessException.class)
+        .extracting("errorCode")
+        .isEqualTo(ChatErrorCode.CHAT_MESSAGE_NOT_ACTIVE);
     then(chatFanout).should(never()).publish(anyLong(), anyString());
   }
 
