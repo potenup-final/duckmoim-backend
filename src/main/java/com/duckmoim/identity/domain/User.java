@@ -35,7 +35,13 @@ public class User extends BaseEntity {
   @GeneratedValue(strategy = GenerationType.IDENTITY)
   private Long id;
 
-  @Column(name = "kakao_user_id", nullable = false, unique = true)
+  /**
+   * 카카오 회원번호. <b>파기되면 비어 있다</b> (AD-05).
+   *
+   * <p><b>{@code nullable = false} 가 아니다.</b> 회원번호가 개인정보라 파기 대상이고 (V200), 유니크 제약은 그대로 둔다 — MySQL
+   * 유니크가 NULL 중복을 허용해서 파기된 계정이 여럿이어도 깨지지 않는다. {@code uk_user_nickname} 이 탈퇴에 대해 이미 같은 자리를 잡았다.
+   */
+  @Column(name = "kakao_user_id", unique = true)
   private Long kakaoUserId;
 
   @Column(name = "nickname", length = 20, unique = true)
@@ -65,6 +71,18 @@ public class User extends BaseEntity {
 
   @Column(name = "withdrawn_at")
   private LocalDateTime withdrawnAt;
+
+  /**
+   * 계정을 파기한 시각 (AD-05). 파기하지 않았으면 {@code null} 이다.
+   *
+   * <p><b>{@code status} 로 대신할 수 없다.</b> 파기하면 {@code WITHDRAWN} 이 되는데 그냥 탈퇴한 사람도 {@code WITHDRAWN}
+   * 이라 둘이 구별되지 않는다. 두 번째 파기를 막는 판정도 이 값이 진다.
+   *
+   * <p><b>비워진 컬럼으로 판정하지 않는다.</b> 「{@code kakaoUserId} 가 {@code null} 이면 파기된 것」으로 읽으면 파기 범위가 바뀌는 날
+   * 판정이 함께 깨진다.
+   */
+  @Column(name = "purged_at")
+  private LocalDateTime purgedAt;
 
   /**
    * 이 시각 이전에 발급된 토큰을 전부 죽인다 (AU-04 「Access 잔여 TTL 차단」).
@@ -183,10 +201,67 @@ public class User extends BaseEntity {
       throw new BusinessException(UserErrorCode.USER_NOT_FOUND);
     }
 
+    markWithdrawn(now);
+  }
+
+  /**
+   * 계정을 파기한다 (AD-05).
+   *
+   * <p><b>탈퇴가 아니다.</b> 탈퇴({@link #withdraw})는 본인이 하고 작성자 블록에 나가는 둘(닉네임 · 프로필 이미지)만 비운다. 파기는 관리자가 하고
+   * <b>개인정보 컬럼을 비운다</b> — 카카오 회원번호 · 한줄소개 · 출생연도 · 최근 접속이 더 지워진다. {@code withdraw} 가 <i>"파기 범위는
+   * 처리방침이 정할 일이라 이 메서드에서 넓히지 않는다"</i> 로 비워 둔 자리가 여기다.
+   *
+   * <p><b>행을 지우지 않는다.</b> 작성자 블록이 {@code user} 행을 내부 조인으로 읽으므로 (API 2-5) 행이 사라지면 그 사람의 댓글 · 모집글이
+   * 목록에서 통째로 빠진다. {@code withdraw} 가 소프트 삭제인 이유와 같다.
+   *
+   * <p><b>탈퇴 전이를 함께 태운다.</b> {@link AuthorDisplay#of} 가 {@code status == WITHDRAWN} 하나로 자리표시자를
+   * 판정해서, 파기만 하고 상태를 두면 <b>닉네임이 비어 있는 채로 작성자 블록에 나간다.</b>
+   *
+   * <p><b>{@code withdraw} 를 부르지 않는다.</b> 그쪽은 가입을 마친 계정만 받는데, 가입 정보를 입력하지 않은 계정도 카카오 회원번호를 갖고 있어 파기
+   * 대상이다. 지울 개인정보가 있는 한 지울 수 있어야 한다 — 그래서 여기서는 {@code PENDING_SIGNUP_INFO} 에서도 {@code WITHDRAWN} 으로
+   * 간다. 도메인 6장의 탈퇴 간선보다 넓은 자리다.
+   *
+   * <p>{@code tokensInvalidatedAt} 은 건드리지 않는다. 발급된 토큰을 죽이는 것은 시각을 찍는 별도 행위이고 ({@link
+   * #invalidateAllTokens}) 부르는 쪽이 같은 트랜잭션에서 함께 한다.
+   *
+   * @throws BusinessException 이미 파기됐으면 {@code USER_ALREADY_PURGED}
+   */
+  public void purge(LocalDateTime now) {
+    if (isPurged()) {
+      throw new BusinessException(UserErrorCode.USER_ALREADY_PURGED);
+    }
+
+    if (!isWithdrawn()) {
+      markWithdrawn(now);
+    }
+
+    this.kakaoUserId = null;
+    this.bio = null;
+    this.birthYear = null;
+    this.lastSeenAt = null;
+    this.purgedAt = now;
+  }
+
+  /**
+   * 가입 축을 {@code WITHDRAWN} 으로 옮기고 작성자 블록에 나가는 값을 비운다.
+   *
+   * <p>탈퇴와 파기가 함께 쓴다. 파기가 {@link #withdraw} 를 그대로 부를 수 없어 (가입 미완료 계정을 거부한다) 공통부만 뽑았다.
+   */
+  private void markWithdrawn(LocalDateTime now) {
     this.status = SignupStatus.WITHDRAWN;
     this.withdrawnAt = now;
     this.nickname = null;
     this.profileImageUrl = null;
+  }
+
+  /**
+   * 파기된 계정인가 (AD-05).
+   *
+   * <p>판정을 {@code purgedAt} 으로 한다. {@code status} 는 그냥 탈퇴한 계정과 값이 같고, 비워진 개인정보 컬럼은 파기 범위가 바뀌면 함께
+   * 흔들린다.
+   */
+  public boolean isPurged() {
+    return purgedAt != null;
   }
 
   /** AU-03 재사용 탐지의 「해당 유저 전체 폐기」와 AU-04 로그아웃이 함께 부른다. */
