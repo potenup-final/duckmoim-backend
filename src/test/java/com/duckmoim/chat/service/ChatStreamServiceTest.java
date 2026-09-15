@@ -217,10 +217,9 @@ class ChatStreamServiceTest {
   /**
    * <b>종료 신호가 오면 모든 방의 연결이 정상 종료된다.</b>
    *
-   * <p>{@code server.shutdown: graceful} 이 SSE 앞에서 무력하다는 것이 실측으로 드러난 뒤 생긴
-   * 경로다 (2026-09-15 B-1 측정 — {@code closeAllStreamsOnShutdown} 자바독). 여기서는
-   * {@code ContextClosedEvent} 발행 대신 메서드를 직접 불러 「방 두 개에 걸쳐 있어도 전부
-   * 닫히는가」만 본다 — 이벤트 배선 자체는 스프링이 보장하는 영역이다.
+   * <p>{@code server.shutdown: graceful} 이 SSE 앞에서 무력하다는 것이 실측으로 드러난 뒤 생긴 경로다 (2026-09-15 B-1 측정 —
+   * {@code closeAllStreamsOnShutdown} 자바독). 여기서는 {@code ContextClosedEvent} 발행 대신 메서드를 직접 불러 「방 두
+   * 개에 걸쳐 있어도 전부 닫히는가」만 본다 — 이벤트 배선 자체는 스프링이 보장하는 영역이다.
    */
   @DisplayName("종료 신호를 받으면 여러 방에 걸친 연결이 전부 정상 종료된다.")
   @Test

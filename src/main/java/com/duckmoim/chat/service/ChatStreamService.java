@@ -37,9 +37,8 @@ import org.springframework.stereotype.Service;
  * <p><b>구독은 방마다 하나이고 첫 연결에 열려 마지막 연결에 닫힌다.</b> 연결마다 구독하면 같은 방의 사건이 연결 수만큼 중복으로 오고, 반대로 한 번 열고 안 닫으면
  * 아무도 안 보는 방의 채널을 계속 듣는다.
  *
- * <p><b>배포 중 종료 신호가 오면 {@link #closeAllStreamsOnShutdown} 이 열려 있는 연결을 먼저
- * 정리한다.</b> {@code server.shutdown: graceful} 은 SSE 처럼 스스로 안 끝나는 요청 앞에서
- * 무력하다는 것이 실측으로 드러났다 — 그 메서드의 자바독 참고.
+ * <p><b>배포 중 종료 신호가 오면 {@link #closeAllStreamsOnShutdown} 이 열려 있는 연결을 먼저 정리한다.</b> {@code
+ * server.shutdown: graceful} 은 SSE 처럼 스스로 안 끝나는 요청 앞에서 무력하다는 것이 실측으로 드러났다 — 그 메서드의 자바독 참고.
  *
  * <p><b>{@code SseEmitter} 를 알지 않는다.</b> {@link ChatStreamSession} 이 그 타입을 가린다 — {@code ChatFanout}
  * 이 {@code RedisTemplate} 을 가린 것과 같은 배치이고, 덕분에 이 클래스가 톰캣 없이 검사된다.
@@ -152,32 +151,26 @@ public class ChatStreamService {
   /**
    * 종료 신호를 받으면 열려 있는 연결을 전부 정상 종료한다.
    *
-   * <p><b>{@code server.shutdown: graceful} 만으로는 SSE 를 못 지킨다 — 실측으로 확인됐다.</b>
-   * 그 설정은 「진행 중인 요청이 스스로 끝나기를」 기다리는데, SSE 는 클라이언트가 끊기 전까지
-   * 스스로 안 끝난다. 2026-09-15 B-1 측정에서 유예 20초를 다 채우고도 로그에 {@code
-   * "Graceful shutdown aborted with one or more requests still active"} 가 찍혔고, 연결은
-   * 여전히 예외로 끊겼다 — 유예 시간만큼 <b>늦게</b> 끊겼을 뿐 <b>정상 종료</b>는 아니었다
-   * (05-기록-회고/실험/2026-09-15-그레이스풀-측정-결과.md).
+   * <p><b>{@code server.shutdown: graceful} 만으로는 SSE 를 못 지킨다 — 실측으로 확인됐다.</b> 그 설정은 「진행 중인 요청이 스스로
+   * 끝나기를」 기다리는데, SSE 는 클라이언트가 끊기 전까지 스스로 안 끝난다. 2026-09-15 B-1 측정에서 유예 20초를 다 채우고도 로그에 {@code
+   * "Graceful shutdown aborted with one or more requests still active"} 가 찍혔고, 연결은 여전히 예외로 끊겼다 — 유예
+   * 시간만큼 <b>늦게</b> 끊겼을 뿐 <b>정상 종료</b>는 아니었다 (05-기록-회고/실험/2026-09-15-그레이스풀-측정-결과.md).
    *
-   * <p><b>그래서 유예가 다 되기를 기다리지 않고, 종료 신호를 받은 즉시 이 메서드가 직접 각
-   * 연결을 끝낸다.</b> {@link ChatStreamSession#close} 는 정상 종료라 클라이언트가 백오프
-   * 없이 즉시 재연결한다 — 강제 킬(예외)과 이 경로(정상 종료)의 차이가 곧 그레이스풀이 실제로
-   * 버는 시간이다.
+   * <p><b>그래서 유예가 다 되기를 기다리지 않고, 종료 신호를 받은 즉시 이 메서드가 직접 각 연결을 끝낸다.</b> {@link
+   * ChatStreamSession#close} 는 정상 종료라 클라이언트가 백오프 없이 즉시 재연결한다 — 강제 킬(예외)과 이 경로(정상 종료)의 차이가 곧 그레이스풀이
+   * 실제로 버는 시간이다.
    *
-   * <p><b>{@code ContextClosedEvent} 를 쓴 이유는 타이밍이다.</b> 스프링이 이 이벤트를 발행한
-   * 뒤에야 {@code webServerGracefulShutdown} 빈(SmartLifecycle)을 멈춰 커넥터를 pause 하고
-   * 20초 대기에 들어간다 — 그 대기가 시작되기 <b>전에</b> 이 메서드가 먼저 실행돼 연결을
-   * 비운다. 순서가 뒤집히면(대기가 시작된 뒤에 이 메서드가 돌면) 이미 pause 된 커넥터에 쓰는
-   * 셈이 되어 같은 문제가 되풀이된다.
+   * <p><b>{@code ContextClosedEvent} 를 쓴 이유는 타이밍이다.</b> 스프링이 이 이벤트를 발행한 뒤에야 {@code
+   * webServerGracefulShutdown} 빈(SmartLifecycle)을 멈춰 커넥터를 pause 하고 20초 대기에 들어간다 — 그 대기가 시작되기
+   * <b>전에</b> 이 메서드가 먼저 실행돼 연결을 비운다. 순서가 뒤집히면(대기가 시작된 뒤에 이 메서드가 돌면) 이미 pause 된 커넥터에 쓰는 셈이 되어 같은 문제가
+   * 되풀이된다.
    *
-   * <p><b>목록을 스냅샷으로 순회한다.</b> {@code close()} 가 {@code onCompletion} 콜백을 걸어
-   * 같은 목록에서 자기 자신을 지운다({@link #remove}) — 순회 중인 컬렉션을 직접 건드리면
-   * 안전하지 않다. {@link List#toList} 가 그 순간의 스냅샷을 뜬다.
+   * <p><b>목록을 스냅샷으로 순회한다.</b> {@code close()} 가 {@code onCompletion} 콜백을 걸어 같은 목록에서 자기 자신을
+   * 지운다({@link #remove}) — 순회 중인 컬렉션을 직접 건드리면 안전하지 않다. {@link List#toList} 가 그 순간의 스냅샷을 뜬다.
    */
   @EventListener(ContextClosedEvent.class)
   public void closeAllStreamsOnShutdown() {
-    List<RoomConnection> snapshot =
-        connections.values().stream().flatMap(List::stream).toList();
+    List<RoomConnection> snapshot = connections.values().stream().flatMap(List::stream).toList();
 
     if (snapshot.isEmpty()) {
       return;
