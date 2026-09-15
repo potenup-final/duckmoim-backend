@@ -1,3 +1,14 @@
+# SSE 스트림이 배포 중 강제로 끊기는 문제 (CH-10 · 05-기록-회고/실험 2026-09-15).
+#
+# 컨테이너 교체는 유휴 색만 대상이라 일반 HTTP 요청은 이미 무중단이다 — 유휴가 된 뒤로
+# 새 요청을 안 받으므로 진행 중인 요청이 남아 있을 수 없다. 남는 것은 SSE 처럼 오래
+# 열려 있는 연결뿐이고, 지금은 그 연결이 SIGTERM 에도 즉시 끊긴다 (측정: 30개 전부
+# stream-broken, 1회차 백오프로 복구, 유실은 CH-11 재전송이 메워 0).
+#
+# graceful 로 두면 새 연결은 막되 이미 열린 스트림은 정리할 시간을 준다.
+server:
+  shutdown: graceful
+
 spring:
   application:
     name: duckmoim
@@ -10,6 +21,12 @@ spring:
 
   jpa:
     open-in-view: false
+
+  # server.shutdown: graceful 의 유예 시간이다. ci-cd.yml 의 docker stop -t 보다 짧아야
+  # 한다 — 여기가 더 길면 유예가 끝나기 전에 도커가 먼저 SIGKILL 을 보내 이 설정이
+  # 무의미해진다.
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
 
   # 마이그레이션 번호가 이미 적용된 것보다 작아도 적용한다.
   #
