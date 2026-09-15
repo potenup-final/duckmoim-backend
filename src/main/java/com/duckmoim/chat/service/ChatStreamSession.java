@@ -20,6 +20,18 @@ public interface ChatStreamSession {
   void send(MessageEvent event);
 
   /**
+   * 이미 보낸 메시지의 상태가 바뀌었다고 민다 (CH-12 · AD-09).
+   *
+   * <p><b>{@link #send} 와 갈라 둔 이유는 재연결 위치다.</b> 지운 메시지는 옛 번호라, 그 번호를 재연결 위치로 실으면 다음 재연결이 이미 받은 구간부터
+   * 다시 시작한다. 구현은 선로의 {@code id} 를 건드리지 않는다 — {@link #sendGap} 과 같은 규칙이다.
+   *
+   * <p>화면에 그릴 모양은 {@link #send} 와 같다. 클라이언트는 같은 메시지 번호의 말풍선을 새 상태로 갈아끼운다.
+   *
+   * <p>실패해도 던지지 않는다 — {@link #send} 와 같다.
+   */
+  void sendChanged(MessageEvent event);
+
+  /**
    * 살아 있다는 신호를 보낸다.
    *
    * <p>{@link #send} 와 갈라 둔 이유는 <b>화면에 아무 일도 일으키지 않아야</b> 하기 때문이다. 사건으로 보내면 클라이언트가 빈 말풍선을 그리게 된다.
