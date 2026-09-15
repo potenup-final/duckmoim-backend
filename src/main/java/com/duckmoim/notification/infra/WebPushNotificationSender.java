@@ -40,34 +40,43 @@ public class WebPushNotificationSender implements NotificationPushSender {
   private static final int TTL_SECONDS = 86400;
 
   /**
-   * 한 기기의 발송을 기다릴 시간 (PR #157 리뷰).
+   * 한 건(그 사람의 모든 기기)의 발송을 기다릴 시간 (PR #157 리뷰 · STAR-149).
    *
-   * <p><b>없으면 스케줄러가 통째로 멈춘다.</b> 라이브러리의 {@code send} 는 {@code sendAsync(...).get()} 이고 그 {@code
-   * get} 에 타임아웃이 없다 (5.1.2 바이트코드). 응답하지 않는 주소 하나면 그 호출이 영영 돌아오지 않는다.
+   * <p><b>워커 리스보다 짧아야 한다</b> ({@code duckmoim.notification.worker.lease}). 발송이 리스를 넘기면 다른 인스턴스가 같은
+   * 건을 다시 집어 같은 푸시가 두 번 울린다 (NT-04). {@code NotificationLeaseBudgetTest} 가 그 관계를 지킨다.
    *
-   * <pre>
-   * taskScheduler 풀 = 2          (SchedulingConfig)
-   * @Scheduled 메서드 = 일곱
-   *      ↓
-   * 물린 발송 둘  →  채팅 하트비트 · 이미지 정리 · 마감 배치 · 알림 만료까지 전부 멈춘다
-   * </pre>
+   * <p><b>없으면 발송 스레드가 영영 물린다.</b> 라이브러리의 {@code send} 는 {@code sendAsync(...).get()} 이고 그 {@code
+   * get} 에 타임아웃이 없다 (5.1.2 바이트코드). 응답하지 않는 주소 하나면 그 호출이 영영 돌아오지 않는다 — 처음에는 배치 스케줄러가 통째로 멈추는 문제였고,
+   * 푸시가 전용 일꾼({@code NotificationPushExecutor})으로 옮겨진 뒤로는 <b>일꾼이 하나씩 영구히 사라지는</b> 문제다.
    *
    * <p>10초로 둔 것은 푸시 서비스가 정상일 때 수백 밀리초에 끝나기 때문이다. 넉넉하되 한 주기(10초)를 크게 넘기지 않는 값이다.
    */
-  private static final long SEND_TIMEOUT_MILLIS = 10_000;
+  static final long SEND_TIMEOUT_MILLIS = 10_000;
 
   private final PushService pushService;
   private final PushSubscriptionRepository pushSubscriptionRepository;
   private final ObjectMapper objectMapper;
+  private final long sendTimeoutMillis;
 
   public WebPushNotificationSender(
       PushService pushService,
       PushSubscriptionRepository pushSubscriptionRepository,
       ObjectMapper objectMapper) {
 
+    this(pushService, pushSubscriptionRepository, objectMapper, SEND_TIMEOUT_MILLIS);
+  }
+
+  /** 제한 시간을 바꿔 끼운다. 마감을 기기들이 나눠 쓰는지 보는 검사가 10초를 실제로 기다리지 않게 하려는 것이다. */
+  WebPushNotificationSender(
+      PushService pushService,
+      PushSubscriptionRepository pushSubscriptionRepository,
+      ObjectMapper objectMapper,
+      long sendTimeoutMillis) {
+
     this.pushService = pushService;
     this.pushSubscriptionRepository = pushSubscriptionRepository;
     this.objectMapper = objectMapper;
+    this.sendTimeoutMillis = sendTimeoutMillis;
   }
 
   @Override
@@ -108,19 +117,27 @@ public class WebPushNotificationSender implements NotificationPushSender {
    * <p>후자를 DLQ 로 보내면 <b>사용자가 알림함에서 이미 본 알림이 「못 보낸 것」으로 장부에 남는다.</b>
    */
   private void deliverToEach(List<PushSubscription> subscriptions, String payload) {
+    long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(sendTimeoutMillis);
+
+    // 모든 기기에 먼저 보내 놓고 응답을 모은다 (STAR-149). 기기마다 보내고 기다리면 한 건이
+    // 기기 수 × 제한 시간이 되어, 기기가 셋이면 워커 리스(30초)를 넘겨 다른 인스턴스가 같은
+    // 건을 다시 집는다 — 같은 푸시가 두 번 울린다 (NT-04).
+    List<Attempt> attempts =
+        subscriptions.stream().map(subscription -> start(subscription, payload)).toList();
+
     RuntimeException lastTransient = null;
     boolean anyDelivered = false;
 
-    for (PushSubscription subscription : subscriptions) {
+    for (Attempt attempt : attempts) {
       try {
-        sendToOne(subscription, payload);
+        finish(attempt, deadline);
         anyDelivered = true;
 
       } catch (PermanentPushException e) {
         // 그 기기만의 문제다. 나머지는 계속 보낸다.
         log.warn(
             "[WebPushNotificationSender.deliverToEach] 이 기기는 건너뛴다. subscriptionId={}",
-            subscription.getId());
+            attempt.subscription().getId());
 
       } catch (RuntimeException e) {
         lastTransient = e;
@@ -133,13 +150,12 @@ public class WebPushNotificationSender implements NotificationPushSender {
   }
 
   /**
-   * 기기 하나에 보낸다.
+   * 기기 하나에 발송을 시작만 한다. 응답은 {@link #finish} 가 받는다.
    *
-   * <p><b>서명·암호화가 실패하면 되돌릴 수 없다.</b> 키 설정이 틀렸거나 구독이 준 키가 깨진 것이라 세 번 더 해도 같다.
-   *
-   * <p><b>만료면 그 구독을 지우고 성공으로 끝낸다</b> (NT-14).
+   * <p><b>시작하다 실패해도 여기서 던지지 않는다.</b> 던지면 뒤따르는 기기가 시작조차 못 한다 — 실패를 담아 두었다가 {@link #finish} 에서 그 기기의
+   * 결과로 돌려준다.
    */
-  private void sendToOne(PushSubscription subscription, String payload) {
+  private Attempt start(PushSubscription subscription, String payload) {
     try {
       Notification notification =
           new Notification(
@@ -149,19 +165,46 @@ public class WebPushNotificationSender implements NotificationPushSender {
               payload.getBytes(java.nio.charset.StandardCharsets.UTF_8),
               TTL_SECONDS);
 
-      int status = statusOf(notification);
+      return Attempt.started(subscription, pushService.sendAsync(notification, Encoding.AES128GCM));
+
+    } catch (RuntimeException e) {
+      return Attempt.failed(subscription, e);
+
+    } catch (Exception e) {
+      // 라이브러리가 GeneralSecurityException · IOException · JoseException 을 검사 예외로
+      // 던진다. 이음매에 throws 를 더하면 채널마다 다른 검사 예외가 계약에 쌓인다.
+      return Attempt.failed(subscription, new TransientPushException("푸시 발송이 실패했다.", e));
+    }
+  }
+
+  /**
+   * 기기 하나의 응답을 받아 결과를 가른다.
+   *
+   * <p><b>서명·암호화가 실패하면 되돌릴 수 없다.</b> 키 설정이 틀렸거나 구독이 준 키가 깨진 것이라 세 번 더 해도 같다.
+   *
+   * <p><b>만료면 그 구독을 지우고 성공으로 끝낸다</b> (NT-14).
+   *
+   * @param deadline 모든 기기가 함께 쓰는 마감 ({@link System#nanoTime} 기준). 기기마다 따로 기다리지 않는다
+   */
+  private void finish(Attempt attempt, long deadline) {
+    if (attempt.failure() != null) {
+      throw attempt.failure();
+    }
+
+    try {
+      int status = statusOf(attempt.response(), deadline);
 
       if (isUnusable(status)) {
-        forget(subscription, status);
+        forget(attempt.subscription(), status);
         return;
       }
 
       if (status >= 300) {
-        throw classify(subscription, status);
+        throw classify(attempt.subscription(), status);
       }
     } catch (InterruptedException e) {
-      // 인터럽트는 삼키지 않는다. 배치 스레드가 내려가는 중이라는 뜻이라 그 신호를 되살려
-      // 올려 보내고, 이 건은 다음 주기가 다시 집는다.
+      // 인터럽트는 삼키지 않는다. 발송 스레드가 내려가는 중이라는 뜻이라 그 신호를 되살려
+      // 올려 보내고, 이 건은 리스가 풀린 뒤 다시 집힌다.
       Thread.currentThread().interrupt();
       throw new TransientPushException("푸시 발송이 중단됐다.", e);
 
@@ -169,9 +212,26 @@ public class WebPushNotificationSender implements NotificationPushSender {
       throw e;
 
     } catch (Exception e) {
-      // 라이브러리가 GeneralSecurityException · IOException · JoseException 을 검사 예외로
-      // 던진다. 이음매에 throws 를 더하면 채널마다 다른 검사 예외가 계약에 쌓인다.
       throw new TransientPushException("푸시 발송이 실패했다.", e);
+    }
+  }
+
+  /**
+   * 한 기기의 발송. 시작했으면 응답을 기다릴 {@code response} 가, 시작조차 못 했으면 {@code failure} 가 찬다.
+   *
+   * @param subscription 보낸 기기
+   * @param response 푸시 서비스의 응답. 시작하지 못했으면 {@code null}
+   * @param failure 시작하다 난 실패. 시작했으면 {@code null}
+   */
+  private record Attempt(
+      PushSubscription subscription, Future<HttpResponse> response, RuntimeException failure) {
+
+    static Attempt started(PushSubscription subscription, Future<HttpResponse> response) {
+      return new Attempt(subscription, response, null);
+    }
+
+    static Attempt failed(PushSubscription subscription, RuntimeException failure) {
+      return new Attempt(subscription, null, failure);
     }
   }
 
@@ -186,21 +246,21 @@ public class WebPushNotificationSender implements NotificationPushSender {
    * <p>{@code ERROR} 로 남기는 것은 재시도가 없어 <b>이 한 줄이 유일한 신호</b>이기 때문이다.
    */
   /**
-   * 보내고 응답 코드를 받는다. <b>정해진 시간을 넘기면 끊는다</b> (PR #157 리뷰).
+   * 응답 코드를 받는다. <b>마감을 넘기면 끊는다</b> (PR #157 리뷰).
    *
    * <p><b>{@code send} 를 쓰지 않고 {@code sendAsync} 를 쓰는 이유가 그것이다.</b> 전자는 타임아웃 없는 {@code get()} 이라
    * 응답하지 않는 주소에 영영 물린다.
    *
+   * <p><b>남은 시간만 기다린다</b> (STAR-149). 앞 기기를 기다리는 동안 뒤 기기의 요청도 이미 가고 있어서, 마감은 기기마다가 아니라 한 건 전체에 하나다.
+   * 마감이 이미 지났어도 한 번은 들여다본다 — 그사이 도착한 응답을 버리지 않는다.
+   *
    * <p><b>물린 요청을 끊는다.</b> {@code cancel} 하지 않으면 타임아웃으로 빠져나온 뒤에도 그 요청이 커넥션을 쥔 채 남는다.
    */
-  private int statusOf(Notification notification) throws Exception {
-    Future<HttpResponse> pending = pushService.sendAsync(notification, Encoding.AES128GCM);
+  private static int statusOf(Future<HttpResponse> pending, long deadline) throws Exception {
+    long remaining = Math.max(0, deadline - System.nanoTime());
 
     try {
-      return pending
-          .get(SEND_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)
-          .getStatusLine()
-          .getStatusCode();
+      return pending.get(remaining, TimeUnit.NANOSECONDS).getStatusLine().getStatusCode();
     } catch (TimeoutException e) {
       pending.cancel(true);
 

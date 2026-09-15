@@ -157,6 +157,46 @@ class ChatStreamOpenFailureTest {
     assertThat(session.sentIds()).containsExactly(102L, 103L, 202L);
   }
 
+  /**
+   * <b>상태 변경도 재전송 뒤에 선다</b> (STAR-147).
+   *
+   * <p>재전송이 옛 상태를 싣고 있을 수 있다 — 끊긴 사이 지운 메시지를 재전송이 읽기 전에 읽었다면 그 줄은 아직 {@code ACTIVE} 다. 상태 변경이 먼저
+   * 나가면 뒤따르는 재전송이 그 줄을 옛 상태로 다시 덮는다.
+   */
+  @DisplayName("재전송 중에 온 상태 변경은 재전송이 끝난 뒤에 실린다.")
+  @Test
+  void open_buffersChangedEventsUntilReplayEnds() {
+    givenSubscribable();
+    given(chatFanoutCodec.decode(LIVE_PAYLOAD))
+        .willReturn(ChatFanoutEvent.messageChanged(event(102L, MessageStatus.DELETED)));
+
+    given(replayReader.readSince(anyLong(), anyLong()))
+        .willAnswer(
+            invocation -> {
+              fanoutHandler().accept(LIVE_PAYLOAD);
+              return MissedMessages.of(List.of(event(102L), event(103L)));
+            });
+
+    open(LAST_EVENT_ID);
+
+    assertThat(session.written()).containsExactly("message:102", "message:103", "changed:102");
+  }
+
+  /** 옛 번호가 책갈피에 실리면 다음 재연결이 이미 받은 구간부터 다시 시작한다. */
+  @DisplayName("상태 변경은 재연결 위치를 싣는 문으로 나가지 않는다.")
+  @Test
+  void dispatch_sendsChangedEventWithoutBookmark() {
+    givenSubscribable();
+    given(chatFanoutCodec.decode(LIVE_PAYLOAD))
+        .willReturn(ChatFanoutEvent.messageChanged(event(50L, MessageStatus.DELETED)));
+
+    open(null);
+    fanoutHandler().accept(LIVE_PAYLOAD);
+
+    assertThat(session.sentIds()).isEmpty();
+    assertThat(session.written()).containsExactly("changed:50");
+  }
+
   /** 첫 연결에도 방출은 시작돼야 한다. 안 그러면 그 연결이 영원히 조용하다. */
   @DisplayName("재전송할 것이 없어도 실시간이 바로 흐른다.")
   @Test
@@ -192,6 +232,10 @@ class ChatStreamOpenFailureTest {
   }
 
   private static MessageEvent event(long messageId) {
+    return event(messageId, MessageStatus.ACTIVE);
+  }
+
+  private static MessageEvent event(long messageId, MessageStatus status) {
     return new MessageEvent(
         messageId,
         ROOM_ID,
@@ -200,7 +244,7 @@ class ChatStreamOpenFailureTest {
         null,
         "말",
         null,
-        MessageStatus.ACTIVE,
+        status,
         LocalDateTime.of(2026, 10, 2, 11, 10));
   }
 
@@ -216,11 +260,18 @@ class ChatStreamOpenFailureTest {
   private static final class RecordingSession implements ChatStreamSession {
 
     private final List<MessageEvent> received = new CopyOnWriteArrayList<>();
+    private final List<String> written = new CopyOnWriteArrayList<>();
     private final List<Long> gaps = new CopyOnWriteArrayList<>();
 
     @Override
     public void send(MessageEvent event) {
       received.add(event);
+      written.add("message:" + event.messageId());
+    }
+
+    @Override
+    public void sendChanged(MessageEvent event) {
+      written.add("changed:" + event.messageId());
     }
 
     @Override
@@ -245,6 +296,11 @@ class ChatStreamOpenFailureTest {
     /** 선로에 실린 순서. 단조 증가여야 한다. */
     List<Long> sentIds() {
       return received.stream().map(MessageEvent::messageId).toList();
+    }
+
+    /** 새 메시지와 상태 변경을 섞어 실린 순서대로. 종류가 앞에 붙는다. */
+    List<String> written() {
+      return written;
     }
   }
 }

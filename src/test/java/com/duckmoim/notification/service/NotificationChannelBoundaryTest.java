@@ -9,7 +9,9 @@ import com.duckmoim.common.infra.NotificationOutboxRepository;
 import com.duckmoim.notification.infra.NotificationPushSender;
 import com.duckmoim.notification.infra.PermanentPushException;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import org.awaitility.Awaitility;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -84,6 +86,8 @@ class NotificationChannelBoundaryTest {
     notificationDispatchBatch.dispatchPendingNotifications();
 
     assertThat(notificationCount(outboxId)).isEqualTo(1);
+    // 일꾼의 실패 기록이 정리 뒤로 밀려 다음 검사의 행을 건드리지 않게 끝을 기다린다.
+    awaitAttempts(outboxId, 1);
   }
 
   /** 인앱이 남았어도 <b>행은 끝나지 않았다.</b> 푸시가 아직 못 갔으므로 다음 주기가 다시 집어야 한다. */
@@ -98,8 +102,8 @@ class NotificationChannelBoundaryTest {
 
     notificationDispatchBatch.dispatchPendingNotifications();
 
+    awaitAttempts(outboxId, 1);
     assertThat(statusOf(outboxId)).isEqualTo("PENDING");
-    assertThat(attemptsOf(outboxId)).isEqualTo(1);
   }
 
   /**
@@ -117,13 +121,14 @@ class NotificationChannelBoundaryTest {
           throw new IllegalStateException("푸시가 죽었다");
         });
     notificationDispatchBatch.dispatchPendingNotifications();
+    awaitAttempts(outboxId, 1);
 
     PUSH.set(() -> {});
     jdbc.update("UPDATE notification_outbox SET next_attempt_at = NULL WHERE id = ?", outboxId);
     notificationDispatchBatch.dispatchPendingNotifications();
 
+    Awaitility.await().atMost(5, TimeUnit.SECONDS).until(() -> "SENT".equals(statusOf(outboxId)));
     assertThat(notificationCount(outboxId)).isEqualTo(1);
-    assertThat(statusOf(outboxId)).isEqualTo("SENT");
   }
 
   /**
@@ -142,8 +147,8 @@ class NotificationChannelBoundaryTest {
 
     notificationDispatchBatch.dispatchPendingNotifications();
 
+    Awaitility.await().atMost(5, TimeUnit.SECONDS).until(() -> dlqCount() == 1);
     assertThat(statusOf(outboxId)).isEqualTo("없음");
-    assertThat(dlqCount()).isEqualTo(1);
   }
 
   /** DLQ 로 간 것은 아웃박스 행이다. 사용자는 알림을 받았고 푸시만 못 갔다. */
@@ -159,6 +164,13 @@ class NotificationChannelBoundaryTest {
     notificationDispatchBatch.dispatchPendingNotifications();
 
     assertThat(notificationCount(outboxId)).isEqualTo(1);
+    // 일꾼의 DLQ 이관이 정리 뒤로 밀려 다음 검사의 DLQ 수를 늘리지 않게 끝을 기다린다.
+    Awaitility.await().atMost(5, TimeUnit.SECONDS).until(() -> dlqCount() == 1);
+  }
+
+  /** 푸시와 그 결과 기록은 일꾼 스레드에서 돈다 (STAR-149). 주기가 끝난 뒤에 적히므로 기다린다. */
+  private void awaitAttempts(long outboxId, int attempts) {
+    Awaitility.await().atMost(5, TimeUnit.SECONDS).until(() -> attemptsOf(outboxId) == attempts);
   }
 
   private int dlqCount() {

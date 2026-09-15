@@ -7,6 +7,8 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
+import org.awaitility.Awaitility;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -66,9 +68,11 @@ class NotificationDispatchBatchTest {
     // when
     notificationDispatchBatch.dispatchPendingNotifications();
 
-    // then
+    // then — 알림함은 주기가 끝나면 이미 있고, 「보냈다」는 푸시 일꾼이 끝낸 뒤에 적힌다 (STAR-149)
     assertThat(count("notification")).isEqualTo(3);
-    assertThat(count("notification_outbox WHERE status = 'SENT'")).isEqualTo(3);
+    Awaitility.await()
+        .atMost(5, TimeUnit.SECONDS)
+        .until(() -> count("notification_outbox WHERE status = 'SENT'") == 3);
   }
 
   @DisplayName("재시도 시각이 남은 건은 이번 주기에 보내지 않는다.")

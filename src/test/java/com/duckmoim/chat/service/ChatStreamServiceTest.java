@@ -11,16 +11,24 @@ import com.duckmoim.chat.domain.MessageStatus;
 import com.duckmoim.chat.exception.ChatErrorCode;
 import com.duckmoim.chat.infra.ChatFanout;
 import com.duckmoim.chat.infra.ChatFanoutCodec;
+import com.duckmoim.chat.infra.ChatFanoutSubscription;
 import com.duckmoim.chat.infra.ChatPresence;
 import com.duckmoim.chat.infra.ChatRoomRepository;
 import com.duckmoim.common.exception.BusinessException;
 import com.duckmoim.identity.domain.AuthorDisplay;
+import com.duckmoim.identity.service.UserService;
+import com.duckmoim.safety.domain.SanctionKind;
+import com.duckmoim.safety.exception.SanctionErrorCode;
+import com.duckmoim.safety.service.SanctionCommand;
+import com.duckmoim.safety.service.SanctionCommandService;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import org.awaitility.Awaitility;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -68,11 +76,14 @@ class ChatStreamServiceTest {
   @Autowired private ChatMessageSendService chatMessageSendService;
   @Autowired private ChatRoomLeaveService chatRoomLeaveService;
   @Autowired private ChatMessageDeleteService chatMessageDeleteService;
+  @Autowired private AdminMessageBlindService adminMessageBlindService;
   @Autowired private ChatRoomRepository chatRoomRepository;
   @Autowired private ChatFanout chatFanout;
   @Autowired private ChatFanoutCodec chatFanoutCodec;
   @Autowired private ChatPresence chatPresence;
   @Autowired private JdbcTemplate jdbcTemplate;
+  @Autowired private SanctionCommandService sanctionCommandService;
+  @Autowired private UserService userService;
 
   private long hostId;
   private long memberId;
@@ -90,6 +101,20 @@ class ChatStreamServiceTest {
     ChatRoom room = ChatRoom.openFor(postId, hostId);
     room.invite(memberId);
     roomId = chatRoomRepository.saveAndFlush(room).getId();
+  }
+
+  /**
+   * 제재 검사가 남긴 행을 지운다.
+   *
+   * <p>이 클래스는 롤백하지 않아 제재와 감사 로그가 공용 DB 에 커밋된다. 남기면 감사 로그 개수를 세는 남의 검사({@code
+   * SanctionCommandServiceTest} 등)가 그 줄을 함께 센다. 회원이 검사마다 새로 만들어져 그 번호로 좁히면 남의 행을 건드리지 않는다.
+   */
+  @AfterEach
+  void tearDown() {
+    // target_id 는 종류에 따라 회원번호일 수도 메시지 번호일 수도 있어 종류까지 좁힌다.
+    jdbcTemplate.update(
+        "DELETE FROM audit_log WHERE kind = 'SANCTION' AND target_id = ?", memberId);
+    jdbcTemplate.update("DELETE FROM sanction WHERE user_id = ?", memberId);
   }
 
   /**
@@ -232,6 +257,108 @@ class ChatStreamServiceTest {
     release.run();
 
     assertThat(chatStreamService.connectionCount(roomId)).isZero();
+  }
+
+  // ── 제재 · 탈퇴 시 끊기 (STAR-148) ───────────────────────────────────────────
+
+  /**
+   * <b>이 검사가 QA-AUTH-02 다</b> (CH-20).
+   *
+   * <p>고치기 전에는 제재가 관문에만 걸려, 이미 열린 스트림이 타임아웃까지 대화를 받았다. 제재 서비스를 그대로 불러 <b>저장 → 커밋 → 이벤트 → 끊기</b>를 모두
+   * 지난다.
+   */
+  @DisplayName("영구 정지되면 열어 둔 스트림이 끊긴다.")
+  @Test
+  void sanction_disconnectsBannedMember() {
+    RecordingSession session = new RecordingSession();
+    chatStreamService.open(roomId, memberId, session, null);
+
+    sanctionCommandService.sanction(sanctionOf(SanctionKind.BANNED, null));
+
+    Awaitility.await().atMost(5, TimeUnit.SECONDS).until(session::closed);
+    assertThat(chatStreamService.connectionCount(roomId)).isZero();
+  }
+
+  /**
+   * 기간 정지는 채팅방을 계속 읽을 수 있다 (도메인-모델링.md 「6. 라이프사이클」 제재 표). 끊으면 브라우저가 다시 붙고 관문이 통과시켜 연결만 헛돈다.
+   *
+   * <p>끊기는 제재 서비스가 반환하기 전, 같은 스레드의 커밋 뒤에 돈다 — 기다리지 않고 바로 본다.
+   */
+  @DisplayName("기간 정지는 열어 둔 스트림을 끊지 않는다.")
+  @Test
+  void sanction_keepsSuspendedMember() {
+    RecordingSession session = new RecordingSession();
+    chatStreamService.open(roomId, memberId, session, null);
+
+    sanctionCommandService.sanction(
+        sanctionOf(SanctionKind.SUSPENDED, LocalDateTime.now(ZoneOffset.UTC).plusDays(3)));
+
+    assertThat(session.closed()).isFalse();
+    assertThat(chatStreamService.connectionCount(roomId)).isEqualTo(1);
+  }
+
+  /** 커밋 뒤에만 끊는다. 거절된 제재에 연결이 끊기면 일어나지 않은 제재가 사용자에게 보인다. */
+  @DisplayName("제재가 거절되면 열어 둔 스트림을 끊지 않는다.")
+  @Test
+  void sanction_keepsStreamWhenRejected() {
+    sanctionCommandService.sanction(sanctionOf(SanctionKind.WARNED, null));
+    RecordingSession session = new RecordingSession();
+    chatStreamService.open(roomId, memberId, session, null);
+
+    assertThatThrownBy(() -> sanctionCommandService.sanction(sanctionOf(SanctionKind.BANNED, null)))
+        .isInstanceOf(BusinessException.class)
+        .extracting("errorCode")
+        .isEqualTo(SanctionErrorCode.SANCTION_ALREADY_ACTIVE);
+    assertThat(session.closed()).isFalse();
+  }
+
+  /**
+   * <b>다른 인스턴스에 붙은 연결도 끊겨야 한다.</b> 제재 요청이 blue 로 가도 그 사람의 스트림은 green 에 있을 수 있다.
+   *
+   * <p>그쪽이 퇴장 사건을 받으면 연결을 끊는다는 것은 {@link #dispatch_disconnectsMemberWhoLeftOnAnotherInstance} 가 본다.
+   * 여기서는 <b>제재가 그 사건을 통로에 싣는지</b>를 본다.
+   */
+  @DisplayName("영구 정지가 다른 인스턴스에 퇴장 사건으로 전파된다.")
+  @Test
+  void sanction_announcesToOtherInstances() {
+    List<String> payloads = new CopyOnWriteArrayList<>();
+    ChatFanoutSubscription otherInstance = chatFanout.subscribe(roomId, payloads::add);
+
+    try {
+      sanctionCommandService.sanction(sanctionOf(SanctionKind.BANNED, null));
+
+      Awaitility.await()
+          .atMost(5, TimeUnit.SECONDS)
+          .until(
+              () ->
+                  payloads.stream()
+                      .map(chatFanoutCodec::decode)
+                      .anyMatch(
+                          event -> event.isMemberLeft() && event.leftUserId().equals(memberId)));
+    } finally {
+      otherInstance.close();
+    }
+  }
+
+  /**
+   * <b>탈퇴도 같은 구멍이었다</b> (AU-11 · 추가 QA).
+   *
+   * <p>토큰은 요청이 올 때만 검사돼, 탈퇴한 사람의 열린 스트림에 대화가 계속 흘렀다. 탈퇴 서비스를 그대로 불러 커밋 뒤 이벤트까지 지난다.
+   */
+  @DisplayName("탈퇴하면 열어 둔 스트림이 끊긴다.")
+  @Test
+  void withdraw_disconnectsMember() {
+    RecordingSession session = new RecordingSession();
+    chatStreamService.open(roomId, memberId, session, null);
+
+    userService.withdraw(memberId);
+
+    Awaitility.await().atMost(5, TimeUnit.SECONDS).until(session::closed);
+    assertThat(chatStreamService.connectionCount(roomId)).isZero();
+  }
+
+  private SanctionCommand sanctionOf(SanctionKind kind, LocalDateTime untilInUtc) {
+    return new SanctionCommand(memberId, kind, "QA 제재", untilInUtc, hostId);
   }
 
   /**
@@ -588,6 +715,112 @@ class ChatStreamServiceTest {
     assertThat(staying.received().get(0).content()).isEqualTo("진짜 말풍선");
   }
 
+  // ── 상태 변경 전파 (STAR-147) ────────────────────────────────────────────────
+
+  /**
+   * <b>다른 인스턴스가 지운 메시지가 이 인스턴스의 연결에 닿는다</b> (CH-10 · CH-12).
+   *
+   * <p>퇴장 전파와 같은 방식이다 — 통로에 직접 발행하는 것이 「다른 인스턴스가 삭제를 처리했다」와 같은 상황이다.
+   */
+  @DisplayName("다른 인스턴스에서 바뀐 메시지 상태가 이 인스턴스의 연결에 도착한다.")
+  @Test
+  void dispatch_deliversChangedMessageFromAnotherInstance() {
+    RecordingSession session = new RecordingSession();
+    chatStreamService.open(roomId, memberId, session, null);
+    MessageEvent deleted = eventOf(send("지울 말"), MessageStatus.DELETED);
+    session.awaitFirst();
+
+    chatFanout.publish(roomId, chatFanoutCodec.encodeMessageChanged(deleted));
+
+    session.awaitFirstChanged();
+    assertThat(session.changed())
+        .singleElement()
+        .satisfies(
+            event -> {
+              assertThat(event.messageId()).isEqualTo(deleted.messageId());
+              assertThat(event.status()).isEqualTo(MessageStatus.DELETED);
+            });
+  }
+
+  /** 상태 변경이 새 말풍선으로 새면 지운 메시지가 화면에 한 줄 더 생긴다. */
+  @DisplayName("상태 변경은 새 메시지로 밀리지 않는다.")
+  @Test
+  void dispatch_doesNotPushChangeAsNewMessage() {
+    RecordingSession session = new RecordingSession();
+    chatStreamService.open(roomId, memberId, session, null);
+    MessageEvent deleted = eventOf(send("지울 말"), MessageStatus.DELETED);
+    session.awaitFirst();
+
+    chatFanout.publish(roomId, chatFanoutCodec.encodeMessageChanged(deleted));
+
+    session.awaitFirstChanged();
+    assertThat(session.received()).hasSize(1);
+  }
+
+  /**
+   * <b>이 검사가 QA-EYE-04 다</b> (CH-12 · CH-10).
+   *
+   * <p>고치기 전에는 삭제가 DB 에만 적혀, 방을 열어 둔 멤버의 연결에 아무것도 오지 않았다. 삭제 서비스를 그대로 불러 <b>저장 → 커밋 → Redis 한 바퀴 →
+   * 연결</b>을 모두 지난다.
+   */
+  @DisplayName("메시지를 지우면 방을 보고 있는 멤버에게 본문 없는 DELETED 사건이 간다.")
+  @Test
+  void delete_reachesViewingMember() {
+    RecordingSession session = new RecordingSession();
+    chatStreamService.open(roomId, memberId, session, null);
+    long messageId = send("지울 말");
+    session.awaitFirst();
+
+    chatMessageDeleteService.delete(roomId, messageId, hostId);
+
+    session.awaitFirstChanged();
+    assertThat(session.changed())
+        .singleElement()
+        .satisfies(
+            event -> {
+              assertThat(event.messageId()).isEqualTo(messageId);
+              assertThat(event.status()).isEqualTo(MessageStatus.DELETED);
+              assertThat(event.content()).isNull();
+            });
+  }
+
+  /**
+   * AD-09 의 검증 기준 「블라인드 후 본문 미노출」이 실시간 경로에서도 성립하는지 본다. 신고된 말이 화면에 남으면 가린 의미가 없다.
+   *
+   * <p><b>감사 로그를 손으로 지운다.</b> 이 클래스는 롤백하지 않아 블라인드가 남긴 한 줄이 공용 DB 에 커밋되고, 감사 로그 개수를 세는 남의 검사 ({@code
+   * SanctionCommandServiceTest} 등)가 그 줄을 함께 센다.
+   */
+  @DisplayName("관리자가 메시지를 가리면 방을 보고 있는 멤버에게 본문 없는 BLINDED 사건이 간다.")
+  @Test
+  void blind_reachesViewingMember() {
+    RecordingSession session = new RecordingSession();
+    chatStreamService.open(roomId, memberId, session, null);
+    long messageId = send("가려질 말");
+    session.awaitFirst();
+
+    try {
+      adminMessageBlindService.blind(messageId, hostId);
+
+      session.awaitFirstChanged();
+      assertThat(session.changed())
+          .singleElement()
+          .satisfies(
+              event -> {
+                assertThat(event.messageId()).isEqualTo(messageId);
+                assertThat(event.status()).isEqualTo(MessageStatus.BLINDED);
+                assertThat(event.content()).isNull();
+              });
+    } finally {
+      jdbcTemplate.update(
+          "DELETE FROM audit_log WHERE kind = 'MESSAGE_BLIND' AND target_id = ?", messageId);
+    }
+  }
+
+  private MessageEvent eventOf(long messageId, MessageStatus status) {
+    return new MessageEvent(
+        messageId, roomId, hostId, "방장", null, null, null, status, LocalDateTime.now());
+  }
+
   private String newClientId() {
     return UUID.randomUUID().toString();
   }
@@ -601,6 +834,11 @@ class ChatStreamServiceTest {
 
     @Override
     public void send(MessageEvent event) {
+      // 이 검사는 하트비트만 본다.
+    }
+
+    @Override
+    public void sendChanged(MessageEvent event) {
       // 이 검사는 하트비트만 본다.
     }
 
@@ -632,6 +870,7 @@ class ChatStreamServiceTest {
   private static final class RecordingSession implements ChatStreamSession {
 
     private final List<MessageEvent> received = new CopyOnWriteArrayList<>();
+    private final List<MessageEvent> changed = new CopyOnWriteArrayList<>();
     private final List<Long> gaps = new CopyOnWriteArrayList<>();
     private final java.util.concurrent.atomic.AtomicInteger beatCount =
         new java.util.concurrent.atomic.AtomicInteger();
@@ -640,6 +879,11 @@ class ChatStreamServiceTest {
     @Override
     public void send(MessageEvent event) {
       received.add(event);
+    }
+
+    @Override
+    public void sendChanged(MessageEvent event) {
+      changed.add(event);
     }
 
     @Override
@@ -662,8 +906,17 @@ class ChatStreamServiceTest {
       Awaitility.await().atMost(5, TimeUnit.SECONDS).until(() -> !received.isEmpty());
     }
 
+    /** 상태 변경도 팬아웃을 한 바퀴 돌아 비동기로 온다. */
+    void awaitFirstChanged() {
+      Awaitility.await().atMost(5, TimeUnit.SECONDS).until(() -> !changed.isEmpty());
+    }
+
     List<MessageEvent> received() {
       return received;
+    }
+
+    List<MessageEvent> changed() {
+      return changed;
     }
 
     List<Long> gaps() {
