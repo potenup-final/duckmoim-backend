@@ -3,6 +3,7 @@ package com.duckmoim.chat.service;
 import static com.duckmoim.companion.CompanionPostFixture.aCompanionPost;
 import static com.duckmoim.identity.UserFixture.aUser;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.duckmoim.chat.domain.ChatRoom;
@@ -211,6 +212,40 @@ class ChatStreamServiceTest {
 
     TimeUnit.MILLISECONDS.sleep(300);
     assertThat(leaving.received()).isEmpty();
+  }
+
+  /**
+   * <b>종료 신호가 오면 모든 방의 연결이 정상 종료된다.</b>
+   *
+   * <p>{@code server.shutdown: graceful} 이 SSE 앞에서 무력하다는 것이 실측으로 드러난 뒤 생긴
+   * 경로다 (2026-09-15 B-1 측정 — {@code closeAllStreamsOnShutdown} 자바독). 여기서는
+   * {@code ContextClosedEvent} 발행 대신 메서드를 직접 불러 「방 두 개에 걸쳐 있어도 전부
+   * 닫히는가」만 본다 — 이벤트 배선 자체는 스프링이 보장하는 영역이다.
+   */
+  @DisplayName("종료 신호를 받으면 여러 방에 걸친 연결이 전부 정상 종료된다.")
+  @Test
+  void closeAllStreamsOnShutdown_closesEveryConnectionAcrossRooms() {
+    long otherPostId = aCompanionPost().hostId(hostId).meetAt(MEET_AT_UTC).insert(jdbcTemplate);
+    ChatRoom otherRoom = ChatRoom.openFor(otherPostId, hostId);
+    otherRoom.invite(memberId);
+    long otherRoomId = chatRoomRepository.saveAndFlush(otherRoom).getId();
+
+    RecordingSession inFirstRoom = new RecordingSession();
+    RecordingSession inOtherRoom = new RecordingSession();
+    chatStreamService.open(roomId, memberId, inFirstRoom, null);
+    chatStreamService.open(otherRoomId, memberId, inOtherRoom, null);
+
+    chatStreamService.closeAllStreamsOnShutdown();
+
+    assertThat(inFirstRoom.closed()).isTrue();
+    assertThat(inOtherRoom.closed()).isTrue();
+  }
+
+  /** 연결이 하나도 없을 때 불러도 예외 없이 조용히 끝나야 한다 — 대부분의 종료가 이 경로다. */
+  @DisplayName("열린 연결이 없으면 아무 일도 하지 않는다.")
+  @Test
+  void closeAllStreamsOnShutdown_noopWhenNothingOpen() {
+    assertThatCode(chatStreamService::closeAllStreamsOnShutdown).doesNotThrowAnyException();
   }
 
   /** 나간 사람만 끊어야 한다. 방의 구독 자체를 닫으면 남아 있는 사람도 실시간을 잃는다. */
