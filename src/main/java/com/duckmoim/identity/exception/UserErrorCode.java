@@ -24,6 +24,14 @@ public enum UserErrorCode implements ErrorCode {
   // 가입(AU-06)과 프로필 수정(AU-08) 양쪽이 쓴다.
   USER_NICKNAME_DUPLICATED(HttpStatus.CONFLICT, "이미 사용 중인 닉네임입니다."),
 
+  // 계정 파기는 한 번뿐인 사건이다 (AD-05). 감사 로그는 고칠 수 없어서, 두 번 부르면 일어난 일은
+  // 하나인데 장부에 두 줄이 남는다. 신고 재처리를 409 로 막는 것과 같은 자리다.
+  USER_ALREADY_PURGED(HttpStatus.CONFLICT, "이미 파기된 계정입니다."),
+
+  // 관리자가 자기 계정을 파기하면 되돌릴 방법이 없다 (AD-05). 인가는 카카오 회원번호로 판정하는데
+  // (D-5) 파기가 그 값을 비우므로 그 자리에서 스스로 잠긴다. 대상이 잘못된 것이라 400 이다.
+  USER_CANNOT_PURGE_SELF(HttpStatus.BAD_REQUEST, "자기 계정은 파기할 수 없습니다."),
+
   /** AU-08 이미지 업로드. 허용 목록은 설정에 있다 — 위키가 값을 정하지 않았다. */
   USER_PROFILE_IMAGE_TYPE_NOT_ALLOWED(HttpStatus.BAD_REQUEST, "JPG · PNG · WEBP 이미지만 올릴 수 있습니다."),
 

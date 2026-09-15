@@ -267,6 +267,11 @@ class NotificationChatSuppressionTest {
     }
 
     @Override
+    public void sendChanged(MessageEvent event) {
+      // 검사하지 않는다. 상태 변경 전달은 CH-12 · AD-09 의 몫이다.
+    }
+
+    @Override
     public void beat() {
       // 검사하지 않는다.
     }

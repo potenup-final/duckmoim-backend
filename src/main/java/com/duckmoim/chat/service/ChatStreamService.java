@@ -334,8 +334,11 @@ public class ChatStreamService {
    * <p><b>Redis 의 구독 스레드에서 불린다.</b> 그래서 여기서 예외가 나가면 그 스레드가 다음 사건을 못 받는다 — 판독 실패는 {@code null} 로
    * 돌아오고({@code ChatFanoutCodec}) 밀기 실패는 세션이 삼킨다({@link ChatStreamSession}).
    *
-   * <p><b>종류를 갈라야 한다.</b> 이 통로에는 새 메시지와 퇴장 둘이 흐른다 ({@code ChatFanoutEvent}). 퇴장이 오면 이 인스턴스에 열려 있는 그
-   * 사람의 연결을 끊는다 — <b>다른 인스턴스에서 나간 사람을 여기서 끊는 유일한 길</b>이다 ({@link #announceLeft}).
+   * <p><b>종류를 갈라야 한다.</b> 이 통로에는 새 메시지 · 상태가 바뀐 메시지 · 퇴장 셋이 흐른다 ({@code ChatFanoutEvent}). 퇴장이 오면 이
+   * 인스턴스에 열려 있는 그 사람의 연결을 끊는다 — <b>다른 인스턴스에서 나간 사람을 여기서 끊는 유일한 길</b>이다 ({@link #announceLeft}).
+   *
+   * <p><b>상태 변경은 새 메시지와 다른 문으로 민다</b> (STAR-147). 옛 번호라 재연결 위치를 건드리면 안 된다 ({@link
+   * ChatStreamSession#sendChanged}).
    *
    * <p><b>보낸 사람에게도 간다.</b> 자기 화면에는 이미 전송 응답으로 말풍선이 붙어 있지만, 그 둘은 {@code messageId} 가 같아 클라이언트가 겹치는
    * 것을 걸러낸다 — 오히려 보내는 쪽만 다르게 다루면 규칙이 하나 더 생긴다.
@@ -353,7 +356,12 @@ public class ChatStreamService {
     }
 
     if (event.isMessage()) {
-      push(roomId, event.message());
+      push(roomId, Outgoing.message(event.message()));
+      return;
+    }
+
+    if (event.isMessageChanged()) {
+      push(roomId, Outgoing.changed(event.message()));
     }
   }
 
@@ -362,9 +370,11 @@ public class ChatStreamService {
    *
    * <p><b>연결마다 {@code deliver} 를 지난다</b> (PR #142 리뷰). 재전송 중인 연결은 그 안에서 담아 두었다가 재전송이 끝난 뒤에 받는다 —
    * 나가는 {@code id} 가 단조 증가해야 브라우저의 책갈피가 뒤로 밀리지 않는다 ({@code RoomConnection} 자바독).
+   *
+   * <p><b>상태 변경도 같은 줄에 선다.</b> {@code id} 를 싣지 않아 책갈피와는 무관하지만, 재전송보다 먼저 나가면 재전송이 옛 상태로 그 줄을 다시 덮는다.
    */
-  private void push(Long roomId, MessageEvent message) {
-    connections.getOrDefault(roomId, List.of()).forEach(connection -> connection.deliver(message));
+  private void push(Long roomId, Outgoing outgoing) {
+    connections.getOrDefault(roomId, List.of()).forEach(connection -> connection.deliver(outgoing));
   }
 
   /** 연결 하나를 목록에서 빼고, 그 방의 마지막이었으면 구독도 닫는다. */
@@ -475,7 +485,7 @@ public class ChatStreamService {
     private final ChatStreamSession session;
 
     /** 재전송이 끝나기 전에 도착한 실시간 사건. 순서를 지켜야 해서 FIFO 다. */
-    private final Queue<MessageEvent> buffered = new ArrayDeque<>();
+    private final Queue<Outgoing> buffered = new ArrayDeque<>();
 
     /** 열자마자 참이다. {@link #startDelivering} 이 한 번 내린다. */
     private boolean replaying = true;
@@ -501,18 +511,18 @@ public class ChatStreamService {
      * <p>재전송 중이면 담아 두고, 아니면 바로 민다. <b>미는 것은 잠금 밖이다</b> — 정체된 연결에 쓰는 동안 잠금을 쥐고 있으면 그 방의 구독 스레드가 함께
      * 묶인다. 선로가 섞이지 않는 것은 {@code SseEmitter} 자신의 락이 보장한다.
      */
-    void deliver(MessageEvent event) {
+    void deliver(Outgoing outgoing) {
       lock.lock();
       try {
         if (replaying) {
-          buffered.add(event);
+          buffered.add(outgoing);
           return;
         }
       } finally {
         lock.unlock();
       }
 
-      session.send(event);
+      outgoing.writeTo(session);
     }
 
     /**
@@ -527,12 +537,37 @@ public class ChatStreamService {
       lock.lock();
       try {
         replaying = false;
-        for (MessageEvent event = buffered.poll(); event != null; event = buffered.poll()) {
-          session.send(event);
+        for (Outgoing outgoing = buffered.poll(); outgoing != null; outgoing = buffered.poll()) {
+          outgoing.writeTo(session);
         }
       } finally {
         lock.unlock();
       }
+    }
+  }
+
+  /**
+   * 연결에 밀 실시간 사건 하나 — 새 메시지인지, 상태가 바뀐 메시지인지를 함께 든다.
+   *
+   * <p><b>재전송 버퍼가 둘을 한 줄에 세워야 해서 묶었다.</b> 종류마다 큐를 두면 도착 순서가 사라진다.
+   */
+  private record Outgoing(MessageEvent event, boolean changed) {
+
+    static Outgoing message(MessageEvent event) {
+      return new Outgoing(event, false);
+    }
+
+    static Outgoing changed(MessageEvent event) {
+      return new Outgoing(event, true);
+    }
+
+    void writeTo(ChatStreamSession session) {
+      if (changed) {
+        session.sendChanged(event);
+        return;
+      }
+
+      session.send(event);
     }
   }
 }
