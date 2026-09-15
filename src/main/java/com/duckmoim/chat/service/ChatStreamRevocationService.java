@@ -2,6 +2,7 @@ package com.duckmoim.chat.service;
 
 import com.duckmoim.chat.infra.ChatRoomRepository;
 import com.duckmoim.chat.infra.ChatRoomSummary;
+import com.duckmoim.identity.domain.UserWithdrawn;
 import com.duckmoim.safety.domain.UserSanctioned;
 import com.duckmoim.safety.service.SanctionQueryService;
 import lombok.RequiredArgsConstructor;
@@ -11,7 +12,7 @@ import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 
 /**
- * 더는 대화를 받으면 안 되는 회원의 열린 스트림을 끊는다 (CH-20 · STAR-148).
+ * 더는 대화를 받으면 안 되는 회원의 열린 스트림을 끊는다 (CH-20 · AU-11 · STAR-148).
  *
  * <p><b>관문은 요청이 올 때만 돈다.</b> 스트림은 요청이 한 번뿐이라, 연결한 뒤에 제재된 사람은 다시 판정받을 일 없이 타임아웃(5분)까지 대화를 받았다
  * (QA-AUTH-02).
@@ -53,6 +54,20 @@ public class ChatStreamRevocationService {
     }
 
     disconnectEverywhere(sanctioned.userId());
+  }
+
+  /**
+   * 탈퇴하면 끊는다 (AU-11).
+   *
+   * <p><b>제재와 같은 구멍이다.</b> 탈퇴는 토큰을 끊지만 토큰은 요청이 올 때만 검사된다 — 열린 스트림은 탈퇴 뒤에도 대화를 받았다 (추가 QA, 재연결은
+   * 401).
+   *
+   * <p><b>탈퇴한 사람은 방 멤버 행이 남는다</b> (API-설계 「2-11. 채팅 (Chat) · 2차」 — 목록에서 자리표시자로 남는다). 그래서 멤버인 방 목록으로
+   * 그대로 찾을 수 있다.
+   */
+  @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+  public void onWithdrawn(UserWithdrawn withdrawn) {
+    disconnectEverywhere(withdrawn.userId());
   }
 
   /** 그 회원이 멤버인 모든 방에서 연결을 끊는다. 방 목록은 방 목록 화면(CH-05)과 같은 조회다. */

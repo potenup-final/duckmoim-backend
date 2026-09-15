@@ -16,6 +16,7 @@ import com.duckmoim.chat.infra.ChatPresence;
 import com.duckmoim.chat.infra.ChatRoomRepository;
 import com.duckmoim.common.exception.BusinessException;
 import com.duckmoim.identity.domain.AuthorDisplay;
+import com.duckmoim.identity.service.UserService;
 import com.duckmoim.safety.domain.SanctionKind;
 import com.duckmoim.safety.exception.SanctionErrorCode;
 import com.duckmoim.safety.service.SanctionCommand;
@@ -82,6 +83,7 @@ class ChatStreamServiceTest {
   @Autowired private ChatPresence chatPresence;
   @Autowired private JdbcTemplate jdbcTemplate;
   @Autowired private SanctionCommandService sanctionCommandService;
+  @Autowired private UserService userService;
 
   private long hostId;
   private long memberId;
@@ -336,6 +338,23 @@ class ChatStreamServiceTest {
     } finally {
       otherInstance.close();
     }
+  }
+
+  /**
+   * <b>탈퇴도 같은 구멍이었다</b> (AU-11 · 추가 QA).
+   *
+   * <p>토큰은 요청이 올 때만 검사돼, 탈퇴한 사람의 열린 스트림에 대화가 계속 흘렀다. 탈퇴 서비스를 그대로 불러 커밋 뒤 이벤트까지 지난다.
+   */
+  @DisplayName("탈퇴하면 열어 둔 스트림이 끊긴다.")
+  @Test
+  void withdraw_disconnectsMember() {
+    RecordingSession session = new RecordingSession();
+    chatStreamService.open(roomId, memberId, session, null);
+
+    userService.withdraw(memberId);
+
+    Awaitility.await().atMost(5, TimeUnit.SECONDS).until(session::closed);
+    assertThat(chatStreamService.connectionCount(roomId)).isZero();
   }
 
   private SanctionCommand sanctionOf(SanctionKind kind, LocalDateTime untilInUtc) {
