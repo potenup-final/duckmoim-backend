@@ -2,7 +2,7 @@
   <img src="docs/assets/banner.png" alt="덕모임" width="100%">
 </p>
 
-<h1 align="center">덕모임 백엔드</h1>
+<h1 align="center">덕모임</h1>
 
 <p align="center">
   <a href="https://github.com/potenup-final/duckmoim-backend/actions/workflows/ci-cd.yml"><img src="https://github.com/potenup-final/duckmoim-backend/actions/workflows/ci-cd.yml/badge.svg" alt="CI/CD"></a>
