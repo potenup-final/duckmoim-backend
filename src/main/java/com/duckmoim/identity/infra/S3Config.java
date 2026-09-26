@@ -1,5 +1,6 @@
 package com.duckmoim.identity.infra;
 
+import java.net.URI;
 import java.time.Duration;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
@@ -43,21 +44,46 @@ public class S3Config {
    * <p><b>시도 한 번과 호출 전체를 따로 건다.</b> 시도 상한만 있으면 재시도가 그 시간을 곱으로 늘리고, 전체 상한만 있으면 한 번 느린 시도가 재시도 기회를 다
    * 먹는다.
    */
+  /**
+   * S3 호환 저장소의 주소.
+   *
+   * <p><b>비어 있으면 진짜 AWS 다.</b> 값이 있으면 그리로 돌린다 — 2026-09-26 부터 운영은 Cloudflare R2 를 쓴다(AWS 부트캠프 계정
+   * 종료). R2 는 S3 API 호환이라 SDK·프리사인·CORS 가 그대로 동작하고, 바뀌는 것은 이 주소와 리전뿐이다.
+   *
+   * <p><b>리전은 R2 에서 반드시 {@code auto} 다.</b> {@code ap-northeast-2} 같은 실제 리전을 주면 SigV4 서명 범위가 어긋나 모든
+   * 요청이 403 으로 떨어진다 — 기동은 멀쩡하고 업로드만 죽는 종류라 원인을 찾기 어렵다.
+   */
+  private final String endpoint;
+
+  public S3Config(@Value("${duckmoim.s3.endpoint:}") String endpoint) {
+    this.endpoint = endpoint;
+  }
+
   @Bean
   public S3Client s3Client(
       @Value("${duckmoim.s3.region}") String region,
       @Value("${duckmoim.s3.api-call-attempt-timeout}") Duration attemptTimeout,
       @Value("${duckmoim.s3.api-call-timeout}") Duration callTimeout) {
 
-    return S3Client.builder()
-        .region(Region.of(region))
-        .overrideConfiguration(
-            config -> config.apiCallAttemptTimeout(attemptTimeout).apiCallTimeout(callTimeout))
-        .build();
+    S3Client.Builder builder =
+        S3Client.builder()
+            .region(Region.of(region))
+            .overrideConfiguration(
+                config -> config.apiCallAttemptTimeout(attemptTimeout).apiCallTimeout(callTimeout));
+
+    if (!endpoint.isBlank()) {
+      builder.endpointOverride(URI.create(endpoint));
+    }
+    return builder.build();
   }
 
   @Bean
   public S3Presigner s3Presigner(@Value("${duckmoim.s3.region}") String region) {
-    return S3Presigner.builder().region(Region.of(region)).build();
+    S3Presigner.Builder builder = S3Presigner.builder().region(Region.of(region));
+
+    if (!endpoint.isBlank()) {
+      builder.endpointOverride(URI.create(endpoint));
+    }
+    return builder.build();
   }
 }
